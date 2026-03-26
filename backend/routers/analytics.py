@@ -263,9 +263,9 @@ async def net_worth_history(
 
         offset = snap.amount_cents - running_at_snap
 
-        # Apply offset to all months >= snap_month
+        # Apply offset to ALL months (past and future) so the entire curve shifts
         for month in monthly_totals:
-            if month >= snap_month and acc_id in monthly_totals[month]:
+            if acc_id in monthly_totals[month]:
                 monthly_totals[month][acc_id] += offset
 
         # If the account has no transactions in recent months but has a snapshot,

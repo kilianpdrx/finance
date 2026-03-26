@@ -35,7 +35,7 @@ export default function TransactionTable({ data, categories, accounts, onUpdated
       headerName: 'Date',
       checkboxSelection: true,
       headerCheckboxSelection: true,
-      width: 140,
+      width: 160,
       sortable: true,
       filter: 'agDateColumnFilter',
       floatingFilter: true,
@@ -244,56 +244,40 @@ export default function TransactionTable({ data, categories, accounts, onUpdated
 
   return (
     <div className="flex flex-col h-full gap-2">
-      <div className="flex justify-between items-center bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg p-2">
-        <div className="flex items-center gap-3">
-          {selectedIds.length > 0 && (
-            <>
-              <span className="text-sm text-gray-500 dark:text-slate-400 font-medium">
-                {selectedIds.length} sélectionnée{selectedIds.length > 1 ? 's' : ''}
-              </span>
-              <select
-                value={bulkCatId}
-                onChange={(e) => handleBulkCategory(e.target.value)}
-                className="text-sm border border-emerald-300 dark:border-emerald-700 rounded-lg px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              >
-                <option value="" disabled>Catégoriser…</option>
-                <option value="">Non catégorisé</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <button
-                onClick={async () => {
-                  if (confirm(`Voulez-vous vraiment supprimer ${selectedIds.length} transactions ?`)) {
-                    try {
-                      await txnApi.bulkDelete(selectedIds)
-                      setSelectedIds([])
-                      onUpdated()
-                    } catch (e) {
-                      console.error('Failed to delete transactions', e)
-                    }
-                  }
-                }}
-                className="text-sm px-3 py-1.5 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 font-medium transition-colors hover:bg-red-200 dark:hover:bg-red-900/50"
-              >
-                Supprimer
-              </button>
-            </>
-          )}
-        </div>
-        {exportUrl && (
-          <a
-            href={exportUrl}
-            download="transactions.csv"
-            className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5"
+      {selectedIds.length > 0 && (
+        <div className="flex items-center gap-3 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg p-2">
+          <span className="text-sm text-gray-500 dark:text-slate-400 font-medium">
+            {selectedIds.length} sélectionnée{selectedIds.length > 1 ? 's' : ''}
+          </span>
+          <select
+            value={bulkCatId}
+            onChange={(e) => handleBulkCategory(e.target.value)}
+            className="text-sm border border-emerald-300 dark:border-emerald-700 rounded-lg px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            Exporter CSV
-          </a>
-        )}
-      </div>
+            <option value="" disabled>Catégoriser…</option>
+            <option value="">Non catégorisé</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <button
+            onClick={async () => {
+              if (confirm(`Voulez-vous vraiment supprimer ${selectedIds.length} transactions ?`)) {
+                try {
+                  await txnApi.bulkDelete(selectedIds)
+                  setSelectedIds([])
+                  onUpdated()
+                } catch (e) {
+                  console.error('Failed to delete transactions', e)
+                }
+              }
+            }}
+            className="text-sm px-3 py-1.5 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 font-medium transition-colors hover:bg-red-200 dark:hover:bg-red-900/50"
+          >
+            Supprimer
+          </button>
+        </div>
+      )}
       <div className="ag-theme-alpine dark:ag-theme-alpine flex-1" style={{ minHeight: 400 }}>
         <AgGridReact
           ref={gridRef}

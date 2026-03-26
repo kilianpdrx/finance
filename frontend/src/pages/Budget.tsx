@@ -57,19 +57,19 @@ const SECTION_STYLES: Record<string, { headerBg: string; headerText: string; tot
   revenus: {
     headerBg: 'bg-emerald-700',
     headerText: 'text-white',
-    totalBg: 'bg-emerald-50 dark:bg-emerald-900/20',
+    totalBg: 'bg-emerald-50 dark:bg-emerald-950',
     totalText: 'text-emerald-800 dark:text-emerald-300',
   },
   depenses_fixes: {
     headerBg: 'bg-rose-800',
     headerText: 'text-white',
-    totalBg: 'bg-rose-50 dark:bg-rose-900/20',
+    totalBg: 'bg-rose-50 dark:bg-rose-950',
     totalText: 'text-rose-800 dark:text-rose-300',
   },
   depenses_variables: {
     headerBg: 'bg-blue-700',
     headerText: 'text-white',
-    totalBg: 'bg-blue-50 dark:bg-blue-900/20',
+    totalBg: 'bg-blue-50 dark:bg-blue-950',
     totalText: 'text-blue-800 dark:text-blue-300',
   },
 }
@@ -306,13 +306,13 @@ export default function Budget() {
 
     return (
       <tr key={`${sectionIdx}-${rowIdx}`} className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50/50 dark:hover:bg-slate-800/30">
-        <td className="sticky left-0 z-10 bg-white dark:bg-slate-900 px-4 py-2 border-r border-gray-200 dark:border-slate-700">
+        <td className="sticky left-0 z-10 px-4 py-2 border-r border-gray-200 dark:border-slate-700 w-52 bg-white dark:bg-slate-900" style={{ boxShadow: '2px 0 4px rgba(0,0,0,0.05)' }}>
           <div className="flex items-center gap-2">
             {isSubItem && <div className="w-3" />}
             {row.category_color && (
               <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: row.category_color }} />
             )}
-            <span className={`text-sm truncate max-w-40 ${isSubItem ? 'text-gray-600 dark:text-slate-400' : 'font-medium text-gray-800 dark:text-slate-200'}`} title={row.category_name}>
+            <span className={`text-sm truncate ${isSubItem ? 'text-gray-600 dark:text-slate-400' : 'font-medium text-gray-800 dark:text-slate-200'}`} title={row.category_name}>
               {row.category_name}
             </span>
           </div>
@@ -329,11 +329,9 @@ export default function Budget() {
             <td
               key={monthIdx}
               onClick={() => handleCellClick(sectionIdx, row, rowIdx, monthIdx)}
-              className={`px-2 py-2 text-right text-sm whitespace-nowrap cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-800/40 ${
+              className={`px-2 py-2 text-right text-sm whitespace-nowrap cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-800/40 w-24 ${
                 isCurrent ? 'bg-emerald-50/40 dark:bg-emerald-900/10' : ''
-              } ${isFuture ? 'bg-gray-50/50 dark:bg-slate-800/20' : ''} ${
-                hasManual ? 'border-l-2 border-l-amber-400 dark:border-l-amber-500 bg-amber-50/30 dark:bg-amber-900/10' : ''
-              }`}
+              } ${isFuture ? 'bg-gray-50/50 dark:bg-slate-800/20' : ''}`}
             >
               {isEditing ? (
                 <div className="flex items-center gap-1 justify-end">
@@ -364,7 +362,7 @@ export default function Budget() {
             </td>
           )
         })}
-        <td className="px-3 py-2 text-right text-sm font-semibold text-gray-800 dark:text-slate-200 border-l border-gray-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-800/30">
+        <td className="sticky right-0 z-10 px-3 py-2 text-right text-sm font-semibold text-gray-800 dark:text-slate-200 border-l border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 w-28">
           {renderCellValue(displayTotal, true)}
         </td>
       </tr>
@@ -377,14 +375,14 @@ export default function Budget() {
 
     return (
       <tr className={`${style.totalBg} font-bold border-b-2 border-gray-200 dark:border-slate-700`}>
-        <td className={`sticky left-0 z-10 ${style.totalBg} px-4 py-2.5 text-sm ${style.totalText} border-r border-gray-200 dark:border-slate-700`}>
+        <td className={`sticky left-0 z-10 ${style.totalBg} px-4 py-2.5 text-sm ${style.totalText} border-r border-gray-200 dark:border-slate-700 w-52`} style={{ boxShadow: '2px 0 4px rgba(0,0,0,0.05)' }}>
           {label}
         </td>
         {row.cells.map((cell, i) => {
           const displayValue = cellDisplayValue(cell, currentMonth)
           const hasManual = cell.expected_cents !== 0
           return (
-            <td key={i} className={`px-2 py-2.5 text-right text-sm ${style.totalText} ${hasManual ? 'border-l-2 border-l-amber-400 dark:border-l-amber-500' : ''}`}>
+            <td key={i} className={`px-2 py-2.5 text-right text-sm w-24 ${style.totalText}`}>
               <div className="flex items-center justify-end">
                 {renderCellValue(displayValue, true)}
                 {hasManual && <PencilDot />}
@@ -449,7 +447,7 @@ export default function Budget() {
 
           {/* Legend */}
           <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-1.5">
-            <span className="inline-block w-3 h-3 border-l-2 border-l-amber-400 bg-amber-50/60 dark:bg-amber-900/20 rounded-sm" />
+            <PencilDot />
             <span>= ajustement manuel</span>
           </div>
         </div>
@@ -457,12 +455,12 @@ export default function Budget() {
 
       {/* Table */}
       <div ref={scrollRef} className="overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm bg-white dark:bg-slate-900">
-        <table className="w-full text-sm whitespace-nowrap">
+        <table className="text-sm whitespace-nowrap table-fixed">
           <thead>
             {/* Year group row */}
             <tr className="bg-slate-900 dark:bg-black">
-              <th className="sticky left-0 z-20 bg-slate-900 dark:bg-black border-r border-slate-700" rowSpan={2}>
-                <div className="px-4 py-3 text-left text-sm font-bold text-white min-w-48">
+              <th className="sticky left-0 z-20 bg-slate-900 dark:bg-black border-r border-slate-700 w-52" rowSpan={2}>
+                <div className="px-4 py-3 text-left text-sm font-bold text-white">
                   {accountId ? accounts.find(a => a.id === accountId)?.name ?? 'Compte' : 'BUDGET'}
                 </div>
               </th>
@@ -475,8 +473,8 @@ export default function Budget() {
                   {ys.year}
                 </th>
               ))}
-              <th className="border-l border-slate-700 bg-slate-900 dark:bg-black" rowSpan={2}>
-                <div className="px-3 py-3 text-right text-sm font-bold text-amber-400 min-w-28">
+              <th className="sticky right-0 z-20 border-l border-slate-700 bg-slate-900 dark:bg-black w-28" rowSpan={2}>
+                <div className="px-3 py-3 text-right text-sm font-bold text-amber-400">
                   TOTAL
                 </div>
               </th>
@@ -489,7 +487,7 @@ export default function Budget() {
                   <th
                     key={m}
                     ref={isCurrent ? currentMonthRef : undefined}
-                    className={`px-2 py-2 text-center text-xs font-semibold min-w-24 ${
+                    className={`px-2 py-2 text-center text-xs font-semibold w-24 ${
                       isCurrent
                         ? 'text-emerald-400 bg-emerald-900/20 border-b-2 border-emerald-400'
                         : 'text-slate-400'
@@ -508,9 +506,11 @@ export default function Budget() {
                 <React.Fragment key={section.section}>
                   {/* Section header */}
                   <tr className={style.headerBg}>
-                    <td colSpan={data.months.length + 2} className={`px-4 py-2 text-sm font-bold ${style.headerText} tracking-wide`}>
+                    <td className={`sticky left-0 z-10 ${style.headerBg} px-4 py-2 text-sm font-bold ${style.headerText} tracking-wide w-52`}>
                       {section.section_label}
                     </td>
+                    <td colSpan={data.months.length} className={`px-4 py-2 ${style.headerBg}`} />
+                    <td className={`${style.headerBg} w-28`} />
                   </tr>
 
                   {/* Category rows */}
@@ -521,15 +521,15 @@ export default function Budget() {
 
                   {/* Reste row after fixed expenses */}
                   {section.section === 'depenses_fixes' && (
-                    <tr className="bg-emerald-100 dark:bg-emerald-900/30 font-bold border-b-2 border-emerald-300 dark:border-emerald-800">
-                      <td className="sticky left-0 z-10 bg-emerald-100 dark:bg-emerald-900/30 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-300 border-r border-gray-200 dark:border-slate-700">
+                    <tr className="bg-emerald-100 dark:bg-emerald-950 font-bold border-b-2 border-emerald-300 dark:border-emerald-800">
+                      <td className="sticky left-0 z-10 bg-emerald-100 dark:bg-emerald-950 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-300 border-r border-gray-200 dark:border-slate-700 w-52" style={{ boxShadow: '2px 0 4px rgba(0,0,0,0.05)' }}>
                         RESTE pour les dépenses variables
                       </td>
                       {data.reste_row.cells.map((cell, i) => {
                         const displayValue = cellDisplayValue(cell, currentMonth)
                         const hasManual = cell.expected_cents !== 0
                         return (
-                          <td key={i} className={`px-2 py-3 text-right text-sm text-emerald-800 dark:text-emerald-300 font-bold ${hasManual ? 'border-l-2 border-l-amber-400' : ''}`}>
+                          <td key={i} className="px-2 py-3 text-right text-sm text-emerald-800 dark:text-emerald-300 font-bold w-24">
                             <div className="flex items-center justify-end">
                               {renderCellValue(displayValue, true)}
                               {hasManual && <PencilDot />}
@@ -548,7 +548,7 @@ export default function Budget() {
 
             {/* Grand total row */}
             <tr className="bg-slate-800 dark:bg-slate-950 font-bold">
-              <td className="sticky left-0 z-10 bg-slate-800 dark:bg-slate-950 px-4 py-3 text-sm text-white border-r border-slate-700">
+              <td className="sticky left-0 z-10 bg-slate-800 dark:bg-slate-950 px-4 py-3 text-sm text-white border-r border-slate-700 w-52" style={{ boxShadow: '2px 0 4px rgba(0,0,0,0.05)' }}>
                 SOLDE NET
               </td>
               {data.grand_total_row.cells.map((cell, i) => {
@@ -556,7 +556,7 @@ export default function Budget() {
                 const isPositive = displayValue >= 0
                 const hasManual = cell.expected_cents !== 0
                 return (
-                  <td key={i} className={`px-2 py-3 text-right text-sm font-bold ${isPositive ? 'text-emerald-400' : 'text-red-400'} ${hasManual ? 'border-l-2 border-l-amber-400' : ''}`}>
+                  <td key={i} className={`px-2 py-3 text-right text-sm font-bold w-24 ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
                     <div className="flex items-center justify-end">
                       {renderCellValue(displayValue, true)}
                       {hasManual && <PencilDot />}

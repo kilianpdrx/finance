@@ -239,78 +239,61 @@ function CategoriesTab({ accounts }: { accounts: Account[] }) {
                 </svg>
                 {accountKey}
               </h4>
-              {typeOrder.map(typeKey => {
-                const items = typeGroups[typeKey]
-                if (!items?.length) return null
-                return (
-                  <div key={typeKey} className="mb-2">
-                    <div className="flex items-center gap-2 mb-1 ml-2">
-                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${typeBadge[typeKey]}`}>
-                        {typeKey}
-                      </span>
-                    </div>
-                    <div className="space-y-0.5">
-                      {items.map((c) => (
-                        <div key={c.id} className="flex items-center justify-between py-1.5 px-3 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 group">
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: c.color }} />
-                            {editingCatId === c.id ? (
-                              <input
-                                autoFocus
-                                value={editingName}
-                                onChange={(e) => setEditingName(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleRename(c.id)
-                                  if (e.key === 'Escape') setEditingCatId(null)
-                                }}
-                                onBlur={() => handleRename(c.id)}
-                                className="text-sm border border-emerald-400 rounded px-2 py-0.5 bg-white dark:bg-slate-900 text-gray-900 dark:text-white w-48"
-                              />
-                            ) : (
-                              <span
-                                className="text-sm text-gray-900 dark:text-white cursor-pointer hover:text-emerald-600 dark:hover:text-emerald-400 truncate"
-                                onClick={() => { setEditingCatId(c.id); setEditingName(c.name) }}
-                                title="Cliquer pour renommer"
-                              >
-                                {c.name}
-                              </span>
-                            )}
-                            {/* Account assignment badge / selector */}
-                            {editingAccountCatId === c.id ? (
-                              <select
-                                autoFocus
-                                value={c.account_id ?? ''}
-                                onChange={(e) => handleChangeAccount(c.id, e.target.value ? parseInt(e.target.value) : null)}
-                                onBlur={() => setEditingAccountCatId(null)}
-                                className="text-xs border border-emerald-400 rounded px-1.5 py-0.5 bg-white dark:bg-slate-900 text-gray-700 dark:text-gray-300 flex-shrink-0"
-                              >
-                                <option value="">Tous les comptes</option>
-                                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                              </select>
-                            ) : (
-                              <span
-                                onClick={() => setEditingAccountCatId(c.id)}
-                                className="text-xs px-1.5 py-0.5 rounded cursor-pointer flex-shrink-0 bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-gray-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
-                                title="Cliquer pour changer le compte"
-                              >
-                                {c.account_id ? (accMap[c.account_id] ?? `#${c.account_id}`) : 'Tous'}
-                              </span>
-                            )}
+              <div className="grid grid-cols-4 gap-3">
+                {typeOrder.map(typeKey => {
+                  const items = typeGroups[typeKey] ?? []
+                  return (
+                    <div key={typeKey}>
+                      <div className="mb-1.5">
+                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${typeBadge[typeKey]}`}>
+                          {typeKey}
+                        </span>
+                      </div>
+                      <div className="space-y-0.5">
+                        {items.map((c) => (
+                          <div key={c.id} className="flex items-center justify-between py-1 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 group">
+                            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                              <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c.color }} />
+                              {editingCatId === c.id ? (
+                                <input
+                                  autoFocus
+                                  value={editingName}
+                                  onChange={(e) => setEditingName(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleRename(c.id)
+                                    if (e.key === 'Escape') setEditingCatId(null)
+                                  }}
+                                  onBlur={() => handleRename(c.id)}
+                                  className="text-sm border border-emerald-400 rounded px-2 py-0.5 bg-white dark:bg-slate-900 text-gray-900 dark:text-white w-full"
+                                />
+                              ) : (
+                                <span
+                                  className="text-sm text-gray-900 dark:text-white cursor-pointer hover:text-emerald-600 dark:hover:text-emerald-400 truncate"
+                                  onClick={() => { setEditingCatId(c.id); setEditingName(c.name) }}
+                                  title="Cliquer pour renommer"
+                                >
+                                  {c.name}
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => handleDelete(c.id)}
+                              className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-1"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
                           </div>
-                          <button
-                            onClick={() => handleDelete(c.id)}
-                            className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                          >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        </div>
-                      ))}
+                        ))}
+                        {items.length === 0 && (
+                          <p className="text-xs text-gray-300 dark:text-slate-600 italic py-2 px-2">—</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )
-            })}
+                  )
+                })}
+              </div>
             </div>
           )
         })}

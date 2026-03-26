@@ -64,6 +64,3 @@ npm run dev
 ## Tech Stack
 - **Backend**: FastAPI, SQLAlchemy (async), SQLite, scikit-learn
 - **Frontend**: React, TypeScript, Vite, Tailwind CSS, Recharts, AG Grid, Zustand
-
-
-Working ?

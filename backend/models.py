@@ -2,7 +2,7 @@ import enum
 from datetime import datetime, date
 from sqlalchemy import (
     Column, Integer, String, Boolean, Date, DateTime,
-    ForeignKey, Enum, JSON, UniqueConstraint
+    ForeignKey, Enum, JSON, UniqueConstraint, Index
 )
 from sqlalchemy.orm import relationship
 from database import Base
@@ -60,7 +60,12 @@ class Transaction(Base):
     account = relationship("Account", back_populates="transactions")
     category = relationship("Category", back_populates="transactions")
 
-    __table_args__ = (UniqueConstraint("import_hash", name="uq_import_hash"),)
+    __table_args__ = (
+        UniqueConstraint("import_hash", name="uq_import_hash"),
+        Index("ix_transactions_date", "date"),
+        Index("ix_transactions_account_date", "account_id", "date"),
+        Index("ix_transactions_category", "category_id"),
+    )
 
 
 class Category(Base):

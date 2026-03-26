@@ -32,7 +32,8 @@ export default function Analytics() {
   const [recurring, setRecurring] = useState<RecurringTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedAccountIds, setSelectedAccountIds] = useState<number[] | null>(null)
-  const [expandedCategoryId, setExpandedCategoryId] = useState<number | null>(null)
+  // Use undefined = nothing expanded, null = uncategorized expanded, number = specific category
+  const [expandedCategoryId, setExpandedCategoryId] = useState<number | null | undefined>(undefined)
   const [categoryTxns, setCategoryTxns] = useState<Transaction[]>([])
   const [categoryTxnsLoading, setCategoryTxnsLoading] = useState(false)
 
@@ -64,13 +65,13 @@ export default function Analytics() {
 
   // Reset expanded category when filters change
   useEffect(() => {
-    setExpandedCategoryId(null)
+    setExpandedCategoryId(undefined)
     setCategoryTxns([])
   }, [dateFrom, dateTo, selectedAccountIds])
 
   const handleCategoryClick = (categoryId: number | null) => {
-    if (expandedCategoryId === categoryId) {
-      setExpandedCategoryId(null)
+    if (expandedCategoryId !== undefined && expandedCategoryId === categoryId) {
+      setExpandedCategoryId(undefined)
       setCategoryTxns([])
       return
     }
@@ -146,7 +147,7 @@ export default function Analytics() {
                     >
                       <span className="text-gray-700 dark:text-slate-300 flex items-center gap-1.5">
                         <span className="text-xs text-gray-400 dark:text-slate-500 w-4">
-                          {expandedCategoryId === b.category_id ? '▼' : '▶'}
+                          {expandedCategoryId !== undefined && expandedCategoryId === b.category_id ? '▼' : '▶'}
                         </span>
                         {b.category_name}
                       </span>
@@ -156,7 +157,7 @@ export default function Analytics() {
                         <span className="text-gray-400 dark:text-slate-500 w-10 text-right">{b.percentage.toFixed(1)}%</span>
                       </div>
                     </div>
-                    {expandedCategoryId === b.category_id && (
+                    {expandedCategoryId !== undefined && expandedCategoryId === b.category_id && (
                       <div className="ml-6 mt-1 mb-3">
                         {categoryTxnsLoading ? (
                           <div className="flex items-center justify-center py-4">

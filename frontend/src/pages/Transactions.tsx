@@ -116,43 +116,63 @@ export default function Transactions() {
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Transactions</h2>
           <span className="text-sm text-gray-500">{filteredTxns.length} transaction{filteredTxns.length !== 1 ? 's' : ''}</span>
         </div>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors"
-        >
-          + Nouvelle transaction
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            href={exportUrl}
+            download="transactions.csv"
+            className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Exporter CSV
+          </a>
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors"
+          >
+            + Nouvelle transaction
+          </button>
+        </div>
       </div>
 
-      {/* Month timeline slider */}
+      {/* Month timeline — continuous rolling strip */}
       {availableMonths.length > 0 && (
-        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2">
-          <div ref={timelineRef} className="flex items-center gap-1 overflow-x-auto scrollbar-thin pb-1">
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg overflow-hidden">
+          <div ref={timelineRef} className="flex overflow-x-auto scrollbar-thin">
             <button
               onClick={() => setSelectedMonth(null)}
-              className={`flex-shrink-0 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+              className={`flex-shrink-0 px-4 py-2 text-xs font-semibold border-r border-gray-200 dark:border-slate-700 transition-colors ${
                 selectedMonth === null
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800'
+                  ? 'bg-emerald-600 text-white'
+                  : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
               }`}
             >
               Tout
             </button>
-            {availableMonths.map((ym) => (
-              <button
-                key={ym}
-                onClick={() => setSelectedMonth(ym === selectedMonth ? null : ym)}
-                className={`flex-shrink-0 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                  selectedMonth === ym
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : ym === currentYM
-                    ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/30'
-                    : 'text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800'
-                }`}
-              >
-                {formatMonthLabel(ym)}
-              </button>
-            ))}
+            {availableMonths.map((ym, idx) => {
+              const isSelected = selectedMonth === ym
+              const isCurrent = ym === currentYM
+              const prevYm = idx > 0 ? availableMonths[idx - 1] : null
+              const showYearSep = prevYm && prevYm.slice(0, 4) !== ym.slice(0, 4)
+              return (
+                <button
+                  key={ym}
+                  onClick={() => setSelectedMonth(ym === selectedMonth ? null : ym)}
+                  className={`flex-shrink-0 px-3 py-2 text-xs font-medium transition-colors border-r border-gray-100 dark:border-slate-800 ${
+                    showYearSep ? 'border-l-2 border-l-gray-300 dark:border-l-slate-600' : ''
+                  } ${
+                    isSelected
+                      ? 'bg-emerald-600 text-white'
+                      : isCurrent
+                      ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 font-semibold'
+                      : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {formatMonthLabel(ym)}
+                </button>
+              )
+            })}
           </div>
         </div>
       )}

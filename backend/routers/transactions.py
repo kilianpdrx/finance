@@ -34,7 +34,7 @@ async def list_transactions(
     is_internal_transfer: Optional[bool] = None,
     bank_name: Optional[str] = None,
     month: Optional[str] = None,
-    limit: int = Query(default=500, le=2000),
+    limit: int = Query(default=500, le=10000),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):

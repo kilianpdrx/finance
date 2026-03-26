@@ -46,6 +46,15 @@ async def lifespan(app: FastAPI):
             await db.execute(text("ALTER TABLE category_rules ADD COLUMN account_id INTEGER REFERENCES accounts(id)"))
             await db.commit()
 
+        # Create indexes if they don't exist (idempotent)
+        for idx_sql in [
+            "CREATE INDEX IF NOT EXISTS ix_transactions_date ON transactions(date)",
+            "CREATE INDEX IF NOT EXISTS ix_transactions_account_date ON transactions(account_id, date)",
+            "CREATE INDEX IF NOT EXISTS ix_transactions_category ON transactions(category_id)",
+        ]:
+            await db.execute(text(idx_sql))
+        await db.commit()
+
         # Seed expense_type for existing categories
         from models import Category
         from sqlalchemy import select
