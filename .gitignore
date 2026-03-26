@@ -1,0 +1,28 @@
+# Database & ML
+backend/data/finance.db
+backend/data/model.pkl
+backend/data/model_meta.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Environment
+.env
+.env.local
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
