@@ -3,8 +3,11 @@ import {
   Legend, ResponsiveContainer,
 } from 'recharts'
 
+import { currencySymbol } from '../../utils/currency'
+
 interface Props {
   data: Record<string, unknown>[]
+  currency?: string
 }
 
 function formatMonth(month: string): string {
@@ -15,7 +18,8 @@ function formatMonth(month: string): string {
 
 const COLORS = ['#10b981', '#22c55e', '#f97316', '#3b82f6', '#ec4899', '#f59e0b']
 
-export default function AccountBreakdown({ data }: Props) {
+export default function AccountBreakdown({ data, currency = 'EUR' }: Props) {
+  const sym = currencySymbol(currency)
   if (!data.length) {
     return <div className="flex items-center justify-center h-64 text-gray-400 dark:text-slate-500 text-sm">Aucune donnée</div>
   }
@@ -36,11 +40,11 @@ export default function AccountBreakdown({ data }: Props) {
         <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
         <XAxis dataKey="month" tick={{ fill: '#94a3b8', fontSize: 12 }} />
         <YAxis
-          tickFormatter={(v) => `${v.toLocaleString('fr-FR')} €`}
+          tickFormatter={(v) => `${v.toLocaleString('fr-FR')} ${sym}`}
           tick={{ fill: '#94a3b8', fontSize: 12 }}
         />
         <Tooltip
-          formatter={(value: number, name: string) => [`${value.toLocaleString('fr-FR')} €`, name]}
+          formatter={(value: number, name: string) => [`${value.toLocaleString('fr-FR')} ${sym}`, name]}
           contentStyle={{
             backgroundColor: '#1e293b',
             border: '1px solid #334155',

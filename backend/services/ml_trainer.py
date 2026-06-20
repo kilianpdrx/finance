@@ -84,6 +84,50 @@ def predict(description: str) -> Optional[int]:
         return None
 
 
+def suggest_rules(top_n: int = 5) -> list[dict]:
+    """Extract top TF-IDF features per category from the trained model and return suggested rules."""
+    if not MODEL_PATH.exists():
+        return []
+    try:
+        import numpy as np
+        with open(MODEL_PATH, "rb") as f:
+            pipeline = pickle.load(f)
+        tfidf = pipeline.named_steps['tfidf']
+        clf = pipeline.named_steps['clf']
+        feature_names = tfidf.get_feature_names_out()
+        suggestions = []
+        for i, category_id in enumerate(clf.classes_):
+            # For binary classification coef_ is 1D, for multi-class it's 2D
+            if len(clf.coef_.shape) == 1:
+                coefficients = clf.coef_
+            else:
+                coefficients = clf.coef_[i]
+            # Get top N features by coefficient weight
+            top_indices = np.argsort(coefficients)[-top_n * 2:][::-1]
+            conditions = []
+            for idx in top_indices:
+                feat = feature_names[idx]
+                # Filter: at least 3 chars, meaningful substring
+                if len(feat.strip()) >= 3 and coefficients[idx] > 0:
+                    conditions.append({
+                        "field": "description",
+                        "operator": "contains",
+                        "value": feat.strip(),
+                    })
+                if len(conditions) >= top_n:
+                    break
+            if conditions:
+                suggestions.append({
+                    "category_id": int(category_id),
+                    "conditions": conditions,
+                    "priority": 100,
+                    "logic_operator": "OR",
+                })
+        return suggestions
+    except Exception:
+        return []
+
+
 def get_status() -> dict:
     """Return model status metadata."""
     if not MODEL_PATH.exists():

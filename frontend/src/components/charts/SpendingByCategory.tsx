@@ -2,8 +2,11 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Sector } from 'recha
 import { useState } from 'react'
 import type { CategoryBreakdown } from '../../types'
 
+import { formatCents } from '../../utils/currency'
+
 interface Props {
   data: CategoryBreakdown[]
+  currency?: string
 }
 
 const COLORS = [
@@ -12,9 +15,6 @@ const COLORS = [
   '#6366f1', '#84cc16', '#94a3b8',
 ]
 
-function centsToEur(cents: number): string {
-  return `${(cents / 100).toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} €`
-}
 
 const renderActiveShape = (props: any) => {
   const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props as {
@@ -45,7 +45,7 @@ const renderActiveShape = (props: any) => {
 
 const MAX_SLICES = 8
 
-export default function SpendingByCategory({ data }: Props) {
+export default function SpendingByCategory({ data, currency = 'EUR' }: Props) {
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined)
 
   if (!data.length) {
@@ -106,7 +106,7 @@ export default function SpendingByCategory({ data }: Props) {
               ))}
             </Pie>
             <Tooltip
-              formatter={(value: number, name: string) => [centsToEur(value), name]}
+              formatter={(value: number, name: string) => [formatCents(value, currency), name]}
               contentStyle={{
                 backgroundColor: '#1e293b',
                 border: '1px solid #334155',
@@ -137,7 +137,7 @@ export default function SpendingByCategory({ data }: Props) {
               {entry.name}
             </span>
             <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex-shrink-0">
-              {centsToEur(entry.value)}
+              {formatCents(entry.value, currency)}
             </span>
             <span className="text-sm text-gray-500 dark:text-slate-400 flex-shrink-0 w-9 text-right">
               {entry.percentage.toFixed(0)}%

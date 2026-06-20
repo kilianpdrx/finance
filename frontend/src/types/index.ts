@@ -26,6 +26,16 @@ export interface Transaction {
   is_internal_transfer: boolean
   account_name: string | null
   import_hash: string
+  import_batch_id: number | null
+  created_at: string
+}
+
+export interface ImportBatch {
+  id: number
+  account_id: number
+  account_name: string | null
+  filename: string | null
+  transaction_count: number
   created_at: string
 }
 
@@ -37,6 +47,7 @@ export interface Category {
   icon: string
   is_income: boolean
   expense_type: 'fixed' | 'variable' | null
+  is_investment: boolean
   account_id: number | null
 }
 
@@ -47,6 +58,7 @@ export interface CategoryRule {
   priority: number
   is_active: boolean
   account_id: number | null
+  logic_operator: 'AND' | 'OR'
 }
 
 export interface BankProfile {
@@ -59,13 +71,6 @@ export interface BankProfile {
   detection_fingerprint: Record<string, unknown> | null
 }
 
-export interface ExchangeRate {
-  id: number
-  currency_code: string
-  rate_ten_thousandths: number  // 10000 = 1.0000 EUR
-  updated_at: string
-}
-
 export interface BudgetTableCell {
   month: string
   actual_cents: number
@@ -76,6 +81,7 @@ export interface BudgetTableRow {
   category_id: number | null
   category_name: string
   category_color: string
+  is_investment: boolean
   cells: BudgetTableCell[]
   total_actual_cents: number
   total_expected_cents: number
@@ -155,6 +161,7 @@ export interface ParsePreviewTransaction {
   category_id: number | null
   category_name: string | null
   is_duplicate: boolean
+  categorization_source: 'rule' | 'ml' | null
 }
 
 export interface ParsePreviewResponse {
@@ -179,6 +186,7 @@ export interface AccountBalanceSnapshot {
   account_id: number
   date: string
   amount_cents: number
+  contribution_cents: number
   currency: string
   notes: string | null
   created_at: string

@@ -13,11 +13,21 @@ logger = logging.getLogger(__name__)
 
 
 def _decode(file_bytes: bytes, encoding: str) -> str:
-    """Decode bytes, handling UTF-8 BOM transparently."""
+    """Decode bytes, trying the given encoding first then common fallbacks."""
+    encodings = [encoding]
     if encoding.lower() in ("utf-8", "utf8"):
-        # utf-8-sig strips the BOM if present, otherwise works like utf-8
-        return file_bytes.decode("utf-8-sig", errors="replace")
-    return file_bytes.decode(encoding, errors="replace")
+        encodings = ["utf-8-sig", "utf-8"]
+    # Always add fallbacks
+    for fallback in ["latin-1", "windows-1252"]:
+        if fallback not in encodings:
+            encodings.append(fallback)
+    for enc in encodings:
+        try:
+            return file_bytes.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    # Last resort
+    return file_bytes.decode("utf-8", errors="replace")
 
 
 def _parse_amount(value) -> int:
@@ -37,8 +47,9 @@ def _parse_amount(value) -> int:
         return 0
 
 
-def _compute_hash(date_str: str, description: str, amount_cents: int) -> str:
-    raw = f"{date_str}|{description}|{amount_cents}"
+def _compute_hash(date_str: str, description: str, amount_cents: int, is_debit: bool = True) -> str:
+    sign = "D" if is_debit else "C"
+    raw = f"{date_str}|{description}|{amount_cents}|{sign}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -170,7 +181,7 @@ def parse_csv(file_bytes: bytes, profile: BankProfile) -> list[TransactionCreate
         if balance_col and balance_col in df.columns:
             balance_after = _parse_amount(row[balance_col]) or None
 
-        import_hash = _compute_hash(str(parsed_date), description, amount_cents)
+        import_hash = _compute_hash(str(parsed_date), description, amount_cents, is_debit)
 
         transactions.append(TransactionCreate(
             account_id=0,  # set by upload router

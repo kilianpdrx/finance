@@ -47,7 +47,7 @@ async def update_category(category_id: int, payload: CategoryUpdate, db: AsyncSe
     cat = result.scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
-    for field, value in payload.model_dump(exclude_none=True).items():
+    for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(cat, field, value)
     await db.commit()
     await db.refresh(cat)
@@ -82,6 +82,11 @@ async def delete_category(category_id: int, replace_with_id: Optional[int] = Non
             .values(category_id=None)
         )
 
+    # Delete associated rules first
+    rules = await db.execute(select(CategoryRule).where(CategoryRule.category_id == category_id))
+    for rule in rules.scalars().all():
+        await db.delete(rule)
+
     await db.delete(cat)
     await db.commit()
 
@@ -104,7 +109,7 @@ async def rescan_categories(db: AsyncSession = Depends(get_db)):
             "currency": txn.currency,
             "account_id": txn.account_id
         }
-        new_cat_id = await categorize(txn_dict, db)
+        new_cat_id, _ = await categorize(txn_dict, db)
         if new_cat_id != txn.category_id:
             txn.category_id = new_cat_id
             updated += 1
@@ -118,6 +123,7 @@ async def rescan_categories(db: AsyncSession = Depends(get_db)):
 class RulePreviewRequest(BaseModel):
     conditions: List[RuleCondition]
     account_id: Optional[int] = None
+    logic_operator: str = "AND"
 
 
 @router.post("/rules/preview", response_model=List[TransactionOut])
@@ -157,7 +163,7 @@ async def preview_rule(
             "currency": txn.currency,
             "account_id": txn.account_id,
         }
-        if evaluate_conditions(txn_data, conditions_dicts):
+        if evaluate_conditions(txn_data, conditions_dicts, payload.logic_operator):
             out = TransactionOut.from_orm_with_display(txn)
             if txn.account:
                 out.account_name = txn.account.name
@@ -207,6 +213,62 @@ async def update_rule(rule_id: int, payload: CategoryRuleUpdate, db: AsyncSessio
     await db.commit()
     await db.refresh(rule)
     return rule
+
+
+class MergeRulesRequest(BaseModel):
+    rule_ids: List[int]
+    logic_operator: str = "OR"
+
+
+@router.post("/rules/merge", response_model=CategoryRuleOut)
+async def merge_rules(payload: MergeRulesRequest, db: AsyncSession = Depends(get_db)):
+    """Merge multiple rules into one. All conditions are combined. Uses the first rule's category/priority/account."""
+    if len(payload.rule_ids) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 rules required to merge")
+
+    result = await db.execute(
+        select(CategoryRule).where(CategoryRule.id.in_(payload.rule_ids))
+    )
+    rules = result.scalars().all()
+    if len(rules) != len(payload.rule_ids):
+        raise HTTPException(status_code=404, detail="One or more rules not found")
+
+    # Use the first rule as base
+    first = sorted(rules, key=lambda r: (r.priority, r.id))[0]
+
+    # Combine all conditions
+    all_conditions = []
+    for rule in rules:
+        if rule.conditions:
+            all_conditions.extend(rule.conditions)
+
+    # Deduplicate conditions
+    seen = set()
+    unique_conditions = []
+    for cond in all_conditions:
+        key = (cond.get("field", ""), cond.get("operator", ""), cond.get("value", ""))
+        if key not in seen:
+            seen.add(key)
+            unique_conditions.append(cond)
+
+    # Create new merged rule
+    merged = CategoryRule(
+        conditions=unique_conditions,
+        category_id=first.category_id,
+        priority=first.priority,
+        is_active=True,
+        account_id=first.account_id,
+        logic_operator=payload.logic_operator,
+    )
+    db.add(merged)
+
+    # Delete old rules
+    for rule in rules:
+        await db.delete(rule)
+
+    await db.commit()
+    await db.refresh(merged)
+    return merged
 
 
 @router.delete("/rules/{rule_id}", status_code=204)

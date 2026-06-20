@@ -6,8 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import CategoryRule
 
 
-def evaluate_conditions(txn_data: dict, conditions: List[dict]) -> bool:
-    """Evaluate a list of conditions against a transaction dict. All must match."""
+def evaluate_conditions(txn_data: dict, conditions: List[dict], logic_operator: str = "AND") -> bool:
+    """Evaluate a list of conditions against a transaction dict.
+    logic_operator='AND': all must match. logic_operator='OR': at least one must match."""
     description = str(txn_data.get('description', '')).lower()
     t_amount_cents = int(txn_data.get('amount_cents', 0))
     t_amount = t_amount_cents / 100.0
@@ -16,6 +17,7 @@ def evaluate_conditions(txn_data: dict, conditions: List[dict]) -> bool:
     currency = str(txn_data.get('currency', '')).lower()
     account_id = str(txn_data.get('account_id', ''))
 
+    results = []
     for condition in conditions:
         field_name = condition.get('field', '')
         operator = condition.get('operator', '')
@@ -44,7 +46,8 @@ def evaluate_conditions(txn_data: dict, conditions: List[dict]) -> bool:
             target = account_id
             val = str(val)
         else:
-            return False
+            results.append(False)
+            continue
 
         matched = False
         if type(target) is str:
@@ -74,14 +77,16 @@ def evaluate_conditions(txn_data: dict, conditions: List[dict]) -> bool:
             if operator == 'equals':
                 matched = target == val
 
-        if not matched:
-            return False
+        results.append(matched)
 
-    return True
+    if not results:
+        return False
+    return all(results) if logic_operator != "OR" else any(results)
 
 
-async def categorize(txn_data: dict, db: AsyncSession) -> Optional[int]:
-    """Return category_id for the given transaction dictionary, or None."""
+async def categorize(txn_data: dict, db: AsyncSession) -> tuple[Optional[int], Optional[str]]:
+    """Return (category_id, source) for the given transaction dictionary.
+    source is 'rule', 'ml', or None."""
     result = await db.execute(
         select(CategoryRule)
         .where(CategoryRule.is_active == True)
@@ -97,16 +102,17 @@ async def categorize(txn_data: dict, db: AsyncSession) -> Optional[int]:
         if rule.account_id is not None and str(rule.account_id) != str(txn_data.get('account_id', '')):
             continue
 
-        if evaluate_conditions(txn_data, rule.conditions):
-            return rule.category_id
+        logic_op = getattr(rule, 'logic_operator', 'AND') or 'AND'
+        if evaluate_conditions(txn_data, rule.conditions, logic_op):
+            return rule.category_id, "rule"
 
     # ML fallback
     try:
         from services.ml_trainer import predict
         cat_id = predict(str(txn_data.get('description', '')))
         if cat_id is not None:
-            return cat_id
+            return cat_id, "ml"
     except Exception:
         pass
 
-    return None
+    return None, None

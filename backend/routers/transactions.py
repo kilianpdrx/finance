@@ -1,5 +1,6 @@
 import csv
 import io
+import unicodedata
 from typing import List, Optional
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,9 +10,15 @@ from sqlalchemy import select, and_, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
-from models import Transaction, Account, Category
+from models import Transaction, Account, Category, ImportBatch
 from schemas import TransactionOut, TransactionUpdate, TransactionMeta, TransactionCreateManual
 from utils import generate_import_hash
+
+
+def strip_accents(text: str) -> str:
+    """Remove accents/diacritics from a string."""
+    nfkd = unicodedata.normalize('NFKD', text)
+    return ''.join(c for c in nfkd if not unicodedata.combining(c))
 
 router = APIRouter()
 
@@ -27,6 +34,7 @@ class BulkCategoryUpdate(BaseModel):
 async def list_transactions(
     account_id: Optional[int] = None,
     category_id: Optional[int] = None,
+    uncategorized: Optional[bool] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     search: Optional[str] = None,
@@ -34,6 +42,7 @@ async def list_transactions(
     is_internal_transfer: Optional[bool] = None,
     bank_name: Optional[str] = None,
     month: Optional[str] = None,
+    import_batch_id: Optional[int] = None,
     limit: int = Query(default=500, le=10000),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -41,7 +50,9 @@ async def list_transactions(
     filters = []
     if account_id is not None:
         filters.append(Transaction.account_id == account_id)
-    if category_id is not None:
+    if uncategorized:
+        filters.append(Transaction.category_id == None)
+    elif category_id is not None:
         filters.append(Transaction.category_id == category_id)
     if date_from is not None:
         filters.append(Transaction.date >= date_from)
@@ -63,6 +74,8 @@ async def list_transactions(
         )
         account_ids = [r[0] for r in account_ids_q]
         filters.append(Transaction.account_id.in_(account_ids))
+    if import_batch_id is not None:
+        filters.append(Transaction.import_batch_id == import_batch_id)
 
     stmt = (
         select(Transaction)
@@ -102,6 +115,27 @@ async def transaction_meta(db: AsyncSession = Depends(get_db)):
         available_months=available_months,
         available_banks=available_banks,
     )
+
+
+@router.get("/batches")
+async def list_batches(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ImportBatch)
+        .options(selectinload(ImportBatch.account))
+        .order_by(ImportBatch.created_at.desc())
+    )
+    batches = result.scalars().all()
+    return [
+        {
+            "id": b.id,
+            "account_id": b.account_id,
+            "account_name": b.account.name if b.account else None,
+            "filename": b.filename,
+            "transaction_count": b.transaction_count,
+            "created_at": b.created_at.isoformat() if b.created_at else None,
+        }
+        for b in batches
+    ]
 
 
 @router.post("/detect-transfers", status_code=200)
@@ -212,6 +246,52 @@ async def bulk_delete_transactions(
     await db.commit()
 
 
+class BulkTransferUpdate(BaseModel):
+    ids: List[int]
+    is_internal_transfer: bool = True
+
+
+@router.post("/bulk-update-transfer", status_code=200)
+async def bulk_update_transfer(
+    payload: BulkTransferUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark/unmark multiple transactions as internal transfers."""
+    if not payload.ids:
+        return {"updated": 0}
+    from sqlalchemy import update
+    await db.execute(
+        update(Transaction)
+        .where(Transaction.id.in_(payload.ids))
+        .values(is_internal_transfer=payload.is_internal_transfer)
+    )
+    await db.commit()
+    return {"updated": len(payload.ids)}
+
+
+class BulkReviewUpdate(BaseModel):
+    ids: List[int]
+    is_manually_reviewed: bool = True
+
+
+@router.post("/bulk-update-reviewed", status_code=200)
+async def bulk_update_reviewed(
+    payload: BulkReviewUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark multiple transactions as reviewed (or unreviewed) at once."""
+    if not payload.ids:
+        return {"updated": 0}
+    from sqlalchemy import update
+    await db.execute(
+        update(Transaction)
+        .where(Transaction.id.in_(payload.ids))
+        .values(is_manually_reviewed=payload.is_manually_reviewed)
+    )
+    await db.commit()
+    return {"updated": len(payload.ids)}
+
+
 @router.post("/bulk-update-category", status_code=200)
 async def bulk_update_category(
     payload: BulkCategoryUpdate,
@@ -250,6 +330,7 @@ async def export_transactions(
 
     stmt = (
         select(Transaction)
+        .options(selectinload(Transaction.account), selectinload(Transaction.category))
         .where(and_(*filters) if filters else True)
         .order_by(Transaction.date.desc())
     )
@@ -258,9 +339,19 @@ async def export_transactions(
 
     output = io.StringIO()
     writer = csv.writer(output, delimiter=";")
-    writer.writerow(["id", "date", "description", "amount_cents", "is_debit", "category_id", "notes", "import_hash", "is_internal_transfer"])
+    writer.writerow(["Date", "Compte", "Description", "Montant", "Devise", "Categorie"])
     for t in rows:
-        writer.writerow([t.id, t.date, t.description, t.amount_cents, t.is_debit, t.category_id, t.notes, t.import_hash, t.is_internal_transfer])
+        amount = t.amount_cents / 100
+        if t.is_debit:
+            amount = -amount
+        writer.writerow([
+            t.date,
+            strip_accents(t.account.name) if t.account else "",
+            strip_accents(t.description),
+            f"{amount:.2f}",
+            strip_accents(t.currency or "EUR"),
+            strip_accents(t.category.name) if t.category else "",
+        ])
 
     output.seek(0)
     return StreamingResponse(
@@ -289,7 +380,7 @@ async def update_transaction(
     txn = result.scalar_one_or_none()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    for field, value in payload.model_dump(exclude_none=True).items():
+    for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(txn, field, value)
     await db.commit()
     await db.refresh(txn)
@@ -304,3 +395,5 @@ async def delete_transaction(transaction_id: int, db: AsyncSession = Depends(get
         raise HTTPException(status_code=404, detail="Transaction not found")
     await db.delete(txn)
     await db.commit()
+
+

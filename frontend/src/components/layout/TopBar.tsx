@@ -5,6 +5,7 @@ const PRESETS = [
   { value: 'mois-dernier', label: 'Mois dernier' },
   { value: '3-mois', label: '3 mois' },
   { value: '6-mois', label: '6 mois' },
+  { value: '1-an', label: 'Sur un an' },
   { value: 'cette-annee', label: 'Cette année' },
   { value: 'tout', label: 'Tout' },
 ] as const

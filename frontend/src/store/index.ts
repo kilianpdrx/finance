@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import { format, startOfMonth, endOfMonth, subMonths, startOfYear } from 'date-fns'
 import type { Account } from '../types'
 
-type Preset = 'ce-mois' | 'mois-dernier' | '3-mois' | '6-mois' | 'cette-annee' | 'tout' | 'custom'
+type Preset = 'ce-mois' | 'mois-dernier' | '3-mois' | '6-mois' | '1-an' | 'cette-annee' | 'tout' | 'custom'
 
 function presetToDates(preset: Preset): { dateFrom: string; dateTo: string } {
   const today = new Date()
@@ -29,6 +29,11 @@ function presetToDates(preset: Preset): { dateFrom: string; dateTo: string } {
       return {
         dateFrom: format(subMonths(today, 6), 'yyyy-MM-dd'),
         dateTo: format(today, 'yyyy-MM-dd'),
+      }
+    case '1-an':
+      return {
+        dateFrom: format(startOfMonth(subMonths(today, 12)), 'yyyy-MM-dd'),
+        dateTo: format(endOfMonth(today), 'yyyy-MM-dd'),
       }
     case 'cette-annee':
       return {

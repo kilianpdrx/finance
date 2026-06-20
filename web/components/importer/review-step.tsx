@@ -1,0 +1,153 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
+import type { Account, Category } from "@/lib/api/hooks";
+import type { ParsePreviewTransaction } from "@/lib/api/upload";
+
+const SELECT_CLS = "rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
+
+function money(cents: number, isDebit: boolean) {
+  const sign = isDebit ? "−" : "+";
+  return `${sign}${(Math.abs(cents) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2 })} €`;
+}
+
+export function ReviewStep({
+  transactions, categories, accounts, selectedAccount, onSelectAccount, loading, error, onConfirm, onBack,
+}: {
+  transactions: ParsePreviewTransaction[];
+  categories: Category[];
+  accounts: Account[];
+  selectedAccount: string;
+  onSelectAccount: (v: string) => void;
+  loading: boolean;
+  error: string;
+  onConfirm: (overrides: Record<string, number | null>, force: string[]) => void;
+  onBack: () => void;
+}) {
+  const [overrides, setOverrides] = useState<Record<string, number | null>>({});
+  const [filterUncat, setFilterUncat] = useState(false);
+  const [showDuplicates, setShowDuplicates] = useState(false);
+  const [force, setForce] = useState<Set<string>>(new Set());
+
+  const catId = (t: ParsePreviewTransaction) => (t.import_hash in overrides ? overrides[t.import_hash] : t.category_id);
+  const duplicateTxns = useMemo(() => transactions.filter((t) => t.is_duplicate), [transactions]);
+  const duplicates = duplicateTxns.length;
+  const forcedCount = duplicateTxns.filter((t) => force.has(t.import_hash)).length;
+  const uncategorized = transactions.filter((t) => (!t.is_duplicate || force.has(t.import_hash)) && catId(t) === null).length;
+  const toImport = transactions.filter((t) => !t.is_duplicate).length + forcedCount;
+  const canImport = toImport > 0 && !!selectedAccount;
+
+  const displayed = (filterUncat
+    ? transactions.filter((t) => (!t.is_duplicate || force.has(t.import_hash)) && catId(t) === null)
+    : transactions.filter((t) => !t.is_duplicate || force.has(t.import_hash)));
+
+  const toggleForce = (h: string) => setForce((p) => { const n = new Set(p); n.has(h) ? n.delete(h) : n.add(h); return n; });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Révision avant import</h2>
+        <Button variant="ghost" size="sm" onClick={onBack}>← Retour</Button>
+      </div>
+
+      <Card className="flex items-center gap-3 p-3">
+        <Label className="whitespace-nowrap">Compte destination</Label>
+        <select value={selectedAccount} onChange={(e) => onSelectAccount(e.target.value)} className={`${SELECT_CLS} flex-1`}>
+          {accounts.length === 0 ? <option value="">Aucun compte</option> : accounts.map((a) => <option key={a.id} value={String(a.id)}>{a.name} ({a.bank_name})</option>)}
+        </select>
+      </Card>
+
+      <div className="grid grid-cols-3 gap-3">
+        <Card className="p-3 text-center"><p className="text-2xl font-bold text-positive">{toImport}</p><p className="mt-0.5 text-xs text-positive">à importer</p></Card>
+        <Card className={cn("p-3 text-center", uncategorized > 0 && "border-warning/40")}>
+          <p className={cn("text-2xl font-bold", uncategorized > 0 ? "text-warning" : "text-muted-foreground")}>{uncategorized}</p>
+          <p className={cn("mt-0.5 text-xs", uncategorized > 0 ? "text-warning" : "text-muted-foreground")}>non catégorisées</p>
+        </Card>
+        <Card onClick={() => duplicates > 0 && setShowDuplicates((v) => !v)} className={cn("p-3 text-center", duplicates > 0 && "cursor-pointer")}>
+          <p className={cn("text-2xl font-bold", duplicates > 0 ? "text-warning" : "text-muted-foreground")}>{duplicates}</p>
+          <p className={cn("mt-0.5 text-xs", duplicates > 0 ? "text-warning" : "text-muted-foreground")}>doublons {force.size > 0 ? `(${force.size} inclus)` : "· cliquer"}</p>
+        </Card>
+      </div>
+
+      {showDuplicates && duplicates > 0 && (
+        <Card className="overflow-hidden p-0">
+          <div className="flex items-center justify-between bg-warning/10 px-4 py-2.5">
+            <p className="text-sm font-medium text-warning">{duplicates} doublon(s) — déjà importé(s)</p>
+            <Button variant="outline" size="sm" onClick={() => setForce(force.size < duplicates ? new Set(duplicateTxns.map((t) => t.import_hash)) : new Set())}>
+              {force.size < duplicates ? "Tout inclure" : "Tout exclure"}
+            </Button>
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            <table className="w-full text-sm">
+              <tbody>
+                {duplicateTxns.map((t) => (
+                  <tr key={t.import_hash} className={cn("border-t border-border", force.has(t.import_hash) && "bg-positive/8")}>
+                    <td className="w-8 px-4 py-1.5"><Checkbox checked={force.has(t.import_hash)} onCheckedChange={() => toggleForce(t.import_hash)} /></td>
+                    <td className="nums px-2 py-1.5 text-xs text-muted-foreground">{t.date}</td>
+                    <td className="max-w-xs truncate px-2 py-1.5 text-xs">{t.description}</td>
+                    <td className={cn("nums whitespace-nowrap px-2 py-1.5 text-right text-xs font-medium", t.is_debit ? "text-negative" : "text-positive")}>{money(t.amount_cents, t.is_debit)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+        <Checkbox checked={filterUncat} onCheckedChange={(v) => setFilterUncat(!!v)} />
+        Afficher seulement les non catégorisées ({uncategorized})
+      </label>
+
+      <Card className="overflow-hidden p-0">
+        <div className="max-h-96 overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+              <tr>
+                <th className="w-24 px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Date</th>
+                <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Description</th>
+                <th className="w-28 px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Montant</th>
+                <th className="w-44 px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Catégorie</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayed.length === 0 && (
+                <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">{filterUncat ? "Toutes catégorisées !" : "Aucune transaction à importer."}</td></tr>
+              )}
+              {displayed.map((t) => {
+                const cid = catId(t);
+                const uncat = cid === null;
+                return (
+                  <tr key={t.import_hash} className={cn("border-t border-border", uncat ? "bg-warning/8" : t.categorization_source === "rule" ? "bg-positive/6" : t.categorization_source === "ml" ? "bg-info/6" : "")}>
+                    <td className="nums whitespace-nowrap px-4 py-2 text-xs text-muted-foreground">{t.date}</td>
+                    <td className="max-w-xs px-4 py-2 text-xs"><span className="block truncate" title={t.description}>{t.description}</span></td>
+                    <td className={cn("nums whitespace-nowrap px-4 py-2 text-right text-xs font-medium", t.is_debit ? "text-negative" : "text-positive")}>{money(t.amount_cents, t.is_debit)}</td>
+                    <td className="px-4 py-2">
+                      <select value={cid ?? ""} onChange={(e) => setOverrides((p) => ({ ...p, [t.import_hash]: e.target.value ? Number(e.target.value) : null }))} className={cn(SELECT_CLS, "w-full text-xs", uncat && "border-warning/50")}>
+                        <option value="">Non catégorisé</option>
+                        {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {error && <div className="rounded-lg border border-negative/30 bg-negative/10 p-3 text-sm text-negative">{error}</div>}
+
+      <div className="flex justify-end">
+        <Button disabled={loading || !canImport} onClick={() => onConfirm(overrides, [...force])}>
+          {loading ? "Import en cours…" : `Importer ${toImport} transaction${toImport !== 1 ? "s" : ""}`}
+        </Button>
+      </div>
+    </div>
+  );
+}

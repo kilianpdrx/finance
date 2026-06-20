@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { useDateRangeStore, useAccountsStore } from '../store'
 import { transactions as txnApi, categories as catApi, accounts as accApi } from '../api/client'
-import type { Transaction, Category } from '../types'
+import type { Transaction, Category, ImportBatch } from '../types'
 import TransactionTable from '../components/tables/TransactionTable'
 import { format, parse, startOfMonth, endOfMonth, subMonths, addMonths } from 'date-fns'
 import { fr } from 'date-fns/locale'
@@ -23,6 +23,8 @@ export default function Transactions() {
   const [formCategoryId, setFormCategoryId] = useState('')
   const [formIsDebit, setFormIsDebit] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [batches, setBatches] = useState<ImportBatch[]>([])
+  const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null)
 
   const loadData = useCallback(() => {
     setLoading(true)
@@ -38,6 +40,7 @@ export default function Transactions() {
 
   useEffect(() => {
     catApi.list().then(setCats).catch(console.error)
+    txnApi.listBatches().then(setBatches).catch(console.error)
     if (!accounts.length) {
       accApi.list().then(setAccounts).catch(console.error)
     }
@@ -54,11 +57,13 @@ export default function Transactions() {
     return Array.from(monthSet).sort()
   }, [txns])
 
-  // Filter transactions by selected month
+  // Filter transactions by selected month and/or batch
   const filteredTxns = useMemo(() => {
-    if (!selectedMonth) return txns
-    return txns.filter(t => t.date?.startsWith(selectedMonth))
-  }, [txns, selectedMonth])
+    let result = txns
+    if (selectedMonth) result = result.filter(t => t.date?.startsWith(selectedMonth))
+    if (selectedBatchId) result = result.filter(t => t.import_batch_id === selectedBatchId)
+    return result
+  }, [txns, selectedMonth, selectedBatchId])
 
   const timelineRef = useRef<HTMLDivElement>(null)
 
@@ -117,6 +122,20 @@ export default function Transactions() {
           <span className="text-sm text-gray-500">{filteredTxns.length} transaction{filteredTxns.length !== 1 ? 's' : ''}</span>
         </div>
         <div className="flex items-center gap-2">
+          {batches.length > 0 && (
+            <select
+              value={selectedBatchId ?? ''}
+              onChange={(e) => setSelectedBatchId(e.target.value ? parseInt(e.target.value) : null)}
+              className="text-sm border border-gray-300 dark:border-slate-600 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300"
+            >
+              <option value="">Tous les imports</option>
+              {batches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.filename ?? 'Import'} — {b.account_name ?? '?'} ({b.transaction_count}) — {new Date(b.created_at).toLocaleDateString('fr-FR')}
+                </option>
+              ))}
+            </select>
+          )}
           <a
             href={exportUrl}
             download="transactions.csv"
@@ -189,6 +208,7 @@ export default function Transactions() {
             accounts={accounts}
             onUpdated={loadData}
             exportUrl={exportUrl}
+            selectAll={selectedBatchId != null}
           />
         </div>
       )}

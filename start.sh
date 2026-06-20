@@ -4,8 +4,14 @@ set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 BACKEND="$ROOT/backend"
 FRONTEND="$ROOT/frontend"
+WEB="$ROOT/web"
 
-echo "=== Finance Dashboard ==="
+# Which frontend to run: "web" (new Next.js app, default) or "legacy" (old Vite SPA).
+UI="${UI:-web}"
+# MODE: "dev" (default) or "prod" (build then start).
+MODE="${MODE:-dev}"
+
+echo "=== Finance Dashboard (UI=$UI, MODE=$MODE) ==="
 
 # Activate conda env if available
 if command -v conda &>/dev/null; then
@@ -17,37 +23,73 @@ fi
 echo "Installing backend dependencies..."
 pip install -r "$BACKEND/requirements.txt" -q
 
+if [ "$UI" = "legacy" ]; then
+  UI_DIR="$FRONTEND"
+  UI_PORT=5173
+else
+  UI_DIR="$WEB"
+  UI_PORT=3000
+fi
+
 # Install frontend deps
-echo "Installing frontend dependencies..."
-cd "$FRONTEND" && npm install --silent && cd "$ROOT"
+echo "Installing frontend dependencies ($UI_DIR)..."
+cd "$UI_DIR" && npm install --silent && cd "$ROOT"
 
 # Start backend
-echo "Starting backend on http://localhost:8000 ..."
-cd "$BACKEND"
-uvicorn main:app --reload --port 8000 &
-BACKEND_PID=$!
-cd "$ROOT"
+if [ "$MODE" = "prod" ]; then
+  echo "Starting backend on http://localhost:8000 (production) ..."
+  cd "$BACKEND"
+  uvicorn main:app --port 8000 --workers 2 &
+  BACKEND_PID=$!
+  cd "$ROOT"
+else
+  echo "Starting backend on http://localhost:8000 (dev, --reload) ..."
+  cd "$BACKEND"
+  uvicorn main:app --reload --port 8000 &
+  BACKEND_PID=$!
+  cd "$ROOT"
+fi
+
+# Build frontend if production mode
+if [ "$MODE" = "prod" ] && [ "$UI" = "web" ]; then
+  echo "Building Next.js app..."
+  cd "$UI_DIR"
+  PATH="/opt/homebrew/bin:$PATH" npm run build
+  cd "$ROOT"
+fi
 
 # Start frontend
-echo "Starting frontend on http://localhost:5173 ..."
-cd "$FRONTEND"
-npm run dev &
-FRONTEND_PID=$!
-cd "$ROOT"
+if [ "$MODE" = "prod" ] && [ "$UI" = "web" ]; then
+  echo "Starting frontend on http://localhost:$UI_PORT (production) ..."
+  cd "$UI_DIR"
+  PATH="/opt/homebrew/bin:$PATH" npm run start &
+  FRONTEND_PID=$!
+  cd "$ROOT"
+else
+  echo "Starting frontend on http://localhost:$UI_PORT (dev) ..."
+  cd "$UI_DIR"
+  PATH="/opt/homebrew/bin:$PATH" npm run dev &
+  FRONTEND_PID=$!
+  cd "$ROOT"
+fi
 
 echo ""
 echo "Both servers started."
-echo "  Frontend: http://localhost:5173"
+echo "  Frontend: http://localhost:$UI_PORT"
 echo "  Backend:  http://localhost:8000"
 echo "  API docs: http://localhost:8000/docs"
 echo ""
+echo "Tip: run 'UI=legacy ./start.sh' for the old Vite interface."
+echo "      run 'MODE=prod ./start.sh' for a production build."
 echo "Press Ctrl+C to stop both."
 
 # Wait and cleanup on exit
 cleanup() {
   echo "Stopping servers..."
   kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
+  wait $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
+  exit 0
 }
-trap cleanup EXIT INT TERM
+trap cleanup INT TERM
 
-wait $BACKEND_PID $FRONTEND_PID
+wait $BACKEND_PID $FRONTEND_PID 2>/dev/null

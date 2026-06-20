@@ -1,15 +1,14 @@
 import { useEffect, useState, useMemo } from 'react'
-import { categories as catApi, ml, bankProfiles as bankProfilesApi, settingsApi, accounts as accApi } from '../api/client'
+import { categories as catApi, ml, bankProfiles as bankProfilesApi, accounts as accApi } from '../api/client'
 import { useAccountsStore } from '../store'
-import type { Category, CategoryRule, MLStatus, BankProfile, ExchangeRate, Account, Transaction } from '../types'
+import type { Category, CategoryRule, MLStatus, BankProfile, Account, Transaction } from '../types'
 
-type Tab = 'categories' | 'regles' | 'banques' | 'devises' | 'modele'
+type Tab = 'categories' | 'regles' | 'banques' | 'modele'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'categories', label: 'Catégories' },
   { id: 'regles', label: 'Règles' },
   { id: 'banques', label: 'Profils bancaires' },
-  { id: 'devises', label: 'Devises' },
   { id: 'modele', label: 'Modèle ML' },
 ]
 
@@ -46,7 +45,6 @@ export default function Settings() {
       {tab === 'categories' && <CategoriesTab accounts={accounts} />}
       {tab === 'regles' && <ReglesTab accounts={accounts} />}
       {tab === 'banques' && <BankProfilesTab />}
-      {tab === 'devises' && <DevisesTab />}
       {tab === 'modele' && <ModeleTab />}
     </div>
   )
@@ -57,20 +55,18 @@ export default function Settings() {
 function CategoriesTab({ accounts }: { accounts: Account[] }) {
   const [cats, setCats] = useState<Category[]>([])
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ name: '', color: '#10b981', icon: 'tag', is_income: false, expense_type: null as 'fixed' | 'variable' | null, account_id: null as number | null })
+  const [form, setForm] = useState({ name: '', color: '#10b981', icon: 'tag', is_income: false, expense_type: 'variable' as 'fixed' | 'variable', is_investment: false, account_id: null as number | null })
   const [rescanning, setRescanning] = useState(false)
   const [rescanResult, setRescanResult] = useState<{ updated: number; total: number } | null>(null)
-  const [editingCatId, setEditingCatId] = useState<number | null>(null)
-  const [editingName, setEditingName] = useState('')
-  const [editingAccountCatId, setEditingAccountCatId] = useState<number | null>(null)
+  const [editingCat, setEditingCat] = useState<{ id: number; name: string; is_income: boolean; expense_type: 'fixed' | 'variable' | null; is_investment: boolean; account_id: number | null } | null>(null)
 
   const load = () => catApi.list().then(setCats).catch(console.error)
   useEffect(() => { load() }, [])
 
   const handleCreate = async () => {
-    await catApi.create({ ...form, parent_id: null, expense_type: form.is_income ? null : form.expense_type })
+    await catApi.create({ ...form, parent_id: null, expense_type: form.is_income ? null : form.expense_type, is_investment: form.is_income ? false : form.is_investment })
     setShowForm(false)
-    setForm({ name: '', color: '#10b981', icon: 'tag', is_income: false, expense_type: null, account_id: null })
+    setForm({ name: '', color: '#10b981', icon: 'tag', is_income: false, expense_type: 'variable', is_investment: false, account_id: null })
     load()
   }
 
@@ -80,16 +76,16 @@ function CategoriesTab({ accounts }: { accounts: Account[] }) {
     load()
   }
 
-  const handleRename = async (id: number) => {
-    if (!editingName.trim()) return
-    await catApi.update(id, { name: editingName.trim() })
-    setEditingCatId(null)
-    load()
-  }
-
-  const handleChangeAccount = async (catId: number, newAccountId: number | null) => {
-    await catApi.update(catId, { account_id: newAccountId })
-    setEditingAccountCatId(null)
+  const handleEditSave = async () => {
+    if (!editingCat || !editingCat.name.trim()) return
+    await catApi.update(editingCat.id, {
+      name: editingCat.name.trim(),
+      is_income: editingCat.is_income,
+      expense_type: editingCat.is_income ? null : editingCat.expense_type,
+      is_investment: editingCat.is_income ? false : editingCat.is_investment,
+      account_id: editingCat.account_id,
+    })
+    setEditingCat(null)
     load()
   }
 
@@ -120,7 +116,7 @@ function CategoriesTab({ accounts }: { accounts: Account[] }) {
         groups[accountKey] = {}
         accountOrder.push(accountKey)
       }
-      const typeKey = cat.is_income ? 'Revenus' : cat.expense_type === 'fixed' ? 'Dépenses fixes' : cat.expense_type === 'variable' ? 'Dépenses variables' : 'Autre'
+      const typeKey = cat.is_income ? 'Revenus' : cat.expense_type === 'fixed' ? 'Dépenses fixes' : 'Dépenses variables'
       if (!groups[accountKey][typeKey]) groups[accountKey][typeKey] = []
       groups[accountKey][typeKey].push(cat)
     }
@@ -135,12 +131,11 @@ function CategoriesTab({ accounts }: { accounts: Account[] }) {
     return { groups, accountOrder }
   }, [cats, accMap])
 
-  const typeOrder = ['Revenus', 'Dépenses fixes', 'Dépenses variables', 'Autre']
+  const typeOrder = ['Revenus', 'Dépenses fixes', 'Dépenses variables']
   const typeBadge: Record<string, string> = {
     'Revenus': 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
     'Dépenses fixes': 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400',
     'Dépenses variables': 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
-    'Autre': 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400',
   }
 
   return (
@@ -193,20 +188,29 @@ function CategoriesTab({ accounts }: { accounts: Account[] }) {
             <input
               type="checkbox"
               checked={form.is_income}
-              onChange={(e) => setForm({ ...form, is_income: e.target.checked, expense_type: e.target.checked ? null : form.expense_type })}
+              onChange={(e) => setForm({ ...form, is_income: e.target.checked, expense_type: e.target.checked ? 'variable' : form.expense_type })}
             />
             Revenu
           </label>
           {!form.is_income && (
             <select
-              value={form.expense_type ?? ''}
-              onChange={(e) => setForm({ ...form, expense_type: (e.target.value || null) as 'fixed' | 'variable' | null })}
+              value={form.expense_type}
+              onChange={(e) => setForm({ ...form, expense_type: e.target.value as 'fixed' | 'variable' })}
               className="text-sm border border-gray-300 dark:border-slate-600 rounded px-2 py-1.5 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
             >
-              <option value="">Type...</option>
               <option value="fixed">Fixe</option>
               <option value="variable">Variable</option>
             </select>
+          )}
+          {!form.is_income && (
+            <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-slate-400">
+              <input
+                type="checkbox"
+                checked={form.is_investment}
+                onChange={(e) => setForm({ ...form, is_investment: e.target.checked })}
+              />
+              Investissement
+            </label>
           )}
           <select
             value={form.account_id ?? ''}
@@ -239,7 +243,7 @@ function CategoriesTab({ accounts }: { accounts: Account[] }) {
                 </svg>
                 {accountKey}
               </h4>
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 {typeOrder.map(typeKey => {
                   const items = typeGroups[typeKey] ?? []
                   return (
@@ -251,39 +255,81 @@ function CategoriesTab({ accounts }: { accounts: Account[] }) {
                       </div>
                       <div className="space-y-0.5">
                         {items.map((c) => (
-                          <div key={c.id} className="flex items-center justify-between py-1 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 group">
-                            <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                              <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c.color }} />
-                              {editingCatId === c.id ? (
-                                <input
-                                  autoFocus
-                                  value={editingName}
-                                  onChange={(e) => setEditingName(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleRename(c.id)
-                                    if (e.key === 'Escape') setEditingCatId(null)
-                                  }}
-                                  onBlur={() => handleRename(c.id)}
-                                  className="text-sm border border-emerald-400 rounded px-2 py-0.5 bg-white dark:bg-slate-900 text-gray-900 dark:text-white w-full"
-                                />
-                              ) : (
+                          <div key={c.id}>
+                            <div className="flex items-center justify-between py-1 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 group">
+                              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c.color }} />
                                 <span
                                   className="text-sm text-gray-900 dark:text-white cursor-pointer hover:text-emerald-600 dark:hover:text-emerald-400 truncate"
-                                  onClick={() => { setEditingCatId(c.id); setEditingName(c.name) }}
-                                  title="Cliquer pour renommer"
+                                  onClick={() => setEditingCat({ id: c.id, name: c.name, is_income: c.is_income, expense_type: c.expense_type, is_investment: c.is_investment ?? false, account_id: c.account_id })}
+                                  title="Cliquer pour modifier"
                                 >
                                   {c.name}
                                 </span>
-                              )}
+                              </div>
+                              <button
+                                onClick={() => handleDelete(c.id)}
+                                className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-1"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
                             </div>
-                            <button
-                              onClick={() => handleDelete(c.id)}
-                              className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-1"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
+                            {editingCat?.id === c.id && (
+                              <div className="ml-4 mt-1 mb-2 p-2.5 bg-gray-50 dark:bg-slate-800 rounded-lg space-y-2 border border-gray-200 dark:border-slate-600">
+                                <input
+                                  autoFocus
+                                  value={editingCat.name}
+                                  onChange={(e) => setEditingCat({ ...editingCat, name: e.target.value })}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') handleEditSave(); if (e.key === 'Escape') setEditingCat(null) }}
+                                  className="w-full text-sm border border-gray-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
+                                  placeholder="Nom"
+                                />
+                                <div className="flex gap-2 items-center flex-wrap">
+                                  <label className="flex items-center gap-1 text-xs text-gray-600 dark:text-slate-400">
+                                    <input
+                                      type="checkbox"
+                                      checked={editingCat.is_income}
+                                      onChange={(e) => setEditingCat({ ...editingCat, is_income: e.target.checked, expense_type: e.target.checked ? null : editingCat.expense_type })}
+                                    />
+                                    Revenu
+                                  </label>
+                                  {!editingCat.is_income && (
+                                    <select
+                                      value={editingCat.expense_type ?? 'variable'}
+                                      onChange={(e) => setEditingCat({ ...editingCat, expense_type: e.target.value as 'fixed' | 'variable' })}
+                                      className="text-xs border border-gray-300 dark:border-slate-600 rounded px-1.5 py-1 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
+                                    >
+                                      <option value="fixed">Fixe</option>
+                                      <option value="variable">Variable</option>
+                                    </select>
+                                  )}
+                                  {!editingCat.is_income && (
+                                    <label className="flex items-center gap-1 text-xs text-gray-600 dark:text-slate-400">
+                                      <input
+                                        type="checkbox"
+                                        checked={editingCat.is_investment}
+                                        onChange={(e) => setEditingCat({ ...editingCat, is_investment: e.target.checked })}
+                                      />
+                                      Investissement
+                                    </label>
+                                  )}
+                                  <select
+                                    value={editingCat.account_id ?? ''}
+                                    onChange={(e) => setEditingCat({ ...editingCat, account_id: e.target.value ? parseInt(e.target.value) : null })}
+                                    className="text-xs border border-gray-300 dark:border-slate-600 rounded px-1.5 py-1 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
+                                  >
+                                    <option value="">Tous les comptes</option>
+                                    {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                  </select>
+                                </div>
+                                <div className="flex gap-1.5">
+                                  <button onClick={handleEditSave} className="text-xs px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded">OK</button>
+                                  <button onClick={() => setEditingCat(null)} className="text-xs px-2 py-1 border border-gray-300 dark:border-slate-600 rounded text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700">Annuler</button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         ))}
                         {items.length === 0 && (
@@ -320,6 +366,31 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
   const [previewTxns, setPreviewTxns] = useState<Transaction[]>([])
   const [previewLoading, setPreviewLoading] = useState(false)
   const [editingRuleId, setEditingRuleId] = useState<number | null>(null)
+  const [selectedRuleIds, setSelectedRuleIds] = useState<Set<number>>(new Set())
+  const [merging, setMerging] = useState(false)
+
+  const toggleRuleSelection = (id: number) => {
+    setSelectedRuleIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleMergeRules = async (logicOp: 'AND' | 'OR') => {
+    if (selectedRuleIds.size < 2) return
+    setMerging(true)
+    try {
+      await catApi.mergeRules(Array.from(selectedRuleIds), logicOp)
+      setSelectedRuleIds(new Set())
+      load()
+    } catch (e) {
+      console.error('Merge failed:', e)
+    } finally {
+      setMerging(false)
+    }
+  }
 
   const defaultCondition = { field: 'description', operator: 'contains', value: '' }
 
@@ -329,12 +400,14 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
     order: string,
     is_active: boolean,
     account_id: number | null,
+    logic_operator: 'AND' | 'OR',
   }>({
     conditions: [{ ...defaultCondition }],
     category_id: 0,
     order: 'standard',
     is_active: true,
     account_id: null,
+    logic_operator: 'AND',
   })
 
   const load = () => {
@@ -348,7 +421,7 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
 
   const resetForm = () => {
     setEditingRuleId(null)
-    setForm({ conditions: [{ ...defaultCondition }], category_id: cats[0]?.id ?? 0, order: 'standard', is_active: true, account_id: null })
+    setForm({ conditions: [{ ...defaultCondition }], category_id: cats[0]?.id ?? 0, order: 'standard', is_active: true, account_id: null, logic_operator: 'AND' })
     setPreviewTxns([])
   }
 
@@ -365,6 +438,7 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
         priority: ORDER_MAP[form.order] ?? 100,
         is_active: form.is_active,
         account_id: form.account_id,
+        logic_operator: form.logic_operator,
       })
     } else {
       // Create new rule
@@ -374,6 +448,7 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
         priority: ORDER_MAP[form.order] ?? 100,
         is_active: form.is_active,
         account_id: form.account_id,
+        logic_operator: form.logic_operator,
       })
     }
     setShowForm(false)
@@ -393,6 +468,7 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
       order: priorityToOrder(rule.priority),
       is_active: rule.is_active,
       account_id: rule.account_id ?? null,
+      logic_operator: rule.logic_operator ?? 'AND',
     })
     setPreviewTxns([])
     setShowForm(true)
@@ -413,7 +489,7 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
     if (validConditions.length === 0) return
     setPreviewLoading(true)
     try {
-      const txns = await catApi.previewRule(validConditions, form.account_id ?? undefined)
+      const txns = await catApi.previewRule(validConditions, form.account_id ?? undefined, form.logic_operator)
       setPreviewTxns(txns)
     } catch (e) {
       console.error(e)
@@ -448,12 +524,11 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
     return { groups, accountOrder }
   }, [rules, catMap, accMap])
 
-  const typeOrder = ['Revenus', 'Dépenses fixes', 'Dépenses variables', 'Autre']
+  const typeOrder = ['Revenus', 'Dépenses fixes', 'Dépenses variables']
   const typeBadge: Record<string, string> = {
     'Revenus': 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
     'Dépenses fixes': 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400',
     'Dépenses variables': 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
-    'Autre': 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400',
   }
 
   function centsToEur(cents: number): string {
@@ -474,10 +549,85 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
 
       {showForm && (
         <div className="flex flex-col gap-3 p-4 bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-600">
-          <div className="flex justify-between items-center mb-1">
-            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              {editingRuleId !== null ? 'Modifier la règle' : 'Conditions'} (Toutes doivent être vraies)
-            </h4>
+          {/* Row 1: Account, Priority, Category */}
+          <div className="flex gap-3 items-center flex-wrap">
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600 dark:text-gray-400">Compte:</label>
+              <select
+                value={form.account_id ?? ''}
+                onChange={(e) => setForm({ ...form, account_id: e.target.value ? parseInt(e.target.value) : null })}
+                className="text-sm border border-gray-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
+              >
+                <option value="">Tous</option>
+                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600 dark:text-gray-400">Priorité:</label>
+              <select
+                value={form.order}
+                onChange={(e) => setForm({ ...form, order: e.target.value })}
+                className="text-sm border border-gray-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
+              >
+                <option value="first">En premier</option>
+                <option value="standard">Standard</option>
+                <option value="last">En dernier</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600 dark:text-gray-400">Catégorie:</label>
+              <select
+                value={form.category_id}
+                onChange={(e) => setForm({ ...form, category_id: parseInt(e.target.value) })}
+                className="text-sm border border-gray-300 dark:border-slate-600 rounded px-3 py-1 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
+              >
+                {(() => {
+                  const filtered = cats.filter(c => c.account_id === null || c.account_id === form.account_id)
+                  const revenus = filtered.filter(c => c.is_income)
+                  const depFixes = filtered.filter(c => !c.is_income && c.expense_type === 'fixed')
+                  const depVariables = filtered.filter(c => !c.is_income && c.expense_type === 'variable')
+                  const other = filtered.filter(c => !c.is_income && c.expense_type !== 'fixed' && c.expense_type !== 'variable')
+                  const groups: [string, Category[]][] = [
+                    ['Revenus', revenus],
+                    ['Dépenses fixes', depFixes],
+                    ['Dépenses variables', depVariables],
+                    ...(other.length ? [['Autres', other] as [string, Category[]]] : []),
+                  ]
+                  return groups.filter(([, items]) => items.length > 0).map(([label, items]) => (
+                    <optgroup key={label} label={label}>
+                      {items.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </optgroup>
+                  ))
+                })()}
+              </select>
+            </div>
+          </div>
+
+          {/* Row 2: Conditions header with logic toggle */}
+          <div className="flex justify-between items-center border-t border-gray-200 dark:border-slate-600 pt-3">
+            <div className="flex items-center gap-3">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                {editingRuleId !== null ? 'Modifier la règle' : 'Conditions'}
+              </h4>
+              {form.conditions.length > 1 && (
+                <div className="flex items-center bg-gray-100 dark:bg-slate-700 rounded-lg p-0.5">
+                  <button
+                    onClick={() => setForm({ ...form, logic_operator: 'AND' })}
+                    className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${form.logic_operator === 'AND' ? 'bg-white dark:bg-slate-600 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
+                  >
+                    ET (toutes)
+                  </button>
+                  <button
+                    onClick={() => setForm({ ...form, logic_operator: 'OR' })}
+                    className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${form.logic_operator === 'OR' ? 'bg-white dark:bg-slate-600 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
+                  >
+                    OU (au moins une)
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={() => setForm({ ...form, conditions: [...form.conditions, { ...defaultCondition }] })}
               className="text-xs text-emerald-600 dark:text-emerald-400 hover:text-emerald-800 flex items-center gap-1"
@@ -562,44 +712,8 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
             ))}
           </div>
 
-          <div className="flex gap-3 items-center mt-2 border-t border-gray-200 dark:border-slate-600 pt-3 flex-wrap">
-            <div className="flex items-center gap-2">
-              <label className="text-sm text-gray-600 dark:text-gray-400">Catégorie:</label>
-              <select
-                value={form.category_id}
-                onChange={(e) => setForm({ ...form, category_id: parseInt(e.target.value) })}
-                className="text-sm border border-gray-300 dark:border-slate-600 rounded px-3 py-1 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
-              >
-                {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <label className="text-sm text-gray-600 dark:text-gray-400">Ordre:</label>
-              <select
-                value={form.order}
-                onChange={(e) => setForm({ ...form, order: e.target.value })}
-                className="text-sm border border-gray-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
-              >
-                <option value="first">En premier</option>
-                <option value="standard">Standard</option>
-                <option value="last">En dernier</option>
-              </select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <label className="text-sm text-gray-600 dark:text-gray-400">Compte:</label>
-              <select
-                value={form.account_id ?? ''}
-                onChange={(e) => setForm({ ...form, account_id: e.target.value ? parseInt(e.target.value) : null })}
-                className="text-sm border border-gray-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
-              >
-                <option value="">Tous</option>
-                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </div>
-
-            <div className="flex-1 flex justify-end gap-2">
+          {/* Action buttons */}
+          <div className="flex gap-2 items-center mt-2 border-t border-gray-200 dark:border-slate-600 pt-3 justify-end">
               <button
                 onClick={handlePreview}
                 disabled={previewLoading || form.conditions.every(c => !c.value.trim())}
@@ -620,7 +734,6 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
               >
                 {editingRuleId !== null ? 'Mettre à jour' : 'Enregistrer'}
               </button>
-            </div>
           </div>
 
           {/* Preview results */}
@@ -653,6 +766,35 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
         </div>
       )}
 
+      {/* Merge bar */}
+      {selectedRuleIds.size >= 2 && (
+        <div className="flex items-center gap-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg p-3">
+          <span className="text-sm text-indigo-700 dark:text-indigo-300 font-medium">
+            {selectedRuleIds.size} règles sélectionnées
+          </span>
+          <button
+            onClick={() => handleMergeRules('OR')}
+            disabled={merging}
+            className="text-sm px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+          >
+            Fusionner (OU)
+          </button>
+          <button
+            onClick={() => handleMergeRules('AND')}
+            disabled={merging}
+            className="text-sm px-3 py-1.5 border border-indigo-400 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 rounded-lg font-medium transition-colors disabled:opacity-50"
+          >
+            Fusionner (ET)
+          </button>
+          <button
+            onClick={() => setSelectedRuleIds(new Set())}
+            className="text-sm px-3 py-1.5 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+          >
+            Annuler
+          </button>
+        </div>
+      )}
+
       {/* Grouped rules */}
       <div className="space-y-4">
         {grouped.accountOrder.map(accountKey => {
@@ -678,7 +820,14 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
                     </div>
                     <div className="space-y-1">
                       {items.map((r) => (
-                        <div key={r.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 group">
+                        <div key={r.id} className={`flex items-center justify-between py-2 px-3 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 group ${selectedRuleIds.has(r.id) ? 'bg-indigo-50 dark:bg-indigo-900/10 ring-1 ring-indigo-200 dark:ring-indigo-800' : ''}`}>
+                          <div className="flex items-start gap-2 flex-1">
+                            <input
+                              type="checkbox"
+                              checked={selectedRuleIds.has(r.id)}
+                              onChange={() => toggleRuleSelection(r.id)}
+                              className="mt-1.5 w-4 h-4 accent-indigo-600 cursor-pointer flex-shrink-0"
+                            />
                           <div className="flex flex-col gap-1 items-start flex-wrap flex-1">
                             <div className="flex flex-wrap gap-2 items-center">
                               <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded">
@@ -699,10 +848,11 @@ function ReglesTab({ accounts }: { accounts: Account[] }) {
                               {r.conditions && r.conditions.map((cond, i) => (
                                 <span key={i} className={`text-xs font-mono bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded w-fit ${r.is_active ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 line-through'}`}>
                                   <span className="text-emerald-500 dark:text-emerald-400">{cond.field}</span> {cond.operator} "{cond.value}"
-                                  {i < r.conditions.length - 1 && <span className="ml-2 text-gray-400 font-sans italic">ET</span>}
+                                  {i < r.conditions.length - 1 && <span className="ml-2 text-gray-400 font-sans italic">{r.logic_operator === 'OR' ? 'OU' : 'ET'}</span>}
                                 </span>
                               ))}
                             </div>
+                          </div>
                           </div>
                           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
@@ -932,159 +1082,6 @@ function BankProfilesTab() {
   )
 }
 
-// ── Devises tab ───────────────────────────────────────────────────────────────
-
-const COMMON_CURRENCIES = [
-  { code: 'CHF', label: 'Franc suisse', symbol: 'Fr.' },
-  { code: 'USD', label: 'Dollar américain', symbol: '$' },
-  { code: 'GBP', label: 'Livre sterling', symbol: '£' },
-  { code: 'JPY', label: 'Yen japonais', symbol: '¥' },
-  { code: 'CAD', label: 'Dollar canadien', symbol: 'CA$' },
-]
-
-function DevisesTab() {
-  const [rates, setRates] = useState<ExchangeRate[]>([])
-  const [form, setForm] = useState({ currency_code: '', rate: '' })
-  const [editing, setEditing] = useState<ExchangeRate | null>(null)
-  const [editRate, setEditRate] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  const load = () => settingsApi.listExchangeRates().then(setRates).catch(console.error)
-  useEffect(() => { load() }, [])
-
-  const handleCreate = async () => {
-    if (!form.currency_code || !form.rate) return
-    setLoading(true)
-    try {
-      const rateTenThousandths = Math.round(parseFloat(form.rate.replace(',', '.')) * 10000)
-      await settingsApi.createExchangeRate({ currency_code: form.currency_code, rate_ten_thousandths: rateTenThousandths })
-      setForm({ currency_code: '', rate: '' })
-      load()
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleUpdate = async (rate: ExchangeRate) => {
-    setLoading(true)
-    try {
-      const rateTenThousandths = Math.round(parseFloat(editRate.replace(',', '.')) * 10000)
-      await settingsApi.updateExchangeRate(rate.currency_code, rateTenThousandths)
-      setEditing(null)
-      load()
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleDelete = async (code: string) => {
-    if (!confirm(`Supprimer le taux de change pour ${code} ?`)) return
-    await settingsApi.deleteExchangeRate(code)
-    load()
-  }
-
-  const formatRate = (tenThousandths: number) => (tenThousandths / 10000).toFixed(4)
-
-  return (
-    <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 p-6 space-y-5 max-w-lg">
-      <div>
-        <h3 className="font-semibold text-gray-900 dark:text-white mb-1">Taux de change</h3>
-        <p className="text-sm text-gray-500">
-          Définissez le taux de conversion vers l'euro (1 unité de devise = X EUR).
-          Ces taux sont utilisés pour les conversions dans les analyses.
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        {rates.map((r) => (
-          <div key={r.id} className="flex items-center justify-between py-2 px-3 rounded-lg bg-gray-50 dark:bg-slate-800">
-            <div className="flex items-center gap-3">
-              <span className="font-mono font-semibold text-sm text-gray-900 dark:text-white w-10">{r.currency_code}</span>
-              {editing?.id === r.id ? (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={editRate}
-                    onChange={(e) => setEditRate(e.target.value)}
-                    className="w-24 text-sm border border-emerald-400 rounded px-2 py-1 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
-                    autoFocus
-                  />
-                  <span className="text-xs text-gray-400">EUR</span>
-                </div>
-              ) : (
-                <span className="text-sm text-gray-600 dark:text-gray-400">
-                  1 {r.currency_code} = <strong>{formatRate(r.rate_ten_thousandths)}</strong> EUR
-                </span>
-              )}
-            </div>
-            <div className="flex gap-1">
-              {editing?.id === r.id ? (
-                <>
-                  <button onClick={() => handleUpdate(r)} disabled={loading} className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50">✓</button>
-                  <button onClick={() => setEditing(null)} className="text-xs px-2 py-1 border border-gray-300 dark:border-slate-600 rounded text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-700">✕</button>
-                </>
-              ) : (
-                <>
-                  <button onClick={() => { setEditing(r); setEditRate(formatRate(r.rate_ten_thousandths)) }} className="text-xs text-gray-400 hover:text-emerald-500 px-1">Modifier</button>
-                  <button onClick={() => handleDelete(r.currency_code)} className="text-xs text-gray-400 hover:text-red-500 px-1">✕</button>
-                </>
-              )}
-            </div>
-          </div>
-        ))}
-        {rates.length === 0 && (
-          <p className="text-sm text-gray-400 text-center py-4">
-            Aucun taux de change configuré. L'euro (EUR) est la devise de référence.
-          </p>
-        )}
-      </div>
-
-      <div className="border-t border-gray-200 dark:border-slate-600 pt-4">
-        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Ajouter un taux</p>
-        <div className="flex gap-2 flex-wrap">
-          <div className="flex-1 min-w-32">
-            <select
-              value={form.currency_code}
-              onChange={(e) => setForm({ ...form, currency_code: e.target.value })}
-              className="w-full text-sm border border-gray-300 dark:border-slate-600 rounded-lg px-3 py-1.5 bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-200"
-            >
-              <option value="">Devise…</option>
-              {COMMON_CURRENCIES.filter(c => !rates.some(r => r.currency_code === c.code)).map((c) => (
-                <option key={c.code} value={c.code}>{c.code} — {c.label}</option>
-              ))}
-              <option value="_custom">Autre…</option>
-            </select>
-          </div>
-          {form.currency_code === '_custom' && (
-            <input
-              placeholder="Code (ex: NOK)"
-              onChange={(e) => setForm({ ...form, currency_code: e.target.value.toUpperCase() })}
-              className="w-20 text-sm border border-gray-300 dark:border-slate-600 rounded-lg px-3 py-1.5 bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-200"
-            />
-          )}
-          <input
-            type="text"
-            placeholder="Taux (ex: 0.97)"
-            value={form.rate}
-            onChange={(e) => setForm({ ...form, rate: e.target.value })}
-            className="w-36 text-sm border border-gray-300 dark:border-slate-600 rounded-lg px-3 py-1.5 bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-200"
-          />
-          <button
-            onClick={handleCreate}
-            disabled={loading || !form.currency_code || !form.rate}
-            className="text-sm px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50"
-          >
-            Ajouter
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ── ML tab ────────────────────────────────────────────────────────────────────
 
@@ -1093,10 +1090,16 @@ function ModeleTab() {
   const [training, setTraining] = useState(false)
   const [result, setResult] = useState<{ accuracy: number; sample_count: number } | null>(null)
   const [error, setError] = useState('')
+  const [suggestions, setSuggestions] = useState<Array<{category_id: number, conditions: Array<{field: string, operator: string, value: string}>, priority: number, logic_operator: string}>>([])
+  const [suggestLoading, setSuggestLoading] = useState(false)
+  const [cats, setCats] = useState<Category[]>([])
 
   useEffect(() => {
     ml.status().then(setStatus).catch(console.error)
+    catApi.list().then(setCats).catch(console.error)
   }, [])
+
+  const catMap = useMemo(() => Object.fromEntries(cats.map(c => [c.id, c])), [cats])
 
   const handleTrain = async () => {
     setTraining(true)
@@ -1113,12 +1116,41 @@ function ModeleTab() {
     }
   }
 
+  const handleSuggest = async () => {
+    setSuggestLoading(true)
+    setError('')
+    try {
+      const res = await ml.suggestRules()
+      setSuggestions(res)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Impossible de générer des suggestions')
+    } finally {
+      setSuggestLoading(false)
+    }
+  }
+
+  const handleAcceptSuggestion = async (suggestion: typeof suggestions[0]) => {
+    try {
+      await catApi.createRule(suggestion.category_id, {
+        conditions: suggestion.conditions,
+        category_id: suggestion.category_id,
+        priority: suggestion.priority,
+        is_active: true,
+        account_id: null,
+        logic_operator: suggestion.logic_operator as 'AND' | 'OR',
+      })
+      setSuggestions(prev => prev.filter(s => s !== suggestion))
+    } catch (e) {
+      console.error('Failed to create rule from suggestion:', e)
+    }
+  }
+
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 p-6 space-y-5 max-w-lg">
+    <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 p-6 space-y-5">
       <h3 className="font-semibold text-gray-900 dark:text-white">Modèle de catégorisation automatique</h3>
 
       {status && (
-        <div className="space-y-2 text-sm">
+        <div className="space-y-2 text-sm max-w-lg">
           <div className="flex justify-between">
             <span className="text-gray-500">Statut</span>
             <span className={status.trained ? 'text-green-500 font-medium' : 'text-gray-400'}>
@@ -1152,7 +1184,7 @@ function ModeleTab() {
 
       {result && (
         <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg text-sm text-green-700 dark:text-green-400">
-          ✓ Modèle entraîné avec succès — précision: {(result.accuracy * 100).toFixed(1)}% sur {result.sample_count} échantillons
+          Modèle entraîné avec succès — précision: {(result.accuracy * 100).toFixed(1)}% sur {result.sample_count} échantillons
         </div>
       )}
 
@@ -1162,17 +1194,66 @@ function ModeleTab() {
         </div>
       )}
 
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 max-w-lg">
         Le modèle apprend à partir de vos transactions catégorisées pour suggérer automatiquement des catégories lors de futurs imports. Il nécessite au minimum 10 transactions catégorisées.
       </p>
 
-      <button
-        onClick={handleTrain}
-        disabled={training}
-        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
-      >
-        {training ? 'Entraînement en cours…' : 'Réentraîner le modèle'}
-      </button>
+      <div className="flex gap-3 max-w-lg">
+        <button
+          onClick={handleTrain}
+          disabled={training}
+          className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
+        >
+          {training ? 'Entraînement en cours…' : 'Réentraîner le modèle'}
+        </button>
+        {status?.trained && (
+          <button
+            onClick={handleSuggest}
+            disabled={suggestLoading}
+            className="flex-1 py-2.5 border border-emerald-400 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-50 rounded-lg font-medium transition-colors"
+          >
+            {suggestLoading ? 'Analyse…' : 'Suggérer des règles'}
+          </button>
+        )}
+      </div>
+
+      {/* Suggestions */}
+      {suggestions.length > 0 && (
+        <div className="border-t border-gray-200 dark:border-slate-600 pt-4 space-y-3">
+          <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            Règles suggérées ({suggestions.length})
+          </h4>
+          <div className="space-y-2">
+            {suggestions.map((s, idx) => (
+              <div key={idx} className="p-3 bg-gray-50 dark:bg-slate-800 rounded-lg flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded">
+                      {catMap[s.category_id]?.name ?? `#${s.category_id}`}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {s.logic_operator === 'OR' ? 'OU' : 'ET'}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {s.conditions.map((c, ci) => (
+                      <span key={ci} className="text-xs font-mono bg-white dark:bg-slate-900 px-2 py-0.5 rounded text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-slate-600">
+                        {c.field} {c.operator} "{c.value}"
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleAcceptSuggestion(s)}
+                  className="text-xs px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded font-medium flex-shrink-0"
+                >
+                  Accepter
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

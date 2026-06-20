@@ -14,6 +14,14 @@ async def status():
     return ml_trainer.get_status()
 
 
+@router.get("/suggest-rules")
+async def suggest_rules(top_n: int = 5):
+    suggestions = ml_trainer.suggest_rules(top_n)
+    if not suggestions:
+        raise HTTPException(status_code=400, detail="Aucun modèle entraîné ou aucune suggestion disponible")
+    return suggestions
+
+
 @router.post("/train", response_model=MLTrainResponse)
 async def train(db: AsyncSession = Depends(get_db)):
     result = await db.execute(

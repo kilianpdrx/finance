@@ -1,7 +1,9 @@
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { currencySymbol } from '../../utils/currency'
 
 interface Props {
   data: Record<string, unknown>[]
+  currency?: string
 }
 
 function formatMonth(month: string): string {
@@ -10,7 +12,8 @@ function formatMonth(month: string): string {
   return `${months[parseInt(m) - 1]} ${year}`
 }
 
-export default function NetWorthEvolution({ data }: Props) {
+export default function NetWorthEvolution({ data, currency = 'EUR' }: Props) {
+  const sym = currencySymbol(currency)
   if (!data.length) {
     return <div className="flex items-center justify-center h-64 text-gray-400 dark:text-slate-500 text-sm">Aucune donnée</div>
   }
@@ -33,11 +36,11 @@ export default function NetWorthEvolution({ data }: Props) {
         <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
         <XAxis dataKey="month" tick={{ fill: '#94a3b8', fontSize: 12 }} />
         <YAxis
-          tickFormatter={(v) => `${v.toLocaleString('fr-FR')} €`}
+          tickFormatter={(v) => `${v.toLocaleString('fr-FR')} ${sym}`}
           tick={{ fill: '#94a3b8', fontSize: 12 }}
         />
         <Tooltip
-          formatter={(value: number) => [`${value.toLocaleString('fr-FR')} €`, 'Patrimoine net']}
+          formatter={(value: number) => [`${value.toLocaleString('fr-FR')} ${sym}`, 'Patrimoine net']}
           contentStyle={{
             backgroundColor: '#1e293b',
             border: '1px solid #334155',

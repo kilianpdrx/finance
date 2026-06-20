@@ -1,9 +1,9 @@
 import type {
   Account, Transaction, Category, CategoryRule, BankProfile,
   AnalyticsSummary, CashFlowMonth, CategoryBreakdown, RecurringTransaction,
-  MLStatus, DetectResponse, ConfirmResponse, ExchangeRate, BudgetTableResponse,
+  MLStatus, DetectResponse, ConfirmResponse, BudgetTableResponse,
   TransactionMeta, ParsePreviewResponse, AccountBalanceSnapshot, ComputedBalance,
-  BudgetFullResponse,
+  BudgetFullResponse, ImportBatch,
 } from '../types'
 
 const BASE = '/api'
@@ -38,6 +38,7 @@ export const accounts = {
 export interface TransactionFilters {
   account_id?: number
   category_id?: number
+  uncategorized?: boolean
   date_from?: string
   date_to?: string
   search?: string
@@ -45,6 +46,7 @@ export interface TransactionFilters {
   is_internal_transfer?: boolean
   bank_name?: string
   month?: string
+  import_batch_id?: number
   limit?: number
   offset?: number
 }
@@ -71,6 +73,14 @@ export const transactions = {
     fetchJSON<{ updated: number }>(`${BASE}/transactions/bulk-update-category`, {
       method: 'POST', body: JSON.stringify({ ids, category_id: categoryId }),
     }),
+  bulkUpdateReviewed: (ids: number[], isManuallyReviewed: boolean = true) =>
+    fetchJSON<{ updated: number }>(`${BASE}/transactions/bulk-update-reviewed`, {
+      method: 'POST', body: JSON.stringify({ ids, is_manually_reviewed: isManuallyReviewed }),
+    }),
+  bulkUpdateTransfer: (ids: number[], isInternalTransfer: boolean = true) =>
+    fetchJSON<{ updated: number }>(`${BASE}/transactions/bulk-update-transfer`, {
+      method: 'POST', body: JSON.stringify({ ids, is_internal_transfer: isInternalTransfer }),
+    }),
   detectTransfers: (maxDays = 3) =>
     fetchJSON<{ detected_pairs: number }>(`${BASE}/transactions/detect-transfers?max_days=${maxDays}`, { method: 'POST' }),
   exportUrl: (filters: TransactionFilters = {}) => {
@@ -80,6 +90,7 @@ export const transactions = {
     })
     return `${BASE}/transactions/export?${params}`
   },
+  listBatches: () => fetchJSON<ImportBatch[]>(`${BASE}/transactions/batches`),
 }
 
 // ── Categories ────────────────────────────────────────────────────────────────
@@ -114,10 +125,15 @@ export const categories = {
     }),
   deleteRule: (ruleId: number) =>
     fetch(`${BASE}/categories/rules/${ruleId}`, { method: 'DELETE' }),
-  previewRule: (conditions: Array<{field: string, operator: string, value: string}>, accountId?: number) =>
+  mergeRules: (ruleIds: number[], logicOperator: string = 'OR') =>
+    fetchJSON<CategoryRule>(`${BASE}/categories/rules/merge`, {
+      method: 'POST',
+      body: JSON.stringify({ rule_ids: ruleIds, logic_operator: logicOperator }),
+    }),
+  previewRule: (conditions: Array<{field: string, operator: string, value: string}>, accountId?: number, logicOperator: string = 'AND') =>
     fetchJSON<Transaction[]>(`${BASE}/categories/rules/preview`, {
       method: 'POST',
-      body: JSON.stringify({ conditions, account_id: accountId ?? null }),
+      body: JSON.stringify({ conditions, account_id: accountId ?? null, logic_operator: logicOperator }),
     }),
 }
 
@@ -187,6 +203,7 @@ export const upload = {
     encoding?: string,
     delimiter?: string,
     categoryOverrides?: Record<string, number | null>,
+    forceImportHashes?: string[],
   ): Promise<ConfirmResponse> => {
     const form = new FormData()
     form.append('file', file)
@@ -197,6 +214,7 @@ export const upload = {
     if (encoding) form.append('encoding', encoding)
     if (delimiter) form.append('delimiter', delimiter)
     if (categoryOverrides) form.append('category_overrides', JSON.stringify(categoryOverrides))
+    if (forceImportHashes && forceImportHashes.length > 0) form.append('force_import_hashes', JSON.stringify(forceImportHashes))
     console.log('[upload.confirm] accountId=', accountId, 'profileId=', profileId)
     const r = await fetch(`${BASE}/upload/confirm`, { method: 'POST', body: form })
     if (!r.ok) {
@@ -225,6 +243,18 @@ export const analytics = {
     if (range.date_to) params.set('date_to', range.date_to)
     if (range.account_ids) params.set('account_ids', range.account_ids.join(','))
     return fetchJSON<AnalyticsSummary>(`${BASE}/analytics/summary?${params}`)
+  },
+  spendingTrends: (range: DateRange = {}) => {
+    const params = new URLSearchParams()
+    if (range.date_from) params.set('date_from', range.date_from)
+    if (range.date_to) params.set('date_to', range.date_to)
+    if (range.account_ids) params.set('account_ids', range.account_ids.join(','))
+    return fetchJSON<Array<{
+      category_id: number | null
+      category_name: string
+      category_color: string
+      series: Array<{ month: string; amount_cents: number }>
+    }>>(`${BASE}/analytics/spending-trends?${params}`)
   },
   byCategory: (range: DateRange = {}) => {
     const params = new URLSearchParams()
@@ -262,10 +292,11 @@ export const analytics = {
     if (accountId !== undefined) params.set('account_id', String(accountId))
     return fetchJSON<{ ok: boolean }>(`${BASE}/analytics/budget?${params}`, { method: 'PUT' })
   },
-  budgetFull: (year?: number, accountId?: number) => {
+  budgetFull: (year?: number, accountId?: number, accountIds?: number[]) => {
     const params = new URLSearchParams()
     if (year) params.set('year', String(year))
     if (accountId) params.set('account_id', String(accountId))
+    else if (accountIds?.length) params.set('account_ids', accountIds.join(','))
     return fetchJSON<BudgetFullResponse>(`${BASE}/analytics/budget-full?${params}`)
   },
 }
@@ -275,6 +306,10 @@ export const analytics = {
 export const ml = {
   status: () => fetchJSON<MLStatus>(`${BASE}/ml/status`),
   train: () => fetchJSON<{ accuracy: number; sample_count: number }>(`${BASE}/ml/train`, { method: 'POST' }),
+  suggestRules: (topN = 5) =>
+    fetchJSON<Array<{category_id: number, conditions: Array<{field: string, operator: string, value: string}>, priority: number, logic_operator: string}>>(
+      `${BASE}/ml/suggest-rules?top_n=${topN}`
+    ),
 }
 
 // ── Bank Profiles ──────────────────────────────────────────────────────────────
@@ -294,7 +329,7 @@ export const bankProfiles = {
 export const snapshots = {
   list: (accountId: number) =>
     fetchJSON<AccountBalanceSnapshot[]>(`${BASE}/accounts/${accountId}/snapshots`),
-  create: (accountId: number, data: { date: string; amount_cents: number; currency: string; notes?: string }) =>
+  create: (accountId: number, data: { date: string; amount_cents: number; contribution_cents?: number; currency: string; notes?: string }) =>
     fetchJSON<AccountBalanceSnapshot>(`${BASE}/accounts/${accountId}/snapshots`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -305,17 +340,44 @@ export const snapshots = {
     fetchJSON<ComputedBalance>(`${BASE}/accounts/${accountId}/computed-balance`),
 }
 
-// ── Settings (Exchange Rates) ─────────────────────────────────────────────────
+// ── Investments ──────────────────────────────────────────────────────────────
 
-export const settingsApi = {
-  listExchangeRates: () => fetchJSON<ExchangeRate[]>(`${BASE}/settings/exchange-rates`),
-  createExchangeRate: (data: { currency_code: string; rate_ten_thousandths: number }) =>
-    fetchJSON<ExchangeRate>(`${BASE}/settings/exchange-rates`, { method: 'POST', body: JSON.stringify(data) }),
-  updateExchangeRate: (currencyCode: string, rateTenThousandths: number) =>
-    fetchJSON<ExchangeRate>(`${BASE}/settings/exchange-rates/${currencyCode}`, {
-      method: 'PUT',
-      body: JSON.stringify({ rate_ten_thousandths: rateTenThousandths }),
-    }),
-  deleteExchangeRate: (currencyCode: string) =>
-    fetch(`${BASE}/settings/exchange-rates/${currencyCode}`, { method: 'DELETE' }),
+export const investments = {
+  accounts: () => fetchJSON<InvestmentAccount[]>(`${BASE}/investments/accounts`),
+  totalSeries: () => fetchJSON<InvestmentSeriesPoint[]>(`${BASE}/investments/total-series`),
 }
+
+export interface InvestmentAccount {
+  id: number
+  name: string
+  bank_name: string
+  currency: string
+  color: string
+  current_value_cents: number | null
+  first_value_cents: number | null
+  total_contributions_cents: number
+  pct_from_start: number | null
+  pct_from_last_month: number | null
+  change_from_start_cents: number | null
+  change_from_last_month_cents: number | null
+  perf_pct_from_start: number | null
+  perf_pct_from_last_month: number | null
+  perf_from_start_cents: number | null
+  perf_from_last_month_cents: number | null
+  monthly: Array<{
+    id: number
+    date: string
+    month: string
+    amount_cents: number
+    contribution_cents: number
+    currency: string
+    notes: string | null
+  }>
+}
+
+export interface InvestmentSeriesPoint {
+  month: string
+  total_cents: number
+  [accountName: string]: unknown
+}
+

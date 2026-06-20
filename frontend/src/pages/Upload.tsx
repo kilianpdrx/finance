@@ -304,7 +304,7 @@ interface ImportReviewStepProps {
   onSelectAccount: (v: string) => void
   loading: boolean
   error: string
-  onConfirm: (overrides: Record<string, number | null>) => void
+  onConfirm: (overrides: Record<string, number | null>, forceImportHashes?: string[]) => void
   onBack: () => void
 }
 
@@ -314,6 +314,8 @@ function ImportReviewStep({
 }: ImportReviewStepProps) {
   const [overrides, setOverrides] = useState<Record<string, number | null>>({})
   const [filterUncategorized, setFilterUncategorized] = useState(false)
+  const [showDuplicates, setShowDuplicates] = useState(false)
+  const [forceImportHashes, setForceImportHashes] = useState<Set<string>>(new Set())
 
   const catMap = Object.fromEntries(categories.map(c => [c.id, c]))
 
@@ -321,15 +323,34 @@ function ImportReviewStep({
     return txn.import_hash in overrides ? overrides[txn.import_hash] : txn.category_id
   }
 
-  const displayedTxns = filterUncategorized
-    ? transactions.filter(t => !t.is_duplicate && getCategoryId(t) === null)
-    : transactions.filter(t => !t.is_duplicate)
+  const duplicateTxns = transactions.filter(t => t.is_duplicate)
+  const duplicates = duplicateTxns.length
+  const forcedCount = duplicateTxns.filter(t => forceImportHashes.has(t.import_hash)).length
+  const uncategorized = transactions.filter(t => (!t.is_duplicate || forceImportHashes.has(t.import_hash)) && getCategoryId(t) === null).length
+  const toImport = transactions.filter(t => !t.is_duplicate).length + forcedCount
 
-  const duplicates = transactions.filter(t => t.is_duplicate).length
-  const uncategorized = transactions.filter(t => !t.is_duplicate && getCategoryId(t) === null).length
-  const toImport = transactions.filter(t => !t.is_duplicate).length
+  const displayedTxns = filterUncategorized
+    ? transactions.filter(t => (!t.is_duplicate || forceImportHashes.has(t.import_hash)) && getCategoryId(t) === null)
+    : transactions.filter(t => !t.is_duplicate || forceImportHashes.has(t.import_hash))
 
   const canImport = toImport > 0 && !!selectedAccount
+
+  const toggleForceImport = (hash: string) => {
+    setForceImportHashes(prev => {
+      const next = new Set(prev)
+      if (next.has(hash)) next.delete(hash)
+      else next.add(hash)
+      return next
+    })
+  }
+
+  const toggleAllDuplicates = (include: boolean) => {
+    if (include) {
+      setForceImportHashes(new Set(duplicateTxns.map(t => t.import_hash)))
+    } else {
+      setForceImportHashes(new Set())
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -365,11 +386,58 @@ function ImportReviewStep({
           <p className={`text-2xl font-bold ${uncategorized > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'}`}>{uncategorized}</p>
           <p className={`text-xs mt-0.5 ${uncategorized > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'}`}>non catégorisées</p>
         </div>
-        <div className="bg-gray-50 dark:bg-slate-800 rounded-lg p-3 text-center">
-          <p className="text-2xl font-bold text-gray-400">{duplicates}</p>
-          <p className="text-xs text-gray-400 mt-0.5">doublons ignorés</p>
+        <div
+          className={`rounded-lg p-3 text-center cursor-pointer transition-colors ${duplicates > 0 ? 'bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30' : 'bg-gray-50 dark:bg-slate-800'}`}
+          onClick={() => duplicates > 0 && setShowDuplicates(!showDuplicates)}
+        >
+          <p className={`text-2xl font-bold ${duplicates > 0 ? 'text-orange-500' : 'text-gray-400'}`}>{duplicates}</p>
+          <p className={`text-xs mt-0.5 ${duplicates > 0 ? 'text-orange-500' : 'text-gray-400'}`}>
+            doublons {forceImportHashes.size > 0 ? `(${forceImportHashes.size} inclus)` : '· cliquer pour voir'}
+          </p>
         </div>
       </div>
+
+      {/* Duplicates panel */}
+      {showDuplicates && duplicates > 0 && (
+        <div className="border border-orange-200 dark:border-orange-800 rounded-xl overflow-hidden">
+          <div className="bg-orange-50 dark:bg-orange-900/20 px-4 py-2.5 flex items-center justify-between">
+            <p className="text-sm font-medium text-orange-700 dark:text-orange-400">
+              {duplicates} doublon{duplicates > 1 ? 's' : ''} détecté{duplicates > 1 ? 's' : ''} (déjà importé{duplicates > 1 ? 's' : ''})
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => toggleAllDuplicates(forceImportHashes.size < duplicates)}
+                className="text-xs px-2.5 py-1 rounded border border-orange-300 dark:border-orange-700 text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/30"
+              >
+                {forceImportHashes.size < duplicates ? 'Tout inclure' : 'Tout exclure'}
+              </button>
+            </div>
+          </div>
+          <div className="overflow-x-auto max-h-48">
+            <table className="w-full text-sm">
+              <tbody>
+                {duplicateTxns.map((txn) => (
+                  <tr key={txn.import_hash} className={`border-t border-orange-100 dark:border-orange-900/30 ${forceImportHashes.has(txn.import_hash) ? 'bg-green-50/50 dark:bg-green-900/10' : 'bg-white dark:bg-slate-900'}`}>
+                    <td className="px-4 py-1.5 w-8">
+                      <input
+                        type="checkbox"
+                        checked={forceImportHashes.has(txn.import_hash)}
+                        onChange={() => toggleForceImport(txn.import_hash)}
+                        className="rounded text-emerald-500"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 text-gray-500 text-xs whitespace-nowrap">{txn.date}</td>
+                    <td className="px-2 py-1.5 text-gray-800 dark:text-gray-200 text-xs truncate max-w-xs">{txn.description}</td>
+                    <td className={`px-2 py-1.5 text-right text-xs font-medium whitespace-nowrap ${txn.is_debit ? 'text-red-500' : 'text-green-500'}`}>
+                      {centsToEur(txn.amount_cents, txn.is_debit)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
         <input
@@ -380,6 +448,13 @@ function ImportReviewStep({
         />
         Afficher seulement les non catégorisées ({uncategorized})
       </label>
+
+      {/* Color legend */}
+      <div className="flex gap-4 text-xs text-gray-500 dark:text-gray-400">
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-200 dark:bg-amber-900/40" /> Non catégorisée</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-green-200 dark:bg-green-900/40" /> Règle automatique</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-purple-200 dark:bg-purple-900/40" /> Modèle ML</span>
+      </div>
 
       {/* Table */}
       <div className="border border-gray-200 dark:border-slate-700 rounded-xl overflow-hidden">
@@ -405,7 +480,15 @@ function ImportReviewStep({
                 const catId = getCategoryId(txn)
                 const isUncategorized = catId === null
                 return (
-                  <tr key={txn.import_hash} className={`border-t border-gray-100 dark:border-slate-700 ${isUncategorized ? 'bg-amber-50/50 dark:bg-amber-900/10' : ''}`}>
+                  <tr key={txn.import_hash} className={`border-t border-gray-100 dark:border-slate-700 ${
+                    isUncategorized
+                      ? 'bg-amber-50/50 dark:bg-amber-900/10'
+                      : txn.categorization_source === 'rule'
+                      ? 'bg-green-50/50 dark:bg-green-900/10'
+                      : txn.categorization_source === 'ml'
+                      ? 'bg-purple-50/50 dark:bg-purple-900/10'
+                      : ''
+                  }`}>
                     <td className="px-4 py-2 text-gray-600 dark:text-gray-400 text-xs whitespace-nowrap">{txn.date}</td>
                     <td className="px-4 py-2 text-gray-800 dark:text-gray-200 text-xs max-w-xs">
                       <span className="block truncate" title={txn.description}>{txn.description}</span>
@@ -460,7 +543,7 @@ function ImportReviewStep({
 
       <div className="flex justify-end gap-3">
         <button
-          onClick={() => onConfirm(overrides)}
+          onClick={() => onConfirm(overrides, Array.from(forceImportHashes))}
           disabled={loading || !canImport}
           className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
         >
@@ -618,7 +701,7 @@ export default function Upload() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const handleConfirm = async (overrides: Record<string, number | null>) => {
+  const handleConfirm = async (overrides: Record<string, number | null>, forceImportHashes?: string[]) => {
     if (!file) return
     if (!selectedAccount) {
       setError('Veuillez sélectionner un compte destination.')
@@ -637,6 +720,7 @@ export default function Upload() {
         columnMapping ? encoding : undefined,
         columnMapping ? delimiter : undefined,
         overrides,
+        forceImportHashes,
       )
       setResult(res)
       setStep('done')

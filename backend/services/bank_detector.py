@@ -11,10 +11,19 @@ logger = logging.getLogger(__name__)
 
 
 def _decode_safe(file_bytes: bytes, encoding: str) -> str:
-    """Decode bytes, handling UTF-8 BOM transparently."""
+    """Decode bytes with fallback chain."""
+    encodings = [encoding]
     if encoding.lower() in ("utf-8", "utf8"):
-        return file_bytes.decode("utf-8-sig", errors="replace")
-    return file_bytes.decode(encoding, errors="replace")
+        encodings = ["utf-8-sig", "utf-8"]
+    for fallback in ["latin-1", "windows-1252"]:
+        if fallback not in encodings:
+            encodings.append(fallback)
+    for enc in encodings:
+        try:
+            return file_bytes.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return file_bytes.decode("utf-8", errors="replace")
 
 
 async def detect_bank(file_bytes: bytes, filename: str, db: AsyncSession) -> BankProfile | None:
@@ -68,7 +77,18 @@ async def detect_bank(file_bytes: bytes, filename: str, db: AsyncSession) -> Ban
             best_score = normalized
             best_profile = profile
 
-    if best_score >= 0.5:
+    if best_score >= 0.5 and best_profile is not None:
+        # Validate that the profile's column_mapping values actually exist in the CSV
+        mapping = best_profile.column_mapping or {}
+        mapped_cols = set(v.lower().strip() for v in mapping.values())
+        available = set(header_lower)
+        if not mapped_cols.issubset(available):
+            missing = mapped_cols - available
+            logger.info(
+                "Profile '%s' matched by fingerprint but column mapping has missing columns: %s",
+                best_profile.name, missing,
+            )
+            return None
         logger.info("Matched profile '%s' (score %.2f)", best_profile.name, best_score)
         return best_profile
 

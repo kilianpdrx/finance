@@ -4,14 +4,19 @@ from typing import Optional, List
 from pydantic import BaseModel, ConfigDict
 
 
-def cents_to_display(cents: int) -> str:
+CURRENCY_SYMBOLS = {
+    "EUR": "€", "CHF": "CHF", "USD": "$", "GBP": "£", "JPY": "¥", "CAD": "CA$",
+}
+
+def cents_to_display(cents: int, currency: str = "EUR") -> str:
     """Convert integer cents to French-formatted string: 1234567 -> '12 345,67 €'"""
     negative = cents < 0
     abs_cents = abs(cents)
     euros = abs_cents // 100
     centimes = abs_cents % 100
     euros_str = f"{euros:,}".replace(",", "\u00a0")  # non-breaking space
-    result = f"{euros_str},{centimes:02d} €"
+    sym = CURRENCY_SYMBOLS.get(currency.upper(), currency) if currency else "€"
+    result = f"{euros_str},{centimes:02d} {sym}"
     return f"-{result}" if negative else result
 
 
@@ -41,6 +46,7 @@ class AccountUpdate(BaseModel):
 class AccountBalanceSnapshotCreate(BaseModel):
     date: date
     amount_cents: int
+    contribution_cents: int = 0
     currency: str = "EUR"
     notes: Optional[str] = None
 
@@ -90,6 +96,7 @@ class TransactionOut(TransactionBase):
     is_manually_reviewed: bool = False
     is_internal_transfer: bool = False
     import_hash: str
+    import_batch_id: Optional[int] = None
     created_at: datetime
     amount_display: Optional[str] = None
     account_name: Optional[str] = None
@@ -97,7 +104,7 @@ class TransactionOut(TransactionBase):
     @classmethod
     def from_orm_with_display(cls, obj) -> "TransactionOut":
         out = cls.model_validate(obj)
-        out.amount_display = cents_to_display(obj.amount_cents)
+        out.amount_display = cents_to_display(obj.amount_cents, getattr(obj, 'currency', 'EUR') or 'EUR')
         # account_name set externally if needed (avoid lazy-load issues)
         return out
 
@@ -111,6 +118,7 @@ class CategoryBase(BaseModel):
     icon: str = "tag"
     is_income: bool = False
     expense_type: Optional[str] = None
+    is_investment: bool = False
     account_id: Optional[int] = None
 
 class CategoryCreate(CategoryBase):
@@ -123,6 +131,7 @@ class CategoryUpdate(BaseModel):
     icon: Optional[str] = None
     is_income: Optional[bool] = None
     expense_type: Optional[str] = None
+    is_investment: Optional[bool] = None
     account_id: Optional[int] = None
 
 class CategoryOut(CategoryBase):
@@ -143,6 +152,7 @@ class CategoryRuleBase(BaseModel):
     priority: int = 100
     is_active: bool = True
     account_id: Optional[int] = None
+    logic_operator: str = "AND"
 
 class CategoryRuleCreate(CategoryRuleBase):
     pass
@@ -153,6 +163,7 @@ class CategoryRuleUpdate(BaseModel):
     priority: Optional[int] = None
     is_active: Optional[bool] = None
     account_id: Optional[int] = None
+    logic_operator: Optional[str] = None
 
 class CategoryRuleOut(CategoryRuleBase):
     model_config = ConfigDict(from_attributes=True)
@@ -219,23 +230,6 @@ class RecurringTransaction(BaseModel):
     category_id: Optional[int]
 
 
-# ── ExchangeRate ──────────────────────────────────────────────────────────────
-
-class ExchangeRateBase(BaseModel):
-    currency_code: str
-    rate_ten_thousandths: int  # 10000 = 1.0000 EUR
-
-class ExchangeRateCreate(ExchangeRateBase):
-    pass
-
-class ExchangeRateUpdate(BaseModel):
-    rate_ten_thousandths: Optional[int] = None
-
-class ExchangeRateOut(ExchangeRateBase):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    updated_at: datetime
-
 
 # ── BudgetEntry ───────────────────────────────────────────────────────────────
 
@@ -265,6 +259,7 @@ class BudgetTableRow(BaseModel):
     category_id: Optional[int]
     category_name: str
     category_color: str
+    is_investment: bool = False
     cells: List[BudgetTableCell]
     total_actual_cents: int
     total_expected_cents: int
@@ -330,3 +325,85 @@ class MLStatus(BaseModel):
 class MLTrainResponse(BaseModel):
     accuracy: float
     sample_count: int
+
+
+# ── Holdings ─────────────────────────────────────────────────────────────────
+
+class HoldingCreate(BaseModel):
+    ticker: str
+    name: str
+    quantity: float
+    cost_basis_cents: int
+    currency: str = "USD"
+    asset_type: str = "stock"
+    added_date: Optional[date] = None
+    notes: Optional[str] = None
+
+class HoldingUpdate(BaseModel):
+    name: Optional[str] = None
+    quantity: Optional[float] = None
+    cost_basis_cents: Optional[int] = None
+    currency: Optional[str] = None
+    asset_type: Optional[str] = None
+    added_date: Optional[date] = None
+    notes: Optional[str] = None
+
+class HoldingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    account_id: int
+    ticker: str
+    name: str
+    quantity: float
+    cost_basis_cents: int
+    currency: str
+    asset_type: str
+    added_date: Optional[date] = None
+    notes: Optional[str] = None
+    current_price_cents: Optional[int] = None
+    current_value_cents: Optional[int] = None
+    gain_cents: Optional[int] = None
+    gain_pct: Optional[float] = None
+    price_currency: Optional[str] = None
+    price_fetched_at: Optional[str] = None
+
+
+# ── Holdings Import ──────────────────────────────────────────────────────────
+
+class ParsedHoldingPreview(BaseModel):
+    ticker: str
+    name: str
+    quantity: float
+    cost_basis_cents: int
+    currency: str
+    asset_type: str
+    last_price_cents: Optional[int] = None
+    is_duplicate: bool = False
+    existing_holding_id: Optional[int] = None
+    existing_quantity: Optional[float] = None
+    existing_cost_basis_cents: Optional[int] = None
+
+class HoldingsImportPreviewResponse(BaseModel):
+    format: str
+    holdings: List[ParsedHoldingPreview]
+    total: int
+    duplicates: int
+
+class HoldingImportItem(BaseModel):
+    ticker: str
+    name: str
+    quantity: float
+    cost_basis_cents: int
+    currency: str
+    asset_type: str
+    last_price_cents: Optional[int] = None
+    duplicate_action: str = "skip"  # "skip" | "replace" | "merge"
+
+class HoldingsImportConfirmRequest(BaseModel):
+    account_id: int
+    holdings: List[HoldingImportItem]
+
+class HoldingsImportConfirmResponse(BaseModel):
+    created: int
+    updated: int
+    skipped: int

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { useDateRangeStore, useAccountsStore, useSelectedAccountsStore } from '../store'
+import { deriveCurrency } from '../utils/currency'
 import { analytics, accounts as accApi } from '../api/client'
 import type { AnalyticsSummary, CashFlowMonth, CategoryBreakdown } from '../types'
 import SpendingByCategory from '../components/charts/SpendingByCategory'
@@ -49,6 +50,7 @@ export default function Dashboard() {
   const [cashFlow, setCashFlow] = useState<CashFlowMonth[]>([])
   const [byCategory, setByCategory] = useState<CategoryBreakdown[]>([])
   const [netWorth, setNetWorth] = useState<Record<string, unknown>[]>([])
+  const displayCurrency = deriveCurrency(accounts, selectedAccountIds ?? null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -147,15 +149,15 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ChartCard title="Dépenses par catégorie">
-          <SpendingByCategory data={byCategory} />
+          <SpendingByCategory data={byCategory} currency={displayCurrency} />
         </ChartCard>
         <ChartCard title="Flux de trésorerie mensuel">
-          <CashFlowOverTime data={cashFlow} />
+          <CashFlowOverTime data={cashFlow} currency={displayCurrency} />
         </ChartCard>
       </div>
 
       <ChartCard title="Évolution du patrimoine net">
-        <NetWorthEvolution data={netWorth} />
+        <NetWorthEvolution data={netWorth} currency={displayCurrency} />
       </ChartCard>
     </div>
   )
