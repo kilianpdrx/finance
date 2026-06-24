@@ -48,6 +48,7 @@ class ParsedHolding:
     currency: str
     asset_type: str
     last_price_cents: int | None = None
+    isin: str | None = None
 
 
 def detect_holdings_format(file_bytes: bytes) -> str | None:
@@ -161,6 +162,7 @@ def parse_bourso_holdings(file_bytes: bytes) -> list[ParsedHolding]:
             currency="EUR",
             asset_type=asset_type,
             last_price_cents=last_price_cents,
+            isin=isin,
         ))
 
     return result

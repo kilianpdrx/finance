@@ -2,20 +2,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
+from dependencies import current_profile_id
 from models import Setting
 
 router = APIRouter()
 
 
 @router.get("")
-async def get_all_settings(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Setting))
+async def get_all_settings(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(Setting).where(Setting.profile_id == pid))
     return {s.key: s.value for s in result.scalars()}
 
 
 @router.get("/{key}")
-async def get_setting(key: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Setting).where(Setting.key == key))
+async def get_setting(key: str, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(Setting).where(Setting.key == key, Setting.profile_id == pid))
     setting = result.scalar_one_or_none()
     if not setting:
         raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
@@ -23,15 +24,15 @@ async def get_setting(key: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/{key}")
-async def update_setting(key: str, body: dict, db: AsyncSession = Depends(get_db)):
+async def update_setting(key: str, body: dict, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     value = body.get("value")
     if value is None:
         raise HTTPException(status_code=422, detail="Missing 'value' field")
-    result = await db.execute(select(Setting).where(Setting.key == key))
+    result = await db.execute(select(Setting).where(Setting.key == key, Setting.profile_id == pid))
     setting = result.scalar_one_or_none()
     if setting:
         setting.value = str(value)
     else:
-        db.add(Setting(key=key, value=str(value)))
+        db.add(Setting(key=key, value=str(value), profile_id=pid))
     await db.commit()
     return {"key": key, "value": str(value)}

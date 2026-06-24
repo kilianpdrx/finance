@@ -16,7 +16,7 @@ export const CHART_PALETTE = [
   "oklch(0.6 0.05 264)",
 ];
 
-export function SpendingDonut({ data, currency }: { data: CategoryBreakdown[]; currency: string }) {
+export function SpendingDonut({ data, currency, size = 176 }: { data: CategoryBreakdown[]; currency: string; size?: number }) {
   const slices = useMemo(() => {
     const top = data.slice(0, 6);
     const restTotal = data.slice(6).reduce((s, d) => s + d.total_cents, 0);
@@ -29,15 +29,15 @@ export function SpendingDonut({ data, currency }: { data: CategoryBreakdown[]; c
 
   return (
     <div className="flex flex-col items-center gap-5">
-      <div className="relative h-44 w-44 shrink-0">
+      <div className="relative shrink-0" style={{ height: size, width: size }}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
               data={slices}
               dataKey="value"
               nameKey="name"
-              innerRadius={54}
-              outerRadius={78}
+              innerRadius={Math.round(size * 0.31)}
+              outerRadius={Math.round(size * 0.44)}
               paddingAngle={2}
               stroke="none"
             >

@@ -3,13 +3,17 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy import select, and_, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
+from dependencies import current_profile_id
 from models import Account, AccountType, AccountBalanceSnapshot, Holding, PriceCache
 from schemas import (
     HoldingCreate, HoldingUpdate, HoldingOut,
     HoldingsImportPreviewResponse, ParsedHoldingPreview,
     HoldingsImportConfirmRequest, HoldingsImportConfirmResponse,
 )
-from services.market_data import refresh_all_prices, get_cached_price, fetch_historical_prices
+from services.market_data import (
+    refresh_all_prices, get_cached_price, fetch_historical_prices, resolve_yahoo_symbol,
+    store_isin_ticker, reverse_lookup_isin, fetch_isin_for_ticker, _fetch_stock_prices,
+)
 from services.holdings_csv_parser import detect_holdings_format, parse_ibkr_holdings, parse_bourso_holdings
 from services.fx import get_rate
 from datetime import date, datetime
@@ -19,10 +23,14 @@ router = APIRouter()
 
 async def _enrich_holding(db: AsyncSession, h: Holding, account_currency: str = "EUR") -> dict:
     """Build HoldingOut dict with live price data from cache."""
+    # ISIN: stored on the holding, or reverse-resolved from the persistent map
+    # (so manually-mapped IBKR positions, e.g. ASML→NL…, prefill in the editor).
+    eff_isin = h.isin or await reverse_lookup_isin(db, h.ticker)
     out = {
         "id": h.id,
         "account_id": h.account_id,
         "ticker": h.ticker,
+        "isin": eff_isin,
         "name": h.name,
         "quantity": h.quantity,
         "cost_basis_cents": h.cost_basis_cents,
@@ -37,17 +45,44 @@ async def _enrich_holding(db: AsyncSession, h: Holding, account_currency: str = 
         "price_currency": h.currency,
         "price_fetched_at": None,
         "value_in_account_ccy_cents": None,
+        "price_status": "missing",
     }
     lookup_ticker = h.ticker.lower() if h.asset_type == "crypto" else h.ticker.upper()
     cached = await get_cached_price(db, lookup_ticker)
     if not cached:
+        # No live quote — fall back to the broker reference price if we have one.
+        if h.ref_price_cents:
+            out["price_status"] = "fallback"
+            price_cents = h.ref_price_cents
+            out["current_price_cents"] = price_cents
+            out["price_currency"] = h.currency
+            value = round(h.quantity * price_cents)
+            out["current_value_cents"] = value
+            out["gain_cents"] = value - h.cost_basis_cents
+            if h.cost_basis_cents != 0:
+                out["gain_pct"] = round((value - h.cost_basis_cents) / abs(h.cost_basis_cents) * 100, 2)
+            if h.currency == account_currency:
+                out["value_in_account_ccy_cents"] = value
+            else:
+                rate = await get_rate(db, h.currency, account_currency, date.today())
+                out["value_in_account_ccy_cents"] = round(value * rate) if rate else value
         return out
 
     out["price_fetched_at"] = str(cached.fetched_at)
+    cache_source = getattr(cached, "source", "live") or "live"
 
-    if cached.currency == h.currency:
+    if cache_source == "ref":
+        # The cached value is the broker fallback, not a live yfinance quote → the
+        # ticker isn't priced by yf (badge the position so the user can fix it).
+        out["price_status"] = "fallback"
         price_cents = cached.price_cents
+    elif cached.currency == h.currency:
+        price_cents = cached.price_cents
+        out["price_status"] = "ok"
     else:
+        # Live quote in a different currency than the holding → likely a wrong
+        # instrument (e.g. a EUR ETF priced from its USD listing).
+        out["price_status"] = "mismatch"
         rate = await get_rate(db, cached.currency, h.currency, date.today())
         if rate:
             price_cents = round(cached.price_cents * rate)
@@ -75,23 +110,25 @@ async def _enrich_holding(db: AsyncSession, h: Holding, account_currency: str = 
 # ── Holdings CRUD ─────────────────────────────────────────────────────────────
 
 @router.get("/accounts/{account_id}/holdings")
-async def list_holdings(account_id: int, db: AsyncSession = Depends(get_db)):
+async def list_holdings(account_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     acc = await db.get(Account, account_id)
     acc_ccy = acc.currency if acc else "EUR"
     result = await db.execute(
-        select(Holding).where(Holding.account_id == account_id)
+        select(Holding).where(Holding.account_id == account_id, Holding.profile_id == pid)
     )
     holdings = result.scalars().all()
     return [await _enrich_holding(db, h, acc_ccy) for h in holdings]
 
 
 @router.post("/accounts/{account_id}/holdings")
-async def create_holding(account_id: int, body: HoldingCreate, db: AsyncSession = Depends(get_db)):
-    acc = await db.get(Account, account_id)
+async def create_holding(account_id: int, body: HoldingCreate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    acc = await db.execute(select(Account).where(Account.id == account_id, Account.profile_id == pid))
+    acc = acc.scalar_one_or_none()
     if not acc:
         raise HTTPException(404, "Account not found")
     h = Holding(
         account_id=account_id,
+        profile_id=pid,
         ticker=body.ticker,
         name=body.name,
         quantity=body.quantity,
@@ -108,22 +145,49 @@ async def create_holding(account_id: int, body: HoldingCreate, db: AsyncSession 
 
 
 @router.put("/holdings/{holding_id}")
-async def update_holding(holding_id: int, body: HoldingUpdate, db: AsyncSession = Depends(get_db)):
+async def update_holding(holding_id: int, body: HoldingUpdate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     h = await db.get(Holding, holding_id)
-    if not h:
+    if not h or h.profile_id != pid:
         raise HTTPException(404, "Holding not found")
-    for field, val in body.model_dump(exclude_unset=True).items():
+
+    old_ticker = h.ticker
+    updates = body.model_dump(exclude_unset=True)
+    for field, val in updates.items():
         setattr(h, field, val)
+
+    ticker_changed = "ticker" in updates and h.ticker and h.ticker != old_ticker
+
+    # A manual ticker edit overwrites the persistent ISIN→ticker lookup so future
+    # imports keep the correction, and refreshes the price for the new symbol.
+    if (("ticker" in updates) or ("isin" in updates)) and h.isin and h.ticker:
+        await store_isin_ticker(db, h.isin, h.ticker, h.name, h.currency, source="manual")
+
     await db.commit()
+
+    if ticker_changed and h.asset_type != "crypto":
+        try:
+            # Drop the stale cache row for the old symbol, then fetch the new one.
+            await db.execute(text("DELETE FROM price_cache WHERE UPPER(ticker) = :t"), {"t": old_ticker.upper()})
+            prices = await _fetch_stock_prices([h.ticker.upper()])
+            pc = prices.get(h.ticker.upper())
+            if pc:
+                await db.execute(text(
+                    "INSERT OR REPLACE INTO price_cache (ticker, price_cents, currency, fetched_at, source) "
+                    "VALUES (:t, :p, :c, :f, 'live')"
+                ), {"t": h.ticker.upper(), "p": round(pc[0] * 100), "c": pc[1], "f": datetime.utcnow()})
+            await db.commit()
+        except Exception:
+            pass
+
     await db.refresh(h)
     acc = await db.get(Account, h.account_id)
     return await _enrich_holding(db, h, acc.currency if acc else "EUR")
 
 
 @router.delete("/holdings/{holding_id}")
-async def delete_holding(holding_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_holding(holding_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     h = await db.get(Holding, holding_id)
-    if not h:
+    if not h or h.profile_id != pid:
         raise HTTPException(404, "Holding not found")
     await db.delete(h)
     await db.commit()
@@ -134,6 +198,47 @@ async def delete_holding(holding_id: int, db: AsyncSession = Depends(get_db)):
 async def trigger_price_refresh(db: AsyncSession = Depends(get_db)):
     count = await refresh_all_prices(db)
     return {"refreshed": count}
+
+
+@router.post("/resolve-tickers")
+async def resolve_tickers(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    """Re-resolve the Yahoo symbol (via OpenFIGI, then Yahoo search) for the profile's
+    holdings that aren't priced live, and backfill any missing ISIN from yfinance."""
+    holdings = (await db.execute(select(Holding).where(Holding.profile_id == pid))).scalars().all()
+    resolved = 0
+    for h in holdings:
+        if h.asset_type == "crypto":
+            continue
+        # Backfill a missing ISIN (e.g. IBKR positions) so the editor can prefill it.
+        if not h.isin:
+            found = h.isin or await reverse_lookup_isin(db, h.ticker)
+            if not found:
+                found = await fetch_isin_for_ticker(h.ticker)
+            if found:
+                h.isin = found
+                await store_isin_ticker(db, found, h.ticker, h.name, h.currency, source="yfinance")
+        if not h.ref_price_cents:
+            continue
+        acc = await db.get(Account, h.account_id)
+        eh = await _enrich_holding(db, h, acc.currency if acc else "EUR")
+        if eh.get("price_status") == "ok":
+            continue
+        isin = h.isin or await reverse_lookup_isin(db, h.ticker)
+        if not isin:
+            continue
+        new_ticker, ok = await resolve_yahoo_symbol(
+            db, isin, h.ticker, h.ref_price_cents / 100, h.currency, h.name, force=True,
+        )
+        if ok and new_ticker.upper() != h.ticker.upper():
+            await db.execute(text("DELETE FROM price_cache WHERE UPPER(ticker) = :t"), {"t": h.ticker.upper()})
+            h.ticker = new_ticker
+            resolved += 1
+    await db.commit()
+    try:
+        await refresh_all_prices(db)
+    except Exception:
+        pass
+    return {"resolved": resolved}
 
 
 @router.get("/history/{ticker}")
@@ -162,6 +267,16 @@ async def benchmark_list():
     return [{"key": k, **v} for k, v in BENCHMARKS.items()]
 
 
+def _normalize_pct(series: list[dict]) -> list[dict]:
+    """Normalise a [{date, close}] series to percent change from the first point."""
+    if not series:
+        return []
+    base = series[0]["close"]
+    if not base:
+        return []
+    return [{"date": pt["date"], "pct": round((pt["close"] - base) / base * 100, 2)} for pt in series]
+
+
 @router.get("/benchmark/{key}")
 async def benchmark_history(
     key: str,
@@ -171,16 +286,68 @@ async def benchmark_history(
     if not info:
         raise HTTPException(404, f"Unknown benchmark: {key}")
     data = await fetch_historical_prices(info["ticker"], period)
-    if not data:
-        return {"key": key, "name": info["name"], "data": []}
+    return {"key": key, "name": info["name"], "data": _normalize_pct(data)}
 
-    base_price = data[0]["close"]
-    normalized = []
-    for pt in data:
-        pct = round((pt["close"] - base_price) / base_price * 100, 2)
-        normalized.append({"date": pt["date"], "pct": pct})
 
-    return {"key": key, "name": info["name"], "data": normalized}
+@router.get("/accounts/{account_id}/performance")
+async def account_performance(
+    account_id: int,
+    period: str = Query("1y"),
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Normalised % performance of an account's current holdings over `period`,
+    reconstructed from each holding's historical closes (so it can be plotted
+    against the index benchmarks)."""
+    acc = await db.execute(select(Account).where(Account.id == account_id, Account.profile_id == pid))
+    acc = acc.scalar_one_or_none()
+    if not acc:
+        raise HTTPException(404, "Account not found")
+    acc_ccy = acc.currency or "EUR"
+
+    holdings = (await db.execute(
+        select(Holding).where(Holding.account_id == account_id, Holding.profile_id == pid)
+    )).scalars().all()
+    if not holdings:
+        return {"account_id": account_id, "name": acc.name, "data": []}
+
+    # Per-holding date→close (scaled to the account currency at today's FX rate so
+    # mixed-currency accounts weight each position correctly).
+    histories: list[tuple[float, dict[str, float]]] = []  # (quantity, {date: close})
+    for h in holdings:
+        raw = await fetch_historical_prices(h.ticker, period)
+        if not raw:
+            continue
+        rate = 1.0
+        if h.currency and h.currency != acc_ccy:
+            r = await get_rate(db, h.currency, acc_ccy, date.today())
+            rate = r if r else 1.0
+        closes = {pt["date"]: pt["close"] * rate for pt in raw}
+        histories.append((h.quantity, closes))
+
+    if not histories:
+        return {"account_id": account_id, "name": acc.name, "data": []}
+
+    # Common baseline: start once every holding has data, so the sum is complete.
+    start = max(min(closes) for _, closes in histories)
+    all_dates = sorted({d for _, closes in histories for d in closes if d >= start})
+
+    series: list[dict] = []
+    last = [None] * len(histories)
+    for d in all_dates:
+        total = 0.0
+        ok = True
+        for i, (qty, closes) in enumerate(histories):
+            if d in closes:
+                last[i] = closes[d]
+            if last[i] is None:
+                ok = False
+                break
+            total += qty * last[i]
+        if ok:
+            series.append({"date": d, "close": total})
+
+    return {"account_id": account_id, "name": acc.name, "data": _normalize_pct(series)}
 
 
 # ── Holdings CSV Import ──────────────────────────────────────────────────────
@@ -190,6 +357,7 @@ async def import_preview(
     account_id: int = Query(...),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     raw = await file.read()
     fmt = detect_holdings_format(raw)
@@ -202,7 +370,7 @@ async def import_preview(
         parsed = parse_bourso_holdings(raw)
 
     existing = await db.execute(
-        select(Holding).where(Holding.account_id == account_id)
+        select(Holding).where(Holding.account_id == account_id, Holding.profile_id == pid)
     )
     existing_map = {h.ticker: h for h in existing.scalars().all()}
 
@@ -221,6 +389,7 @@ async def import_preview(
             currency=p.currency,
             asset_type=p.asset_type,
             last_price_cents=p.last_price_cents,
+            isin=p.isin,
             is_duplicate=is_dup,
             existing_holding_id=ex.id if ex else None,
             existing_quantity=ex.quantity if ex else None,
@@ -236,13 +405,15 @@ async def import_preview(
 async def import_confirm(
     body: HoldingsImportConfirmRequest,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
-    acc = await db.get(Account, body.account_id)
+    acc = await db.execute(select(Account).where(Account.id == body.account_id, Account.profile_id == pid))
+    acc = acc.scalar_one_or_none()
     if not acc:
         raise HTTPException(404, "Account not found")
 
     existing = await db.execute(
-        select(Holding).where(Holding.account_id == body.account_id)
+        select(Holding).where(Holding.account_id == body.account_id, Holding.profile_id == pid)
     )
     existing_map = {h.ticker: h for h in existing.scalars().all()}
 
@@ -251,8 +422,19 @@ async def import_confirm(
     skipped = 0
     now = datetime.utcnow()
 
+    today = date.today()
+
     for item in body.holdings:
         ex = existing_map.get(item.ticker)
+
+        # When the broker gave us a same-day price, resolve & validate the live
+        # Yahoo symbol so ongoing refreshes price the correct instrument.
+        resolved_ticker = item.ticker
+        ref_price_cents = item.last_price_cents
+        if item.last_price_cents:
+            resolved_ticker, _ok = await resolve_yahoo_symbol(
+                db, item.isin, item.ticker, item.last_price_cents / 100, item.currency, item.name,
+            )
 
         if ex is not None:
             action = item.duplicate_action
@@ -260,34 +442,47 @@ async def import_confirm(
                 skipped += 1
                 continue
             elif action == "replace":
+                ex.ticker = resolved_ticker
                 ex.quantity = item.quantity
                 ex.cost_basis_cents = item.cost_basis_cents
                 ex.name = item.name
                 ex.currency = item.currency
                 ex.asset_type = item.asset_type
+                ex.isin = item.isin
+                ex.ref_price_cents = ref_price_cents
+                ex.ref_price_date = today if ref_price_cents else None
                 updated += 1
             elif action == "merge":
                 ex.quantity += item.quantity
                 ex.cost_basis_cents += item.cost_basis_cents
+                if ref_price_cents:
+                    ex.ticker = resolved_ticker
+                    ex.isin = item.isin
+                    ex.ref_price_cents = ref_price_cents
+                    ex.ref_price_date = today
                 updated += 1
         else:
             h = Holding(
                 account_id=body.account_id,
-                ticker=item.ticker,
+                profile_id=pid,
+                ticker=resolved_ticker,
                 name=item.name,
                 quantity=item.quantity,
                 cost_basis_cents=item.cost_basis_cents,
                 currency=item.currency,
                 asset_type=item.asset_type,
+                isin=item.isin,
+                ref_price_cents=ref_price_cents,
+                ref_price_date=today if ref_price_cents else None,
             )
             db.add(h)
             created += 1
 
-        if item.last_price_cents is not None:
+        if ref_price_cents is not None:
             await db.execute(text(
-                "INSERT OR REPLACE INTO price_cache (ticker, price_cents, currency, fetched_at) "
-                "VALUES (:ticker, :price_cents, :currency, :fetched_at)"
-            ), {"ticker": item.ticker, "price_cents": item.last_price_cents, "currency": item.currency, "fetched_at": now})
+                "INSERT OR REPLACE INTO price_cache (ticker, price_cents, currency, fetched_at, source) "
+                "VALUES (:ticker, :price_cents, :currency, :fetched_at, 'ref')"
+            ), {"ticker": resolved_ticker.upper(), "price_cents": ref_price_cents, "currency": item.currency, "fetched_at": now})
 
     await db.commit()
 
@@ -302,10 +497,10 @@ async def import_confirm(
 # ── Investment accounts (enhanced with holdings) ──────────────────────────────
 
 @router.get("/accounts")
-async def investment_accounts(db: AsyncSession = Depends(get_db)):
+async def investment_accounts(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     result = await db.execute(
         select(Account).where(
-            and_(Account.is_active == True, Account.account_type == AccountType.investissement)
+            and_(Account.is_active == True, Account.account_type == AccountType.investissement, Account.profile_id == pid)
         )
     )
     inv_accounts = result.scalars().all()
@@ -340,7 +535,7 @@ async def investment_accounts(db: AsyncSession = Depends(get_db)):
         first_value = snaps[0].amount_cents if snaps else None
 
         holdings_result = await db.execute(
-            select(Holding).where(Holding.account_id == acc.id)
+            select(Holding).where(Holding.account_id == acc.id, Holding.profile_id == pid)
         )
         holdings = holdings_result.scalars().all()
         enriched_holdings = [await _enrich_holding(db, h, acc_ccy) for h in holdings]
@@ -431,11 +626,48 @@ async def investment_accounts(db: AsyncSession = Depends(get_db)):
     return accounts_out
 
 
+async def _holdings_monthly_values(db: AsyncSession, account_id: int, acc_ccy: str) -> list[dict]:
+    """Reconstruct a holdings account's month-end value from historical closes,
+    so it can be charted alongside snapshot accounts. Returns [{month, amount_cents}]."""
+    holdings = (await db.execute(
+        select(Holding).where(Holding.account_id == account_id)
+    )).scalars().all()
+    if not holdings:
+        return []
+
+    # Per-holding {date: close} scaled to the account currency.
+    histories: list[tuple[float, dict[str, float]]] = []
+    for h in holdings:
+        raw = await fetch_historical_prices(h.ticker, "2y")
+        if not raw:
+            continue
+        rate = 1.0
+        if h.currency and h.currency != acc_ccy:
+            r = await get_rate(db, h.currency, acc_ccy, date.today())
+            rate = r if r else 1.0
+        histories.append((h.quantity, {pt["date"]: pt["close"] * rate for pt in raw}))
+    if not histories:
+        return []
+
+    all_dates = sorted({d for _, closes in histories for d in closes})
+    # Month-end value = sum of each holding's last close on/before the month's end.
+    by_month: dict[str, float] = {}
+    last = [None] * len(histories)
+    cursor = 0
+    for d in all_dates:
+        for i, (qty, closes) in enumerate(histories):
+            if d in closes:
+                last[i] = closes[d]
+        total = sum(qty * last[i] for i, (qty, _) in enumerate(histories) if last[i] is not None)
+        by_month[d[:7]] = total  # later date in the month overwrites → month-end value
+    return [{"month": m, "amount_cents": round(v * 100)} for m, v in by_month.items()]
+
+
 @router.get("/total-series")
-async def investment_total_series(db: AsyncSession = Depends(get_db)):
+async def investment_total_series(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     result = await db.execute(
         select(Account).where(
-            and_(Account.is_active == True, Account.account_type == AccountType.investissement)
+            and_(Account.is_active == True, Account.account_type == AccountType.investissement, Account.profile_id == pid)
         )
     )
     inv_accounts = result.scalars().all()
@@ -455,6 +687,11 @@ async def investment_total_series(db: AsyncSession = Depends(get_db)):
             month = str(s.date)[:7]
             series.append({"month": month, "amount_cents": s.amount_cents})
             all_months.add(month)
+        # Holdings accounts have no snapshots — reconstruct their monthly value.
+        if not series:
+            series = await _holdings_monthly_values(db, acc.id, acc.currency or "EUR")
+            for entry in series:
+                all_months.add(entry["month"])
         account_series[acc.id] = series
 
     if not all_months:

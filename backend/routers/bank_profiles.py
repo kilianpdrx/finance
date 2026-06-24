@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
+from dependencies import current_profile_id
 from models import BankProfile
 from schemas import BankProfileBase, BankProfileCreate, BankProfileUpdate, BankProfileOut
 
@@ -10,14 +11,14 @@ router = APIRouter()
 
 
 @router.get("", response_model=List[BankProfileOut])
-async def list_bank_profiles(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(BankProfile).order_by(BankProfile.name))
+async def list_bank_profiles(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(BankProfile).where(BankProfile.profile_id == pid).order_by(BankProfile.name))
     return result.scalars().all()
 
 
 @router.get("/{profile_id}", response_model=BankProfileOut)
-async def get_bank_profile(profile_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id))
+async def get_bank_profile(profile_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id, BankProfile.profile_id == pid))
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Bank profile not found")
@@ -25,8 +26,8 @@ async def get_bank_profile(profile_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("", response_model=BankProfileOut, status_code=201)
-async def create_bank_profile(payload: BankProfileCreate, db: AsyncSession = Depends(get_db)):
-    profile = BankProfile(**payload.model_dump())
+async def create_bank_profile(payload: BankProfileCreate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    profile = BankProfile(**payload.model_dump(), profile_id=pid)
     db.add(profile)
     await db.commit()
     await db.refresh(profile)
@@ -34,8 +35,8 @@ async def create_bank_profile(payload: BankProfileCreate, db: AsyncSession = Dep
 
 
 @router.put("/{profile_id}", response_model=BankProfileOut)
-async def update_bank_profile(profile_id: int, payload: BankProfileUpdate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id))
+async def update_bank_profile(profile_id: int, payload: BankProfileUpdate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id, BankProfile.profile_id == pid))
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Bank profile not found")
@@ -47,8 +48,8 @@ async def update_bank_profile(profile_id: int, payload: BankProfileUpdate, db: A
 
 
 @router.delete("/{profile_id}", status_code=204)
-async def delete_bank_profile(profile_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id))
+async def delete_bank_profile(profile_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id, BankProfile.profile_id == pid))
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Bank profile not found")

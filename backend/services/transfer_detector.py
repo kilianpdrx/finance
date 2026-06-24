@@ -6,9 +6,9 @@ from models import Transaction, Account
 
 logger = logging.getLogger(__name__)
 
-async def detect_internal_transfers(db: AsyncSession):
+async def detect_internal_transfers(db: AsyncSession, profile_id: int | None = None):
     """
-    Find internal transfers by matching transaction pairs:
+    Find internal transfers by matching transaction pairs (within one profile):
     - Same amount_cents
     - One is debit, one is credit
     - Different accounts
@@ -17,18 +17,23 @@ async def detect_internal_transfers(db: AsyncSession):
     """
     logger.info("Running internal transfer detection...")
 
-    # Fetch all active accounts
-    acc_res = await db.execute(select(Account))
+    # Fetch the profile's accounts
+    acc_q = select(Account)
+    if profile_id is not None:
+        acc_q = acc_q.where(Account.profile_id == profile_id)
+    acc_res = await db.execute(acc_q)
     accounts = {a.id: a for a in acc_res.scalars()}
 
     if len(accounts) < 2:
         return 0
 
-    # Fetch unmatched transactions
+    # Fetch unmatched transactions (scoped to the profile)
+    txn_filters = [Transaction.is_internal_transfer == False]
+    if profile_id is not None:
+        txn_filters.append(Transaction.profile_id == profile_id)
     txn_res = await db.execute(
         select(Transaction)
-        .where(Transaction.is_internal_transfer == False)
-        # Assuming transfers don't usually have a high-confidence category, or we allow overriding them.
+        .where(*txn_filters)
         .order_by(Transaction.date)
     )
     unmatched = txn_res.scalars().all()

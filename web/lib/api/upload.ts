@@ -54,10 +54,11 @@ export const uploadApi = {
     form.append("file", file);
     return post<DetectResponse>("/api/upload/detect", form);
   },
-  parsePreview(file: File, opts: { profileId?: number; columnMapping?: Record<string, string>; dateFormat?: string; encoding?: string; delimiter?: string }) {
+  parsePreview(file: File, opts: { profileId?: number; accountId?: number; columnMapping?: Record<string, string>; dateFormat?: string; encoding?: string; delimiter?: string }) {
     const form = new FormData();
     form.append("file", file);
     if (opts.profileId !== undefined) form.append("profile_id", String(opts.profileId));
+    if (opts.accountId !== undefined) form.append("account_id", String(opts.accountId));
     if (opts.columnMapping) form.append("column_mapping", JSON.stringify(opts.columnMapping));
     if (opts.dateFormat) form.append("date_format", opts.dateFormat);
     if (opts.encoding) form.append("encoding", opts.encoding);

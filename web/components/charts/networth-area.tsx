@@ -5,11 +5,11 @@ import type { NetWorthPoint } from "@/lib/api/hooks";
 import { ChartTooltip } from "./chart-tooltip";
 import { formatCentsCompact, formatMonthLabel } from "@/lib/format";
 
-export function NetworthArea({ data, currency }: { data: NetWorthPoint[]; currency: string }) {
+export function NetworthArea({ data, currency, height = 280 }: { data: NetWorthPoint[]; currency: string; height?: number | string }) {
   const rows = data.map((d) => ({ month: d.month, total: Number(d.total) }));
 
   return (
-    <ResponsiveContainer width="100%" height={280}>
+    <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
         <defs>
           <linearGradient id="nw-fill" x1="0" y1="0" x2="0" y2="1">

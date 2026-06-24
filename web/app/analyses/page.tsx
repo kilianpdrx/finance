@@ -43,7 +43,7 @@ export default function AnalysesPage() {
           <Card><EmptyState icon={Inbox} title="Aucune dépense sur la période" /></Card>
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Card><CardContent><SpendingDonut data={byCategory.data} currency={currency} /></CardContent></Card>
+            <Card><CardContent className="flex items-center justify-center py-8"><SpendingDonut data={byCategory.data} currency={currency} size={260} /></CardContent></Card>
             <Card className="overflow-hidden p-0">
               <Table>
                 <TableHeader><TableRow className="hover:bg-transparent"><TableHead>Catégorie</TableHead><TableHead className="text-right">Nb</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">%</TableHead></TableRow></TableHeader>

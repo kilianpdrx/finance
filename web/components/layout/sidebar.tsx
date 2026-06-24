@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { Sparkles } from "lucide-react";
 import { NAV_ITEMS } from "@/lib/nav";
+import { ProfileSwitcher } from "@/components/profiles/profile-switcher";
 import { cn } from "@/lib/utils";
 
 function isActive(pathname: string, href: string) {
@@ -45,17 +45,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 export function SidebarBrand() {
-  return (
-    <Link href="/" className="flex items-center gap-2.5 px-5 py-5">
-      <span className="flex size-9 items-center justify-center rounded-xl bg-brand text-brand-foreground shadow-sm">
-        <Sparkles className="size-5" />
-      </span>
-      <div className="leading-tight">
-        <p className="text-sm font-semibold tracking-tight">Finance</p>
-        <p className="text-[11px] text-muted-foreground">Patrimoine personnel</p>
-      </div>
-    </Link>
-  );
+  return <ProfileSwitcher />;
 }
 
 /** Desktop fixed rail. */

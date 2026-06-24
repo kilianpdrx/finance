@@ -5,12 +5,14 @@ from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
+from dependencies import current_profile_id
 from models import Transaction, BankProfile, Account, ImportBatch
 from schemas import DetectResponse, ConfirmResponse, BankProfileOut, BankProfileCreate
 from services.bank_detector import detect_bank
 from services.csv_parser import parse_csv
 from services.categorizer import categorize
 from services.transfer_detector import detect_internal_transfers
+from utils import generate_import_hash
 
 logger = logging.getLogger(__name__)
 
@@ -19,16 +21,24 @@ router = APIRouter()
 SQLITE_VAR_LIMIT = 900  # SQLite max variable number is 999; stay safely below
 
 
-async def _find_existing_hashes(db: AsyncSession, all_hashes: list) -> set:
-    """Query existing import_hashes in chunks to avoid SQLite variable limit."""
+async def _find_existing_hashes(db: AsyncSession, all_hashes: list, pid: int) -> set:
+    """Query existing import_hashes (within the profile) in chunks."""
     existing: set = set()
     for i in range(0, len(all_hashes), SQLITE_VAR_LIMIT):
         chunk = all_hashes[i:i + SQLITE_VAR_LIMIT]
         result = await db.execute(
-            select(Transaction.import_hash).where(Transaction.import_hash.in_(chunk))
+            select(Transaction.import_hash).where(
+                Transaction.import_hash.in_(chunk), Transaction.profile_id == pid
+            )
         )
         existing.update(row[0] for row in result)
     return existing
+
+
+def _acct_hashes(transactions: list, account_id: int) -> list[str]:
+    """Recompute account-scoped import hashes (so identical txns in different
+    accounts/profiles don't collide on the global import_hash UNIQUE)."""
+    return [generate_import_hash(str(t.date), t.description, t.amount_cents, account_id) for t in transactions]
 
 
 def _build_profile_from_mapping(column_mapping: dict, date_format: str, encoding: str, delimiter: str):
@@ -85,6 +95,7 @@ def _extract_raw_preview(file_bytes: bytes):
 async def detect(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     file_bytes = await file.read()
     filename = file.filename or ""
@@ -93,7 +104,7 @@ async def detect(
     raw_headers, raw_preview = _extract_raw_preview(file_bytes)
     logger.info("Raw headers extracted: %s", raw_headers)
 
-    profile = await detect_bank(file_bytes, filename, db)
+    profile = await detect_bank(file_bytes, filename, db, pid)
 
     if profile:
         try:
@@ -131,18 +142,20 @@ async def detect(
 async def parse_preview(
     file: UploadFile = File(...),
     profile_id: Optional[int] = Form(None),
+    account_id: Optional[int] = Form(None),
     column_mapping: Optional[str] = Form(None),
     date_format: Optional[str] = Form(None),
     encoding: Optional[str] = Form(None),
     delimiter: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     """Parse CSV and return all transactions with auto-assigned categories for review."""
     file_bytes = await file.read()
     logger.info("parse-preview: file=%s profile_id=%s", file.filename, profile_id)
 
     if profile_id:
-        result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id))
+        result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id, BankProfile.profile_id == pid))
         profile = result.scalar_one_or_none()
         if not profile:
             raise HTTPException(status_code=404, detail="Profil bancaire introuvable")
@@ -158,7 +171,7 @@ async def parse_preview(
             delimiter or ";",
         )
     else:
-        profile = await detect_bank(file_bytes, file.filename or "", db)
+        profile = await detect_bank(file_bytes, file.filename or "", db, pid)
         if not profile:
             raise HTTPException(
                 status_code=400,
@@ -174,30 +187,30 @@ async def parse_preview(
     if not transactions:
         logger.warning("parse_csv returned 0 transactions — check column mapping and date format")
 
-    # Check which hashes already exist (chunked to avoid SQLite variable limit)
-    all_hashes = [t.import_hash for t in transactions]
-    existing_hashes = await _find_existing_hashes(db, all_hashes)
+    # Account-scoped hashes when the destination account is known (matches confirm).
+    hashes = _acct_hashes(transactions, account_id) if account_id is not None else [t.import_hash for t in transactions]
+    existing_hashes = await _find_existing_hashes(db, hashes, pid)
 
     from models import Category as CatModel
-    cats_result = await db.execute(select(CatModel))
+    cats_result = await db.execute(select(CatModel).where(CatModel.profile_id == pid))
     cat_map = {c.id: {"name": c.name, "color": c.color} for c in cats_result.scalars()}
 
     result_rows = []
     seen_hashes: set = set()  # Track intra-file duplicates
-    for t in transactions:
-        is_duplicate = t.import_hash in existing_hashes or t.import_hash in seen_hashes
-        seen_hashes.add(t.import_hash)
+    for t, h in zip(transactions, hashes):
+        is_duplicate = h in existing_hashes or h in seen_hashes
+        seen_hashes.add(h)
         cat_id = t.category_id
         cat_source = None
         if cat_id is None and not is_duplicate:
-            cat_id, cat_source = await categorize(t.model_dump(), db)
+            cat_id, cat_source = await categorize(t.model_dump(), db, pid)
         result_rows.append({
             "date": str(t.date),
             "description": t.description,
             "amount_cents": t.amount_cents,
             "is_debit": t.is_debit,
             "balance_after_cents": t.balance_after_cents,
-            "import_hash": t.import_hash,
+            "import_hash": h,
             "category_id": cat_id,
             "category_name": cat_map.get(cat_id, {}).get("name") if cat_id else None,
             "is_duplicate": is_duplicate,
@@ -215,9 +228,10 @@ async def parse_preview(
 async def save_profile(
     payload: BankProfileCreate,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     """Save or update a bank profile from the column mapping UI."""
-    existing = await db.execute(select(BankProfile).where(BankProfile.name == payload.name))
+    existing = await db.execute(select(BankProfile).where(BankProfile.name == payload.name, BankProfile.profile_id == pid))
     profile = existing.scalar_one_or_none()
     if profile:
         # Update existing profile
@@ -228,7 +242,7 @@ async def save_profile(
         await db.refresh(profile)
         logger.info("Updated bank profile: %s (id=%s)", profile.name, profile.id)
     else:
-        profile = BankProfile(**payload.model_dump())
+        profile = BankProfile(**payload.model_dump(), profile_id=pid)
         db.add(profile)
         await db.commit()
         await db.refresh(profile)
@@ -248,6 +262,7 @@ async def confirm(
     category_overrides: Optional[str] = Form(None),
     force_import_hashes: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     file_bytes = await file.read()
     logger.info("confirm: file=%s account_id=%s profile_id=%s", file.filename, account_id, profile_id)
@@ -267,7 +282,7 @@ async def confirm(
             pass
 
     if profile_id:
-        result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id))
+        result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id, BankProfile.profile_id == pid))
         profile = result.scalar_one_or_none()
         if not profile:
             raise HTTPException(status_code=404, detail="Profil bancaire introuvable")
@@ -283,7 +298,7 @@ async def confirm(
             delimiter or ";",
         )
     else:
-        profile = await detect_bank(file_bytes, file.filename or "", db)
+        profile = await detect_bank(file_bytes, file.filename or "", db, pid)
         if not profile:
             raise HTTPException(
                 status_code=400,
@@ -296,17 +311,21 @@ async def confirm(
         logger.error("parse_csv error during confirm: %s", e)
         raise HTTPException(status_code=422, detail=str(e))
 
-    # Determine the account's currency
-    acc_result = await db.execute(select(Account).where(Account.id == account_id))
+    # Determine the account's currency (scoped to the active profile).
+    acc_result = await db.execute(select(Account).where(Account.id == account_id, Account.profile_id == pid))
     acc_obj = acc_result.scalar_one_or_none()
-    account_currency = (acc_obj.currency if acc_obj else None) or "EUR"
+    if not acc_obj:
+        raise HTTPException(status_code=404, detail="Compte introuvable")
+    account_currency = acc_obj.currency or "EUR"
 
-    all_hashes = [t.import_hash for t in transactions]
-    existing_hashes = await _find_existing_hashes(db, all_hashes)
+    # Account-scoped hashes so identical txns across profiles/accounts never collide.
+    hashes = _acct_hashes(transactions, account_id)
+    existing_hashes = await _find_existing_hashes(db, hashes, pid)
 
     # Create import batch
     batch = ImportBatch(
         account_id=account_id,
+        profile_id=pid,
         filename=file.filename,
         transaction_count=0,
     )
@@ -319,28 +338,29 @@ async def confirm(
     import hashlib as _hl
     import time as _time
 
-    for t in transactions:
-        is_forced_dup = t.import_hash in existing_hashes and t.import_hash in force_hashes
-        if t.import_hash in existing_hashes and t.import_hash not in force_hashes:
+    for t, h in zip(transactions, hashes):
+        is_forced_dup = h in existing_hashes and h in force_hashes
+        if h in existing_hashes and h not in force_hashes:
             skipped += 1
             continue
 
-        if t.import_hash in overrides:
-            cat_id = overrides[t.import_hash]
+        if h in overrides:
+            cat_id = overrides[h]
         elif t.category_id is None:
             txn_dict = t.model_dump()
             txn_dict['account_id'] = account_id
-            cat_id, _ = await categorize(txn_dict, db)
+            cat_id, _ = await categorize(txn_dict, db, pid)
         else:
             cat_id = t.category_id
 
         # For force-imported duplicates, generate a unique hash
-        final_hash = t.import_hash
+        final_hash = h
         if is_forced_dup:
-            final_hash = _hl.sha256(f"{t.import_hash}|force|{_time.time_ns()}".encode()).hexdigest()
+            final_hash = _hl.sha256(f"{h}|force|{_time.time_ns()}".encode()).hexdigest()
 
         txn = Transaction(
             account_id=account_id,
+            profile_id=pid,
             date=t.date,
             description=t.description,
             amount_cents=t.amount_cents,
@@ -361,7 +381,7 @@ async def confirm(
     await db.commit()
     logger.info("Import complete: %d imported, %d skipped (duplicates)", imported, skipped)
 
-    # Detect internal transfers after importing
-    await detect_internal_transfers(db)
+    # Detect internal transfers after importing (scoped to the profile)
+    await detect_internal_transfers(db, pid)
 
     return ConfirmResponse(imported=imported, skipped=skipped, total=imported + skipped)

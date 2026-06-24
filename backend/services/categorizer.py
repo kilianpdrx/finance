@@ -84,12 +84,15 @@ def evaluate_conditions(txn_data: dict, conditions: List[dict], logic_operator: 
     return all(results) if logic_operator != "OR" else any(results)
 
 
-async def categorize(txn_data: dict, db: AsyncSession) -> tuple[Optional[int], Optional[str]]:
+async def categorize(txn_data: dict, db: AsyncSession, profile_id: Optional[int] = None) -> tuple[Optional[int], Optional[str]]:
     """Return (category_id, source) for the given transaction dictionary.
-    source is 'rule', 'ml', or None."""
+    source is 'rule', 'ml', or None. Rules + ML model are scoped to the profile."""
+    conds = [CategoryRule.is_active == True]
+    if profile_id is not None:
+        conds.append(CategoryRule.profile_id == profile_id)
     result = await db.execute(
         select(CategoryRule)
-        .where(CategoryRule.is_active == True)
+        .where(*conds)
         .order_by(CategoryRule.priority, CategoryRule.id)
     )
     rules = result.scalars().all()
@@ -106,10 +109,10 @@ async def categorize(txn_data: dict, db: AsyncSession) -> tuple[Optional[int], O
         if evaluate_conditions(txn_data, rule.conditions, logic_op):
             return rule.category_id, "rule"
 
-    # ML fallback
+    # ML fallback (per-profile model)
     try:
         from services.ml_trainer import predict
-        cat_id = predict(str(txn_data.get('description', '')))
+        cat_id = predict(str(txn_data.get('description', '')), profile_id)
         if cat_id is not None:
             return cat_id, "ml"
     except Exception:

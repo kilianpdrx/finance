@@ -21,10 +21,22 @@ class MatchType(str, enum.Enum):
     regex = "regex"
 
 
+class Profile(Base):
+    """A user profile (e.g. "Moi", "Maman"). All user data is scoped to one profile."""
+    __tablename__ = "profiles"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    color = Column(String, default="#6366f1")
+    is_default = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Account(Base):
     __tablename__ = "accounts"
 
     id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
     name = Column(String, nullable=False)
     bank_name = Column(String, nullable=False)
     account_type = Column(Enum(AccountType), nullable=False, default=AccountType.courant)
@@ -41,6 +53,7 @@ class ImportBatch(Base):
     __tablename__ = "import_batches"
 
     id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     filename = Column(String, nullable=True)
     transaction_count = Column(Integer, default=0)
@@ -54,6 +67,7 @@ class Transaction(Base):
     __tablename__ = "transactions"
 
     id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     date = Column(Date, nullable=False)
     description = Column(String, nullable=False)
@@ -87,7 +101,8 @@ class Category(Base):
     __tablename__ = "categories"
 
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False, unique=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    name = Column(String, nullable=False)
     parent_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     color = Column(String, default="#94a3b8")
     icon = Column(String, default="tag")
@@ -107,6 +122,7 @@ class CategoryRule(Base):
     __tablename__ = "category_rules"
 
     id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
     # [{"field": "description"|"amount", "operator": "contains"|">"|etc, "value": "Achat"}, ...]
     conditions = Column(JSON, nullable=False, default=list)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
@@ -123,7 +139,8 @@ class BankProfile(Base):
     __tablename__ = "bank_profiles"
 
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False, unique=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    name = Column(String, nullable=False)
     column_mapping = Column(JSON, nullable=False)
     date_format = Column(String, nullable=False, default="%d/%m/%Y")
     encoding = Column(String, default="utf-8")
@@ -136,6 +153,7 @@ class AccountBalanceSnapshot(Base):
     __tablename__ = "account_balance_snapshots"
 
     id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     date = Column(Date, nullable=False)
     amount_cents = Column(Integer, nullable=False)
@@ -151,6 +169,7 @@ class BudgetEntry(Base):
     __tablename__ = "budget_entries"
 
     id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
     month = Column(String, nullable=False)  # "YYYY-MM"
     expected_amount_cents = Column(Integer, nullable=False, default=0)
@@ -181,14 +200,18 @@ class Setting(Base):
     __tablename__ = "settings"
 
     id = Column(Integer, primary_key=True)
-    key = Column(String, unique=True, nullable=False)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    key = Column(String, nullable=False)
     value = Column(String, nullable=False)
+
+    __table_args__ = (UniqueConstraint("profile_id", "key", name="uq_setting_profile_key"),)
 
 
 class Holding(Base):
     __tablename__ = "holdings"
 
     id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     ticker = Column(String, nullable=False)
     name = Column(String, nullable=False)
@@ -199,6 +222,11 @@ class Holding(Base):
     added_date = Column(Date, nullable=True)
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Broker-provided reference (from CSV import): used to validate the live Yahoo
+    # symbol and as a fallback price when no correct live quote is available.
+    isin = Column(String, nullable=True)
+    ref_price_cents = Column(Integer, nullable=True)
+    ref_price_date = Column(Date, nullable=True)
 
     account = relationship("Account")
 
@@ -215,3 +243,23 @@ class PriceCache(Base):
     price_cents = Column(Integer, nullable=False)
     currency = Column(String, nullable=False)
     fetched_at = Column(DateTime, nullable=False)
+    # "live" = real yfinance/crypto quote; "ref" = broker fallback price.
+    source = Column(String, default="live")
+
+
+class IsinTicker(Base):
+    """Persistent ISIN→Yahoo-symbol lookup ("big slow memory").
+
+    Resolved once (from the seed map or a validated Yahoo search) and reused
+    across restarts so we never re-run the expensive ISIN search for a known ISIN.
+    Stores no prices — only the symbol resolution.
+    """
+    __tablename__ = "isin_ticker"
+
+    id = Column(Integer, primary_key=True)
+    isin = Column(String, unique=True, nullable=False)
+    ticker = Column(String, nullable=False)
+    name = Column(String, nullable=True)
+    currency = Column(String, nullable=True)
+    source = Column(String, default="seed")  # "seed" | "resolved"
+    updated_at = Column(DateTime, default=datetime.utcnow)

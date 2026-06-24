@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
+from dependencies import current_profile_id
 from models import Transaction, Account, Category, BudgetEntry, AccountBalanceSnapshot, Setting
 from schemas import (
     AnalyticsSummary, CashFlowMonth, CategoryBreakdown,
@@ -35,14 +36,14 @@ def _parse_account_ids(account_ids: Optional[str]) -> Optional[List[int]]:
         return None
 
 
-async def _get_base_currency(db: AsyncSession) -> str:
-    result = await db.execute(select(Setting).where(Setting.key == "base_currency"))
+async def _get_base_currency(db: AsyncSession, pid: int) -> str:
+    result = await db.execute(select(Setting).where(Setting.key == "base_currency", Setting.profile_id == pid))
     setting = result.scalar_one_or_none()
     return setting.value if setting else "CHF"
 
 
-async def _load_account_currencies(db: AsyncSession, parsed_ids: Optional[List[int]]) -> dict[int, str]:
-    q = select(Account.id, Account.currency)
+async def _load_account_currencies(db: AsyncSession, parsed_ids: Optional[List[int]], pid: int) -> dict[int, str]:
+    q = select(Account.id, Account.currency).where(Account.profile_id == pid)
     if parsed_ids:
         q = q.where(Account.id.in_(parsed_ids))
     rows = await db.execute(q)
@@ -67,13 +68,15 @@ async def summary(
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     parsed_ids = _parse_account_ids(account_ids)
-    base_ccy = await _get_base_currency(db)
-    acc_ccys = await _load_account_currencies(db, parsed_ids)
+    base_ccy = await _get_base_currency(db, pid)
+    acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
 
     filters = _date_filters(date_from, date_to)
     filters.append(Transaction.is_internal_transfer == False)
+    filters.append(Transaction.profile_id == pid)
     if parsed_ids:
         filters.append(Transaction.account_id.in_(parsed_ids))
 
@@ -101,7 +104,7 @@ async def summary(
     total_expenses = await _convert_by_currency(db, expenses_by_ccy, base_ccy, today)
     net_cash_flow = total_income - total_expenses
 
-    acc_filter = select(Account.id, Account.currency)
+    acc_filter = select(Account.id, Account.currency).where(Account.profile_id == pid)
     if parsed_ids:
         acc_filter = acc_filter.where(Account.id.in_(parsed_ids))
     all_acc = (await db.execute(acc_filter)).all()
@@ -136,7 +139,7 @@ async def summary(
             balance = t_q.scalar() or 0
         net_worth += await convert_cents(db, balance, acc_ccy, base_ccy, today)
 
-    last_date_q = await db.execute(select(func.max(Transaction.date)))
+    last_date_q = await db.execute(select(func.max(Transaction.date)).where(Transaction.profile_id == pid))
     last_date = last_date_q.scalar()
     last_transaction_date = str(last_date) if last_date else None
 
@@ -159,14 +162,16 @@ async def by_category(
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     parsed_ids = _parse_account_ids(account_ids)
-    base_ccy = await _get_base_currency(db)
-    acc_ccys = await _load_account_currencies(db, parsed_ids)
+    base_ccy = await _get_base_currency(db, pid)
+    acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
 
     filters = _date_filters(date_from, date_to)
     filters.append(Transaction.is_debit == True)
     filters.append(Transaction.is_internal_transfer == False)
+    filters.append(Transaction.profile_id == pid)
     if parsed_ids:
         filters.append(Transaction.account_id.in_(parsed_ids))
 
@@ -217,14 +222,16 @@ async def spending_trends(
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     parsed_ids = _parse_account_ids(account_ids)
-    base_ccy = await _get_base_currency(db)
-    acc_ccys = await _load_account_currencies(db, parsed_ids)
+    base_ccy = await _get_base_currency(db, pid)
+    acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
 
     filters = _date_filters(date_from, date_to)
     filters.append(Transaction.is_debit == True)
     filters.append(Transaction.is_internal_transfer == False)
+    filters.append(Transaction.profile_id == pid)
     if parsed_ids:
         filters.append(Transaction.account_id.in_(parsed_ids))
 
@@ -295,16 +302,18 @@ async def cash_flow(
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     parsed_ids = _parse_account_ids(account_ids)
-    base_ccy = await _get_base_currency(db)
-    acc_ccys = await _load_account_currencies(db, parsed_ids)
+    base_ccy = await _get_base_currency(db, pid)
+    acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
 
     filters = _date_filters(date_from, date_to)
     filters.append(Transaction.is_internal_transfer == False)
+    filters.append(Transaction.profile_id == pid)
     if parsed_ids:
         filters.append(Transaction.account_id.in_(parsed_ids))
-    base = and_(*filters) if filters else True
+    base = and_(*filters)
 
     txn_rows = (await db.execute(
         select(
@@ -344,14 +353,16 @@ async def net_worth_history(
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     parsed_ids = _parse_account_ids(account_ids)
-    base_ccy = await _get_base_currency(db)
+    base_ccy = await _get_base_currency(db, pid)
 
     filters = _date_filters(date_from, date_to)
+    filters.append(Transaction.profile_id == pid)
     if parsed_ids:
         filters.append(Transaction.account_id.in_(parsed_ids))
-    base = and_(*filters) if filters else True
+    base = and_(*filters)
 
     rows = await db.execute(
         select(
@@ -374,7 +385,7 @@ async def net_worth_history(
         monthly_totals[r.month][r.account_id] = account_running[r.account_id]
 
     snap_result = await db.execute(
-        select(AccountBalanceSnapshot).order_by(AccountBalanceSnapshot.date)
+        select(AccountBalanceSnapshot).where(AccountBalanceSnapshot.profile_id == pid).order_by(AccountBalanceSnapshot.date)
     )
     latest_snap: dict = {}
     for snap in snap_result.scalars():
@@ -398,7 +409,7 @@ async def net_worth_history(
         elif acc_id not in monthly_totals[snap_month]:
             monthly_totals[snap_month][acc_id] = snap.amount_cents
 
-    acc_q = select(Account)
+    acc_q = select(Account).where(Account.profile_id == pid)
     if parsed_ids:
         acc_q = acc_q.where(Account.id.in_(parsed_ids))
     all_accounts = await db.execute(acc_q)
@@ -424,9 +435,10 @@ async def net_worth_history(
 async def recurring(
     account_ids: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     parsed_ids = _parse_account_ids(account_ids)
-    rec_filters = [Transaction.is_internal_transfer == False]
+    rec_filters = [Transaction.is_internal_transfer == False, Transaction.profile_id == pid]
     if parsed_ids:
         rec_filters.append(Transaction.account_id.in_(parsed_ids))
     rows = await db.execute(
@@ -460,6 +472,7 @@ async def recurring(
 async def budget_table(
     months: int = Query(default=13, le=24),
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     from datetime import date as date_type
     import calendar
@@ -497,6 +510,7 @@ async def budget_table(
                 Transaction.date <= date_to,
                 Transaction.is_debit == True,
                 Transaction.is_internal_transfer == False,
+                Transaction.profile_id == pid,
             )
         )
         .group_by("month", Transaction.category_id)
@@ -506,7 +520,7 @@ async def budget_table(
         actuals[r.category_id][r.month] = r.total
 
     budget_rows = await db.execute(
-        select(BudgetEntry).where(BudgetEntry.month.in_(month_list))
+        select(BudgetEntry).where(BudgetEntry.month.in_(month_list), BudgetEntry.profile_id == pid)
     )
     budgets: dict = defaultdict(lambda: defaultdict(int))
     for b in budget_rows.scalars():
@@ -514,7 +528,7 @@ async def budget_table(
 
     all_cat_ids = set()
     cat_map: dict = {}
-    cats = await db.execute(select(Category))
+    cats = await db.execute(select(Category).where(Category.profile_id == pid))
     for c in cats.scalars():
         all_cat_ids.add(c.id)
         cat_map[c.id] = c
@@ -575,10 +589,12 @@ async def upsert_budget_entry(
     expected_amount_cents: int,
     account_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     filters = [
         BudgetEntry.category_id == category_id,
         BudgetEntry.month == month,
+        BudgetEntry.profile_id == pid,
     ]
     if account_id is not None:
         filters.append(BudgetEntry.account_id == account_id)
@@ -597,6 +613,7 @@ async def upsert_budget_entry(
             month=month,
             expected_amount_cents=expected_amount_cents,
             account_id=account_id,
+            profile_id=pid,
         )
         db.add(entry)
     await db.commit()
@@ -609,6 +626,7 @@ async def budget_full(
     account_id: Optional[int] = Query(default=None),
     account_ids: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     import calendar
     from datetime import date as date_type
@@ -625,6 +643,7 @@ async def budget_full(
         Transaction.date >= date_from,
         Transaction.date <= date_to,
         Transaction.is_internal_transfer == False,
+        Transaction.profile_id == pid,
     ]
     parsed_acc_ids = _parse_account_ids(account_ids)
     if account_id is not None:
@@ -646,7 +665,7 @@ async def budget_full(
     for r in rows:
         actuals[r.category_id][r.month] += r.total
 
-    budget_filters = [BudgetEntry.month.in_(month_list)]
+    budget_filters = [BudgetEntry.month.in_(month_list), BudgetEntry.profile_id == pid]
     if account_id is not None:
         budget_filters.append(BudgetEntry.account_id == account_id)
     elif parsed_acc_ids:
@@ -661,7 +680,7 @@ async def budget_full(
     for b in budget_rows.scalars():
         budgets[b.category_id][b.month] = b.expected_amount_cents
 
-    cats_result = await db.execute(select(Category))
+    cats_result = await db.execute(select(Category).where(Category.profile_id == pid))
     all_cats = list(cats_result.scalars())
 
     income_cats = []

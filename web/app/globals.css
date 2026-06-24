@@ -128,4 +128,9 @@
   /* Privacy mode: blur all monetary figures. */
   .privacy .blurable { filter: blur(7px); transition: filter 0.15s; }
   .privacy .blurable:hover { filter: blur(0); }
+  /* No focus bounding box on pie/donut sectors when clicked. */
+  .recharts-sector:focus,
+  .recharts-pie-sector:focus,
+  .recharts-surface:focus,
+  .recharts-wrapper :focus { outline: none; }
 }

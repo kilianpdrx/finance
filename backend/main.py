@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import init_db, AsyncSessionLocal
 from routers import accounts, transactions, categories, upload, analytics, ml
-from routers import bank_profiles, investments, settings, system
+from routers import bank_profiles, investments, settings, system, profiles
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,80 @@ async def lifespan(app: FastAPI):
     # ── Schema migrations (add columns if missing) ────────────────────────────
     async with AsyncSessionLocal() as db:
         from sqlalchemy import text
+
+        # ── Multi-profile migration ───────────────────────────────────────────
+        # `profiles` table is created by create_all; ensure a default profile.
+        await db.execute(text("PRAGMA foreign_keys=OFF"))
+        existing = (await db.execute(text("SELECT id FROM profiles WHERE is_default = 1 LIMIT 1"))).first()
+        if not existing:
+            await db.execute(text("INSERT INTO profiles (name, color, is_default) VALUES ('Principal', '#6366f1', 1)"))
+            await db.commit()
+        default_pid = (await db.execute(text("SELECT id FROM profiles WHERE is_default = 1 LIMIT 1"))).scalar()
+
+        async def _has_col(table: str, col: str) -> bool:
+            rows = await db.execute(text(f"PRAGMA table_info({table})"))
+            return col in [r[1] for r in rows.fetchall()]
+
+        # Simple ADD COLUMN for accounts + leaf tables (no conflicting UNIQUE).
+        for table in ("accounts", "transactions", "holdings", "account_balance_snapshots",
+                      "budget_entries", "category_rules", "import_batches"):
+            if not await _has_col(table, "profile_id"):
+                await db.execute(text(f"ALTER TABLE {table} ADD COLUMN profile_id INTEGER REFERENCES profiles(id)"))
+        await db.commit()
+
+        # categories / bank_profiles / settings carry a global UNIQUE that SQLite
+        # can't drop in place → rebuild the table with the new schema.
+        if not await _has_col("categories", "profile_id"):
+            await db.execute(text(
+                "CREATE TABLE categories_new (id INTEGER PRIMARY KEY, profile_id INTEGER REFERENCES profiles(id), "
+                "name TEXT NOT NULL, parent_id INTEGER, color TEXT DEFAULT '#94a3b8', icon TEXT DEFAULT 'tag', "
+                "is_income BOOLEAN DEFAULT 0, expense_type TEXT, is_investment BOOLEAN DEFAULT 0, "
+                "account_id INTEGER REFERENCES accounts(id))"
+            ))
+            await db.execute(text(
+                "INSERT INTO categories_new (id, name, parent_id, color, icon, is_income, expense_type, is_investment, account_id) "
+                "SELECT id, name, parent_id, color, icon, is_income, expense_type, is_investment, account_id FROM categories"
+            ))
+            await db.execute(text("DROP TABLE categories"))
+            await db.execute(text("ALTER TABLE categories_new RENAME TO categories"))
+            await db.commit()
+
+        if not await _has_col("bank_profiles", "profile_id"):
+            await db.execute(text(
+                "CREATE TABLE bank_profiles_new (id INTEGER PRIMARY KEY, profile_id INTEGER REFERENCES profiles(id), "
+                "name TEXT NOT NULL, column_mapping JSON NOT NULL, date_format TEXT NOT NULL DEFAULT '%d/%m/%Y', "
+                "encoding TEXT DEFAULT 'utf-8', delimiter TEXT DEFAULT ';', detection_fingerprint JSON)"
+            ))
+            await db.execute(text(
+                "INSERT INTO bank_profiles_new (id, name, column_mapping, date_format, encoding, delimiter, detection_fingerprint) "
+                "SELECT id, name, column_mapping, date_format, encoding, delimiter, detection_fingerprint FROM bank_profiles"
+            ))
+            await db.execute(text("DROP TABLE bank_profiles"))
+            await db.execute(text("ALTER TABLE bank_profiles_new RENAME TO bank_profiles"))
+            await db.commit()
+
+        if not await _has_col("settings", "profile_id"):
+            await db.execute(text(
+                "CREATE TABLE settings_new (id INTEGER PRIMARY KEY, profile_id INTEGER REFERENCES profiles(id), "
+                "key TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(profile_id, key))"
+            ))
+            await db.execute(text("INSERT INTO settings_new (id, key, value) SELECT id, key, value FROM settings"))
+            await db.execute(text("DROP TABLE settings"))
+            await db.execute(text("ALTER TABLE settings_new RENAME TO settings"))
+            await db.commit()
+
+        # Drop NULL-profile settings rows that already exist for the default profile
+        # (avoids a UNIQUE(profile_id,key) collision on backfill).
+        await db.execute(text(
+            "DELETE FROM settings WHERE profile_id IS NULL AND key IN "
+            "(SELECT key FROM settings WHERE profile_id IS NOT NULL)"
+        ))
+        # Backfill every NULL profile_id (existing + freshly-seeded rows) to default.
+        for table in ("accounts", "transactions", "holdings", "account_balance_snapshots",
+                      "budget_entries", "category_rules", "import_batches", "categories",
+                      "bank_profiles", "settings"):
+            await db.execute(text(f"UPDATE {table} SET profile_id = :p WHERE profile_id IS NULL"), {"p": default_pid})
+        await db.commit()
 
         # Add expense_type column to categories if it doesn't exist
         cols = await db.execute(text("PRAGMA table_info(categories)"))
@@ -157,17 +231,11 @@ async def lifespan(app: FastAPI):
         ))
         await db.commit()
 
-        # Create settings table and seed base_currency
+        # Seed base_currency for the default profile (settings table already exists,
+        # now profile-scoped via the multi-profile migration above).
         await db.execute(text(
-            "CREATE TABLE IF NOT EXISTS settings ("
-            "  id INTEGER PRIMARY KEY,"
-            "  key TEXT UNIQUE NOT NULL,"
-            "  value TEXT NOT NULL"
-            ")"
-        ))
-        await db.execute(text(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES ('base_currency', 'CHF')"
-        ))
+            "INSERT OR IGNORE INTO settings (profile_id, key, value) VALUES (:p, 'base_currency', 'CHF')"
+        ), {"p": default_pid})
         await db.commit()
 
         # Create holdings table
@@ -201,6 +269,43 @@ async def lifespan(app: FastAPI):
         ))
         await db.commit()
 
+        # Add broker-reference columns to holdings (isin + last broker price)
+        cols = await db.execute(text("PRAGMA table_info(holdings)"))
+        col_names = [r[1] for r in cols.fetchall()]
+        if "isin" not in col_names:
+            await db.execute(text("ALTER TABLE holdings ADD COLUMN isin TEXT"))
+        if "ref_price_cents" not in col_names:
+            await db.execute(text("ALTER TABLE holdings ADD COLUMN ref_price_cents INTEGER"))
+        if "ref_price_date" not in col_names:
+            await db.execute(text("ALTER TABLE holdings ADD COLUMN ref_price_date DATE"))
+        await db.commit()
+
+        # Add source column to price_cache (live vs broker-fallback) if missing.
+        cols = await db.execute(text("PRAGMA table_info(price_cache)"))
+        col_names = [r[1] for r in cols.fetchall()]
+        if "source" not in col_names:
+            await db.execute(text("ALTER TABLE price_cache ADD COLUMN source TEXT DEFAULT 'live'"))
+            await db.commit()
+
+        # Persistent ISIN→ticker lookup table (seeded from the hardcoded map once).
+        await db.execute(text(
+            "CREATE TABLE IF NOT EXISTS isin_ticker ("
+            "  id INTEGER PRIMARY KEY,"
+            "  isin TEXT UNIQUE NOT NULL,"
+            "  ticker TEXT NOT NULL,"
+            "  name TEXT,"
+            "  currency TEXT,"
+            "  source TEXT DEFAULT 'seed',"
+            "  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+            ")"
+        ))
+        from services.holdings_csv_parser import ISIN_TICKER_MAP
+        for _isin, _ticker in ISIN_TICKER_MAP.items():
+            await db.execute(text(
+                "INSERT OR IGNORE INTO isin_ticker (isin, ticker, source) VALUES (:i, :t, 'seed')"
+            ), {"i": _isin, "t": _ticker})
+        await db.commit()
+
     # ── FX backfill on startup ──────────────────────────────────────────────────
     async with AsyncSessionLocal() as db:
         from sqlalchemy import text as sql_text
@@ -231,6 +336,15 @@ async def lifespan(app: FastAPI):
             logger.info("FX refresh complete")
         except Exception as e:
             logger.warning("FX startup tasks failed: %s", e)
+
+    # ── Holdings price refresh on startup (single fetch at launch) ──────────────
+    async with AsyncSessionLocal() as db:
+        from services.market_data import refresh_all_prices
+        try:
+            n = await refresh_all_prices(db)
+            logger.info("Startup price refresh complete (%d prices)", n)
+        except Exception as e:
+            logger.warning("Startup price refresh failed: %s", e)
 
     # ── Scheduler ─────────────────────────────────────────────────────────────────
     scheduler = AsyncIOScheduler()
@@ -291,6 +405,7 @@ app.include_router(bank_profiles.router, prefix="/api/bank-profiles", tags=["ban
 app.include_router(investments.router, prefix="/api/investments", tags=["investments"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
+app.include_router(profiles.router, prefix="/api/profiles", tags=["profiles"])
 
 
 @app.get("/api/health")

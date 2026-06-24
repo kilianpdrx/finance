@@ -7,8 +7,12 @@ from datetime import datetime
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
-MODEL_PATH = DATA_DIR / "model.pkl"
-META_PATH = DATA_DIR / "model_meta.json"
+
+
+def _paths(profile_id: Optional[int] = None):
+    """Per-profile model + metadata paths (so profiles don't share a model)."""
+    suffix = f"_{profile_id}" if profile_id is not None else ""
+    return DATA_DIR / f"model{suffix}.pkl", DATA_DIR / f"model{suffix}_meta.json"
 
 FRENCH_STOP_WORDS = [
     "le", "la", "les", "de", "du", "des", "un", "une", "et", "en", "au", "aux",
@@ -19,8 +23,9 @@ FRENCH_STOP_WORDS = [
 ]
 
 
-def train(transactions: list) -> tuple[float, int]:
+def train(transactions: list, profile_id: Optional[int] = None) -> tuple[float, int]:
     """Train the ML model on labeled transactions. Returns (accuracy, sample_count)."""
+    MODEL_PATH, META_PATH = _paths(profile_id)
     from sklearn.pipeline import Pipeline
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.linear_model import LogisticRegression
@@ -67,8 +72,9 @@ def train(transactions: list) -> tuple[float, int]:
     return accuracy, len(X)
 
 
-def predict(description: str) -> Optional[int]:
+def predict(description: str, profile_id: Optional[int] = None) -> Optional[int]:
     """Predict category_id from description. Returns None if no model or low confidence."""
+    MODEL_PATH, _ = _paths(profile_id)
     if not MODEL_PATH.exists():
         return None
     try:
@@ -84,8 +90,9 @@ def predict(description: str) -> Optional[int]:
         return None
 
 
-def suggest_rules(top_n: int = 5) -> list[dict]:
+def suggest_rules(top_n: int = 5, profile_id: Optional[int] = None) -> list[dict]:
     """Extract top TF-IDF features per category from the trained model and return suggested rules."""
+    MODEL_PATH, _ = _paths(profile_id)
     if not MODEL_PATH.exists():
         return []
     try:
@@ -128,8 +135,9 @@ def suggest_rules(top_n: int = 5) -> list[dict]:
         return []
 
 
-def get_status() -> dict:
+def get_status(profile_id: Optional[int] = None) -> dict:
     """Return model status metadata."""
+    MODEL_PATH, META_PATH = _paths(profile_id)
     if not MODEL_PATH.exists():
         return {
             "trained": False,

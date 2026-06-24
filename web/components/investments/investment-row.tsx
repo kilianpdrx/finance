@@ -116,12 +116,21 @@ export function InvestmentRow({ acc }: { acc: InvestmentAccount }) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   {acc.allocation_by_type && Object.keys(acc.allocation_by_type).length > 1 && (
-                    <AllocationDonut allocation={acc.allocation_by_type} currency={acc.currency} />
+                    <AllocationDonut
+                      allocation={acc.allocation_by_type}
+                      currency={acc.currency}
+                      holdings={(acc.holdings ?? []).map((h) => ({
+                        asset_type: h.asset_type,
+                        name: h.name,
+                        ticker: h.ticker,
+                        value_cents: h.value_in_account_ccy_cents ?? h.current_value_cents ?? 0,
+                      }))}
+                    />
                   )}
                   {acc.has_holdings && acc.holdings_value_cents != null && (
                     <div className="space-y-0.5">
                       <p className="text-xs text-muted-foreground">Valeur totale positions</p>
-                      <p className="nums blurable text-lg font-semibold">{formatCents(acc.holdings_value_cents, acc.currency)}</p>
+                      <p className="nums blurable text-lg font-semibold">{formatCents(acc.holdings_value_cents, acc.currency, { decimals: 2 })}</p>
                       {acc.holdings_gain_cents != null && (
                         <PctBadge value={acc.holdings_gain_pct} amountCents={acc.holdings_gain_cents} currency={acc.currency} />
                       )}
@@ -142,6 +151,7 @@ export function InvestmentRow({ acc }: { acc: InvestmentAccount }) {
                 <div className="rounded-xl border border-border bg-card p-4">
                   <p className="mb-3 text-sm font-semibold">Performance vs indices</p>
                   <BenchmarkChart
+                    accountId={acc.id}
                     accountName={acc.name}
                     accountColor={acc.color}
                     holdings={(acc.holdings ?? []).map((h) => ({

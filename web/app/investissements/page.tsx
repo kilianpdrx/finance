@@ -1,22 +1,24 @@
 "use client";
 
-import { RefreshCw, TrendingUp } from "lucide-react";
+import { RefreshCw, TrendingUp, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { InvestmentRow } from "@/components/investments/investment-row";
 import { PctBadge } from "@/components/investments/pct-badge";
-import { AllocationDonut } from "@/components/investments/allocation-donut";
+import { AllocationDonut, type AllocationHolding } from "@/components/investments/allocation-donut";
 import { NetworthArea } from "@/components/charts/networth-area";
-import { useInvestmentAccounts, useInvestmentTotalSeries, useRefreshPrices, useBaseCurrency, type NetWorthPoint } from "@/lib/api/hooks";
+import { useInvestmentAccounts, useInvestmentTotalSeries, useRefreshPrices, useResolveTickers, useBaseCurrency, type NetWorthPoint } from "@/lib/api/hooks";
 import { formatCents } from "@/lib/format";
 
 export default function InvestissementsPage() {
   const { data: accounts = [], isLoading } = useInvestmentAccounts();
   const { data: series = [] } = useInvestmentTotalSeries();
   const refreshPrices = useRefreshPrices();
+  const resolveTickers = useResolveTickers();
   const baseCurrency = useBaseCurrency();
 
   const totalCurrent = accounts.reduce((s, a) => s + (a.current_value_cents ?? 0), 0);
@@ -24,15 +26,32 @@ export default function InvestissementsPage() {
   const totalFirst = accounts.reduce((s, a) => s + (a.first_value_cents ?? 0), 0);
   const totalPerfPct = totalFirst !== 0 ? Math.round((totalPerfCents / Math.abs(totalFirst)) * 1000) / 10 : null;
 
-  const hasAnyHoldings = accounts.some((a) => a.has_holdings);
+  const liveAccounts = accounts.filter((a) => a.has_holdings);
+  const longTermAccounts = accounts.filter((a) => !a.has_holdings);
 
   const globalAllocation: Record<string, number> = {};
+  const globalHoldings: AllocationHolding[] = [];
   for (const acc of accounts) {
     if (acc.allocation_by_type) {
       for (const [type, val] of Object.entries(acc.allocation_by_type)) {
         globalAllocation[type] = (globalAllocation[type] ?? 0) + val;
       }
     }
+    for (const h of acc.holdings ?? []) {
+      globalHoldings.push({
+        asset_type: h.asset_type,
+        name: h.name,
+        ticker: h.ticker,
+        value_cents: h.value_in_account_ccy_cents ?? h.current_value_cents ?? 0,
+      });
+    }
+  }
+  // Long-term (snapshot) accounts have no holdings → group them as "Autre".
+  for (const acc of longTermAccounts) {
+    const val = acc.current_value_cents ?? 0;
+    if (val <= 0) continue;
+    globalAllocation["other"] = (globalAllocation["other"] ?? 0) + val;
+    globalHoldings.push({ asset_type: "other", name: acc.name, ticker: acc.bank_name ?? "", value_cents: val });
   }
 
   const chartData: NetWorthPoint[] = series.map((s) => ({ month: s.month, total: s.total_cents }));
@@ -44,48 +63,88 @@ export default function InvestissementsPage() {
     });
   };
 
+  const handleResolve = () => {
+    resolveTickers.mutate(undefined, {
+      onSuccess: (data) => toast.success(data.resolved > 0 ? `${data.resolved} ticker(s) corrigé(s)` : "Aucun ticker à corriger"),
+      onError: () => toast.error("Erreur lors de la résolution"),
+    });
+  };
+
   if (isLoading) {
     return <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-2xl" />)}</div>;
   }
 
+  if (accounts.length === 0) {
+    return (
+      <Card>
+        <EmptyState icon={TrendingUp} title="Aucun compte d'investissement" description="Créez un compte de type « Investissement » dans la page Comptes." />
+      </Card>
+    );
+  }
+
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          Total investi : <span className="nums blurable font-semibold text-brand">{formatCents(totalCurrent, baseCurrency)}</span>
-          {totalPerfPct != null && <PctBadge value={totalPerfPct} amountCents={totalPerfCents} currency={baseCurrency} />}
-        </p>
-        {hasAnyHoldings && (
-          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshPrices.isPending}>
-            <RefreshCw className={`mr-1.5 size-3.5 ${refreshPrices.isPending ? "animate-spin" : ""}`} />
-            Actualiser les prix
-          </Button>
-        )}
-      </div>
+    <Tabs defaultValue="synthese" className="space-y-5">
+      <TabsList>
+        <TabsTrigger value="synthese">Synthèse</TabsTrigger>
+        <TabsTrigger value="long-terme">Long terme ({longTermAccounts.length})</TabsTrigger>
+        <TabsTrigger value="live">Live ({liveAccounts.length})</TabsTrigger>
+      </TabsList>
 
-      {accounts.length === 0 ? (
-        <Card>
-          <EmptyState icon={TrendingUp} title="Aucun compte d'investissement" description="Créez un compte de type « Investissement » dans la page Comptes." />
-        </Card>
-      ) : (
-        <div className="space-y-2">
-          {accounts.map((acc) => <InvestmentRow key={acc.id} acc={acc} />)}
+      {/* ── Synthèse ──────────────────────────────────────────────────────── */}
+      <TabsContent value="synthese" className="space-y-5">
+        <div className="flex items-center justify-between">
+          <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            Total investi : <span className="nums blurable font-semibold text-brand">{formatCents(totalCurrent, baseCurrency)}</span>
+            {totalPerfPct != null && <PctBadge value={totalPerfPct} amountCents={totalPerfCents} currency={baseCurrency} />}
+          </p>
         </div>
-      )}
 
-      {Object.keys(globalAllocation).length > 1 && (
-        <Card>
-          <CardHeader><CardTitle>Allocation globale</CardTitle></CardHeader>
-          <CardContent><AllocationDonut allocation={globalAllocation} currency={baseCurrency} /></CardContent>
-        </Card>
-      )}
+        {Object.keys(globalAllocation).length > 1 && (
+          <Card>
+            <CardHeader><CardTitle>Allocation globale</CardTitle></CardHeader>
+            <CardContent><AllocationDonut allocation={globalAllocation} currency={baseCurrency} holdings={globalHoldings} /></CardContent>
+          </Card>
+        )}
 
-      {chartData.length >= 2 && (
-        <Card>
-          <CardHeader><CardTitle>Évolution globale des investissements</CardTitle></CardHeader>
-          <CardContent className="pt-2"><NetworthArea data={chartData} currency={baseCurrency} /></CardContent>
-        </Card>
-      )}
-    </div>
+        {chartData.length >= 2 && (
+          <Card>
+            <CardHeader><CardTitle>Évolution globale des investissements</CardTitle></CardHeader>
+            <CardContent className="pt-2"><NetworthArea data={chartData} currency={baseCurrency} /></CardContent>
+          </Card>
+        )}
+      </TabsContent>
+
+      {/* ── Long terme (snapshot-based) ──────────────────────────────────── */}
+      <TabsContent value="long-terme" className="space-y-2">
+        {longTermAccounts.length === 0 ? (
+          <Card><EmptyState icon={TrendingUp} title="Aucun compte long terme" description="Les comptes à relevés manuels (PER, assurance-vie, crypto en garde…) apparaîtront ici." /></Card>
+        ) : (
+          longTermAccounts.map((acc) => <InvestmentRow key={acc.id} acc={acc} />)
+        )}
+      </TabsContent>
+
+      {/* ── Live (Yahoo-priced holdings) ─────────────────────────────────── */}
+      <TabsContent value="live" className="space-y-2">
+        <div className="flex items-center justify-end gap-2">
+          {liveAccounts.length > 0 && (
+            <>
+              <Button variant="outline" size="sm" onClick={handleResolve} disabled={resolveTickers.isPending} title="Corriger les tickers introuvables via OpenFIGI">
+                <Wand2 className={`mr-1.5 size-3.5 ${resolveTickers.isPending ? "animate-pulse" : ""}`} />
+                Corriger les tickers
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshPrices.isPending}>
+                <RefreshCw className={`mr-1.5 size-3.5 ${refreshPrices.isPending ? "animate-spin" : ""}`} />
+                Actualiser les prix
+              </Button>
+            </>
+          )}
+        </div>
+        {liveAccounts.length === 0 ? (
+          <Card><EmptyState icon={TrendingUp} title="Aucun compte live" description="Importez un CSV de positions (PEA, IBKR) pour suivre des cours en direct." /></Card>
+        ) : (
+          liveAccounts.map((acc) => <InvestmentRow key={acc.id} acc={acc} />)
+        )}
+      </TabsContent>
+    </Tabs>
   );
 }

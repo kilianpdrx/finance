@@ -32,6 +32,10 @@ export default function TransactionsPage() {
   const { data: meta } = useTransactionMeta();
   const mut = useTransactionMutations();
 
+  // The account filter only lists current accounts (no savings/credit/investment).
+  const txAccounts = useMemo(() => accounts.filter((a) => a.account_type === "courant"), [accounts]);
+  const accountNames = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a.name])) as Record<number, string>, [accounts]);
+
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [account, setAccount] = useState(ALL);
@@ -102,9 +106,15 @@ export default function TransactionsPage() {
           <Input className="pl-8" placeholder="Rechercher…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </div>
         <FilterSelect value={account} onChange={(v) => { setAccount(v); setPage(0); }} placeholder="Compte" width="w-40"
-          options={[{ value: ALL, label: "Tous les comptes" }, ...accounts.map((a) => ({ value: String(a.id), label: a.name }))]} />
-        <FilterSelect value={category} onChange={(v) => { setCategory(v); setPage(0); }} placeholder="Catégorie" width="w-44"
-          options={[{ value: ALL, label: "Toutes catégories" }, { value: UNCAT, label: "Sans catégorie" }, ...categories.map((c) => ({ value: String(c.id), label: c.name }))]} />
+          options={[{ value: ALL, label: "Tous les comptes" }, ...txAccounts.map((a) => ({ value: String(a.id), label: a.name }))]} />
+        <FilterSelect value={category} onChange={(v) => { setCategory(v); setPage(0); }} placeholder="Catégorie" width="w-48"
+          options={[
+            { value: ALL, label: "Toutes catégories" },
+            { value: UNCAT, label: "Sans catégorie" },
+            ...categories
+              .filter((c) => account === ALL || c.account_id == null || c.account_id === Number(account))
+              .map((c) => ({ value: String(c.id), label: `${c.name} · ${c.account_id == null ? "Global" : accountNames[c.account_id] ?? "Compte"}` })),
+          ]} />
         <FilterSelect value={type} onChange={(v) => { setType(v); setPage(0); }} placeholder="Type" width="w-32"
           options={[{ value: ALL, label: "Tout" }, { value: "debit", label: "Dépenses" }, { value: "credit", label: "Revenus" }]} />
         <FilterSelect value={month} onChange={(v) => { setMonth(v); setPage(0); }} placeholder="Mois" width="w-32"
@@ -129,7 +139,7 @@ export default function TransactionsPage() {
         <Card className="flex flex-wrap items-center gap-2 p-3">
           <span className="text-sm font-medium">{selected.size} sélectionnée(s)</span>
           <div className="ml-2 w-48">
-            <CategorySelect value={null} placeholder="Catégoriser…" categories={categories}
+            <CategorySelect value={null} placeholder="Catégoriser…" categories={categories} accountNames={accountNames}
               onChange={(cid) => runBulk(() => mut.bulkCategory.mutateAsync({ ids, category_id: cid }), "Catégorie appliquée")} />
           </div>
           <Button variant="outline" size="sm" onClick={() => runBulk(() => mut.bulkReviewed.mutateAsync({ ids, value: true }), "Marquées vérifiées")}>
@@ -181,6 +191,8 @@ export default function TransactionsPage() {
                     <CategorySelect
                       value={t.category_id}
                       categories={categories}
+                      accountId={t.account_id}
+                      accountNames={accountNames}
                       className="h-8 border-transparent bg-transparent text-xs shadow-none hover:border-border"
                       onChange={(cid) => mut.update.mutate({ id: t.id, body: { category_id: cid } }, { onSuccess: () => toast.success("Catégorie mise à jour") })}
                     />

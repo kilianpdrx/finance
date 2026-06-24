@@ -26,9 +26,12 @@ def _decode_safe(file_bytes: bytes, encoding: str) -> str:
     return file_bytes.decode("utf-8", errors="replace")
 
 
-async def detect_bank(file_bytes: bytes, filename: str, db: AsyncSession) -> BankProfile | None:
+async def detect_bank(file_bytes: bytes, filename: str, db: AsyncSession, profile_id: int | None = None) -> BankProfile | None:
     """Score each bank profile and return the best match, or None."""
-    result = await db.execute(select(BankProfile))
+    q = select(BankProfile)
+    if profile_id is not None:
+        q = q.where(BankProfile.profile_id == profile_id)
+    result = await db.execute(q)
     profiles = result.scalars().all()
 
     if not profiles:

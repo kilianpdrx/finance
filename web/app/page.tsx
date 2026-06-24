@@ -83,16 +83,18 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <motion.div className="lg:col-span-2" variants={fade} initial="hidden" animate="show" custom={4}>
-          <Card>
+      <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-3">
+        <motion.div className="h-full lg:col-span-2" variants={fade} initial="hidden" animate="show" custom={4}>
+          <Card className="flex h-full flex-col">
             <CardHeader>
               <CardTitle>Évolution du patrimoine</CardTitle>
               <CardDescription>Solde net cumulé par mois</CardDescription>
             </CardHeader>
-            <CardContent className="pt-2">
+            <CardContent className="flex min-h-0 flex-1 flex-col pt-2">
               {nw.length ? (
-                <NetworthArea data={nw} currency={currency} />
+                <div className="min-h-[280px] flex-1">
+                  <NetworthArea data={nw} currency={currency} height="100%" />
+                </div>
               ) : (
                 <EmptyState icon={Inbox} title="Pas encore de données" />
               )}
@@ -100,7 +102,7 @@ export default function DashboardPage() {
           </Card>
         </motion.div>
 
-        <motion.div variants={fade} initial="hidden" animate="show" custom={5}>
+        <motion.div className="h-full" variants={fade} initial="hidden" animate="show" custom={5}>
           <Card className="h-full">
             <CardHeader>
               <CardTitle>Répartition des dépenses</CardTitle>

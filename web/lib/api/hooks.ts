@@ -49,6 +49,7 @@ export interface HoldingOut {
   id: number;
   account_id: number;
   ticker: string;
+  isin: string | null;
   name: string;
   quantity: number;
   cost_basis_cents: number;
@@ -62,6 +63,8 @@ export interface HoldingOut {
   gain_pct: number | null;
   price_currency: string | null;
   price_fetched_at: string | null;
+  value_in_account_ccy_cents: number | null;
+  price_status: "ok" | "fallback" | "mismatch" | "missing";
 }
 export interface InvestmentAccount {
   id: number;
@@ -294,6 +297,11 @@ export function useBankProfileMutations() {
   const invalidate = useInvalidate();
   const onSuccess = () => invalidate("bank-profiles");
   return {
+    update: useMutation({
+      mutationFn: ({ id, body }: { id: number; body: Partial<BankProfile> }) =>
+        unwrap(api.PUT("/api/bank-profiles/{profile_id}", { params: { path: { profile_id: id } }, body: body as BankProfile })),
+      onSuccess,
+    }),
     remove: useMutation({ mutationFn: (id: number) => api.DELETE("/api/bank-profiles/{profile_id}", { params: { path: { profile_id: id } } }), onSuccess }),
   };
 }
@@ -346,6 +354,7 @@ export interface ParsedHoldingPreview {
   currency: string;
   asset_type: string;
   last_price_cents: number | null;
+  isin: string | null;
   is_duplicate: boolean;
   existing_holding_id: number | null;
   existing_quantity: number | null;
@@ -365,6 +374,7 @@ export interface HoldingImportItem {
   currency: string;
   asset_type: string;
   last_price_cents: number | null;
+  isin: string | null;
   duplicate_action: "skip" | "replace" | "merge";
 }
 export interface HoldingsImportConfirmResponse {
@@ -459,6 +469,25 @@ export function useBenchmarkHistory(key: string | null, period: string = "1y") {
   });
 }
 
+export interface PortfolioPerformance {
+  account_id: number;
+  name: string;
+  data: BenchmarkPoint[];
+}
+
+export function usePortfolioPerformance(accountId: number | null, period: string = "1y") {
+  return useQuery({
+    queryKey: ["portfolio-performance", accountId, period],
+    enabled: accountId != null,
+    staleTime: 3600_000,
+    queryFn: async () => {
+      const res = await fetch(`/api/investments/accounts/${accountId}/performance?period=${period}`);
+      if (!res.ok) throw new Error("Failed to fetch portfolio performance");
+      return res.json() as Promise<PortfolioPerformance>;
+    },
+  });
+}
+
 export function useRefreshPrices() {
   const invalidate = useInvalidate();
   return useMutation({
@@ -466,6 +495,67 @@ export function useRefreshPrices() {
       const res = await fetch("/api/investments/refresh-prices", { method: "POST" });
       if (!res.ok) throw new Error("Failed to refresh prices");
       return res.json();
+    },
+    onSuccess: () => invalidate("investments"),
+  });
+}
+
+export interface Profile {
+  id: number;
+  name: string;
+  color: string;
+  is_default: boolean;
+}
+
+export function useProfiles() {
+  return useQuery({
+    queryKey: ["profiles"],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/profiles");
+      if (!res.ok) throw new Error("Failed to fetch profiles");
+      return res.json() as Promise<Profile[]>;
+    },
+  });
+}
+
+export function useProfileMutations() {
+  const qc = useQueryClient();
+  const onSuccess = () => qc.invalidateQueries({ queryKey: ["profiles"] });
+  return {
+    create: useMutation({
+      mutationFn: async (body: { name: string; color?: string }) => {
+        const res = await fetch("/api/profiles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (!res.ok) throw new Error("Failed to create profile");
+        return res.json() as Promise<Profile>;
+      },
+      onSuccess,
+    }),
+    update: useMutation({
+      mutationFn: async ({ id, body }: { id: number; body: { name?: string; color?: string } }) => {
+        const res = await fetch(`/api/profiles/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (!res.ok) throw new Error("Failed to update profile");
+        return res.json() as Promise<Profile>;
+      },
+      onSuccess,
+    }),
+    remove: useMutation({
+      mutationFn: async (id: number) => {
+        const res = await fetch(`/api/profiles/${id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("Failed to delete profile");
+      },
+      onSuccess,
+    }),
+  };
+}
+
+export function useResolveTickers() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/investments/resolve-tickers", { method: "POST" });
+      if (!res.ok) throw new Error("Failed to resolve tickers");
+      return res.json() as Promise<{ resolved: number }>;
     },
     onSuccess: () => invalidate("investments"),
   });

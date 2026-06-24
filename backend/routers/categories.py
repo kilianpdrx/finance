@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
+from dependencies import current_profile_id
 from models import Category, CategoryRule, Transaction
 from schemas import (
     CategoryCreate, CategoryUpdate, CategoryOut,
@@ -18,14 +19,14 @@ router = APIRouter()
 # ── Categories ────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=List[CategoryOut])
-async def list_categories(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Category).order_by(Category.name))
+async def list_categories(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(Category).where(Category.profile_id == pid).order_by(Category.name))
     return result.scalars().all()
 
 
 @router.get("/{category_id}", response_model=CategoryOut)
-async def get_category(category_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Category).where(Category.id == category_id))
+async def get_category(category_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(Category).where(Category.id == category_id, Category.profile_id == pid))
     cat = result.scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -33,8 +34,8 @@ async def get_category(category_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("", response_model=CategoryOut, status_code=201)
-async def create_category(payload: CategoryCreate, db: AsyncSession = Depends(get_db)):
-    cat = Category(**payload.model_dump())
+async def create_category(payload: CategoryCreate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    cat = Category(**payload.model_dump(), profile_id=pid)
     db.add(cat)
     await db.commit()
     await db.refresh(cat)
@@ -42,8 +43,8 @@ async def create_category(payload: CategoryCreate, db: AsyncSession = Depends(ge
 
 
 @router.put("/{category_id}", response_model=CategoryOut)
-async def update_category(category_id: int, payload: CategoryUpdate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Category).where(Category.id == category_id))
+async def update_category(category_id: int, payload: CategoryUpdate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(Category).where(Category.id == category_id, Category.profile_id == pid))
     cat = result.scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -55,8 +56,8 @@ async def update_category(category_id: int, payload: CategoryUpdate, db: AsyncSe
 
 
 @router.delete("/{category_id}", status_code=204)
-async def delete_category(category_id: int, replace_with_id: Optional[int] = None, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Category).where(Category.id == category_id))
+async def delete_category(category_id: int, replace_with_id: Optional[int] = None, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(Category).where(Category.id == category_id, Category.profile_id == pid))
     cat = result.scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -64,7 +65,7 @@ async def delete_category(category_id: int, replace_with_id: Optional[int] = Non
     # Find fallback category "Divers"
     fallback_id = replace_with_id
     if not fallback_id:
-        divers = await db.execute(select(Category).where(Category.name == "Divers"))
+        divers = await db.execute(select(Category).where(Category.name == "Divers", Category.profile_id == pid))
         divers_cat = divers.scalar_one_or_none()
         fallback_id = divers_cat.id if divers_cat else None
 
@@ -92,10 +93,10 @@ async def delete_category(category_id: int, replace_with_id: Optional[int] = Non
 
 
 @router.post("/rescan", status_code=200)
-async def rescan_categories(db: AsyncSession = Depends(get_db)):
+async def rescan_categories(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     """Re-apply all category rules to all non-manually-reviewed transactions."""
     result = await db.execute(
-        select(Transaction).where(Transaction.is_manually_reviewed == False)
+        select(Transaction).where(Transaction.is_manually_reviewed == False, Transaction.profile_id == pid)
     )
     transactions = result.scalars().all()
 
@@ -109,7 +110,7 @@ async def rescan_categories(db: AsyncSession = Depends(get_db)):
             "currency": txn.currency,
             "account_id": txn.account_id
         }
-        new_cat_id, _ = await categorize(txn_dict, db)
+        new_cat_id, _ = await categorize(txn_dict, db, pid)
         if new_cat_id != txn.category_id:
             txn.category_id = new_cat_id
             updated += 1
@@ -131,6 +132,7 @@ async def preview_rule(
     payload: RulePreviewRequest,
     limit: int = Query(default=50, le=200),
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     """Return transactions matching the given conditions (for rule preview)."""
     from sqlalchemy.orm import selectinload
@@ -140,13 +142,13 @@ async def preview_rule(
         return []
 
     # Load recent transactions (limit to last 2000 for performance)
-    filters = []
+    filters = [Transaction.profile_id == pid]
     if payload.account_id is not None:
         filters.append(Transaction.account_id == payload.account_id)
     stmt = (
         select(Transaction)
         .options(selectinload(Transaction.account))
-        .where(and_(*filters) if filters else True)
+        .where(and_(*filters))
         .order_by(Transaction.date.desc())
         .limit(2000)
     )
@@ -177,24 +179,24 @@ async def preview_rule(
 # ── Rules ─────────────────────────────────────────────────────────────────────
 
 @router.get("/rules/all", response_model=List[CategoryRuleOut])
-async def list_all_rules(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(CategoryRule).order_by(CategoryRule.priority, CategoryRule.id))
+async def list_all_rules(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(CategoryRule).where(CategoryRule.profile_id == pid).order_by(CategoryRule.priority, CategoryRule.id))
     return result.scalars().all()
 
 
 @router.get("/{category_id}/rules", response_model=List[CategoryRuleOut])
-async def list_rules(category_id: int, db: AsyncSession = Depends(get_db)):
+async def list_rules(category_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     result = await db.execute(
         select(CategoryRule)
-        .where(CategoryRule.category_id == category_id)
+        .where(CategoryRule.category_id == category_id, CategoryRule.profile_id == pid)
         .order_by(CategoryRule.priority)
     )
     return result.scalars().all()
 
 
 @router.post("/{category_id}/rules", response_model=CategoryRuleOut, status_code=201)
-async def create_rule(category_id: int, payload: CategoryRuleCreate, db: AsyncSession = Depends(get_db)):
-    rule = CategoryRule(**payload.model_dump())
+async def create_rule(category_id: int, payload: CategoryRuleCreate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    rule = CategoryRule(**payload.model_dump(), profile_id=pid)
     rule.category_id = category_id
     db.add(rule)
     await db.commit()
@@ -203,8 +205,8 @@ async def create_rule(category_id: int, payload: CategoryRuleCreate, db: AsyncSe
 
 
 @router.put("/rules/{rule_id}", response_model=CategoryRuleOut)
-async def update_rule(rule_id: int, payload: CategoryRuleUpdate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(CategoryRule).where(CategoryRule.id == rule_id))
+async def update_rule(rule_id: int, payload: CategoryRuleUpdate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(CategoryRule).where(CategoryRule.id == rule_id, CategoryRule.profile_id == pid))
     rule = result.scalar_one_or_none()
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
@@ -221,13 +223,13 @@ class MergeRulesRequest(BaseModel):
 
 
 @router.post("/rules/merge", response_model=CategoryRuleOut)
-async def merge_rules(payload: MergeRulesRequest, db: AsyncSession = Depends(get_db)):
+async def merge_rules(payload: MergeRulesRequest, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     """Merge multiple rules into one. All conditions are combined. Uses the first rule's category/priority/account."""
     if len(payload.rule_ids) < 2:
         raise HTTPException(status_code=400, detail="At least 2 rules required to merge")
 
     result = await db.execute(
-        select(CategoryRule).where(CategoryRule.id.in_(payload.rule_ids))
+        select(CategoryRule).where(CategoryRule.id.in_(payload.rule_ids), CategoryRule.profile_id == pid)
     )
     rules = result.scalars().all()
     if len(rules) != len(payload.rule_ids):
@@ -259,6 +261,7 @@ async def merge_rules(payload: MergeRulesRequest, db: AsyncSession = Depends(get
         is_active=True,
         account_id=first.account_id,
         logic_operator=payload.logic_operator,
+        profile_id=pid,
     )
     db.add(merged)
 
@@ -272,8 +275,8 @@ async def merge_rules(payload: MergeRulesRequest, db: AsyncSession = Depends(get
 
 
 @router.delete("/rules/{rule_id}", status_code=204)
-async def delete_rule(rule_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(CategoryRule).where(CategoryRule.id == rule_id))
+async def delete_rule(rule_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(CategoryRule).where(CategoryRule.id == rule_id, CategoryRule.profile_id == pid))
     rule = result.scalar_one_or_none()
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")

@@ -10,6 +10,7 @@ from sqlalchemy import select, and_, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
+from dependencies import current_profile_id
 from models import Transaction, Account, Category, ImportBatch
 from schemas import TransactionOut, TransactionUpdate, TransactionMeta, TransactionCreateManual
 from utils import generate_import_hash
@@ -46,8 +47,9 @@ async def list_transactions(
     limit: int = Query(default=500, le=10000),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
-    filters = []
+    filters = [Transaction.profile_id == pid]
     if account_id is not None:
         filters.append(Transaction.account_id == account_id)
     if uncategorized:
@@ -70,7 +72,7 @@ async def list_transactions(
     if bank_name is not None:
         # Filter via join on accounts
         account_ids_q = await db.execute(
-            select(Account.id).where(Account.bank_name == bank_name)
+            select(Account.id).where(Account.bank_name == bank_name, Account.profile_id == pid)
         )
         account_ids = [r[0] for r in account_ids_q]
         filters.append(Transaction.account_id.in_(account_ids))
@@ -80,7 +82,7 @@ async def list_transactions(
     stmt = (
         select(Transaction)
         .options(selectinload(Transaction.account))
-        .where(and_(*filters) if filters else True)
+        .where(and_(*filters))
         .order_by(Transaction.date.desc(), Transaction.id.desc())
         .limit(limit)
         .offset(offset)
@@ -97,17 +99,18 @@ async def list_transactions(
 
 
 @router.get("/meta", response_model=TransactionMeta)
-async def transaction_meta(db: AsyncSession = Depends(get_db)):
+async def transaction_meta(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     """Return available filter options for the transactions page."""
     months_q = await db.execute(
         select(func.strftime("%Y-%m", Transaction.date).label("month"))
+        .where(Transaction.profile_id == pid)
         .distinct()
         .order_by(func.strftime("%Y-%m", Transaction.date).desc())
     )
     available_months = [r[0] for r in months_q if r[0]]
 
     banks_q = await db.execute(
-        select(Account.bank_name).distinct().order_by(Account.bank_name)
+        select(Account.bank_name).where(Account.profile_id == pid).distinct().order_by(Account.bank_name)
     )
     available_banks = [r[0] for r in banks_q if r[0]]
 
@@ -118,10 +121,11 @@ async def transaction_meta(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/batches")
-async def list_batches(db: AsyncSession = Depends(get_db)):
+async def list_batches(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     result = await db.execute(
         select(ImportBatch)
         .options(selectinload(ImportBatch.account))
+        .where(ImportBatch.profile_id == pid)
         .order_by(ImportBatch.created_at.desc())
     )
     batches = result.scalars().all()
@@ -142,11 +146,12 @@ async def list_batches(db: AsyncSession = Depends(get_db)):
 async def detect_internal_transfers(
     max_days: int = Query(default=3, le=7),
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     """Detect pairs of transactions that are likely internal transfers between accounts."""
-    # Get all transactions with their accounts
+    # Get all transactions with their accounts (scoped to the active profile)
     result = await db.execute(
-        select(Transaction).order_by(Transaction.date.desc(), Transaction.id.desc())
+        select(Transaction).where(Transaction.profile_id == pid).order_by(Transaction.date.desc(), Transaction.id.desc())
     )
     txns = result.scalars().all()
 
@@ -196,17 +201,19 @@ async def detect_internal_transfers(
 
 @router.post("", response_model=TransactionOut, status_code=201)
 async def create_transaction(
-    payload: TransactionCreateManual, 
-    db: AsyncSession = Depends(get_db)
+    payload: TransactionCreateManual,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     """Create a manual transaction."""
     # Generate a unique hash since this is manual
     import_hash = generate_import_hash(
-        payload.date, 
-        payload.description + " (manuel)", 
-        payload.amount_cents
+        payload.date,
+        payload.description + " (manuel)",
+        payload.amount_cents,
+        payload.account_id,
     )
-    
+
     # Check if this hash already exists (unlikely but possible if exactly the same manual entry is made twice)
     existing = await db.execute(select(Transaction).where(Transaction.import_hash == import_hash))
     if existing.scalar_one_or_none():
@@ -215,7 +222,7 @@ async def create_transaction(
         import_hash = f"{import_hash}_{int(time.time()*1000)}"
 
     txn_data = payload.model_dump()
-    txn = Transaction(**txn_data, import_hash=import_hash, is_manually_reviewed=True)
+    txn = Transaction(**txn_data, import_hash=import_hash, is_manually_reviewed=True, profile_id=pid)
     
     db.add(txn)
     await db.commit()
@@ -233,15 +240,16 @@ async def create_transaction(
 
 @router.post("/bulk-delete", status_code=204)
 async def bulk_delete_transactions(
-    payload: BulkDeleteQuery, 
-    db: AsyncSession = Depends(get_db)
+    payload: BulkDeleteQuery,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     """Delete multiple transactions at once."""
     if not payload.ids:
         return
-        
+
     await db.execute(
-        Transaction.__table__.delete().where(Transaction.id.in_(payload.ids))
+        Transaction.__table__.delete().where(Transaction.id.in_(payload.ids), Transaction.profile_id == pid)
     )
     await db.commit()
 
@@ -255,6 +263,7 @@ class BulkTransferUpdate(BaseModel):
 async def bulk_update_transfer(
     payload: BulkTransferUpdate,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     """Mark/unmark multiple transactions as internal transfers."""
     if not payload.ids:
@@ -262,7 +271,7 @@ async def bulk_update_transfer(
     from sqlalchemy import update
     await db.execute(
         update(Transaction)
-        .where(Transaction.id.in_(payload.ids))
+        .where(Transaction.id.in_(payload.ids), Transaction.profile_id == pid)
         .values(is_internal_transfer=payload.is_internal_transfer)
     )
     await db.commit()
@@ -278,6 +287,7 @@ class BulkReviewUpdate(BaseModel):
 async def bulk_update_reviewed(
     payload: BulkReviewUpdate,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     """Mark multiple transactions as reviewed (or unreviewed) at once."""
     if not payload.ids:
@@ -285,7 +295,7 @@ async def bulk_update_reviewed(
     from sqlalchemy import update
     await db.execute(
         update(Transaction)
-        .where(Transaction.id.in_(payload.ids))
+        .where(Transaction.id.in_(payload.ids), Transaction.profile_id == pid)
         .values(is_manually_reviewed=payload.is_manually_reviewed)
     )
     await db.commit()
@@ -296,6 +306,7 @@ async def bulk_update_reviewed(
 async def bulk_update_category(
     payload: BulkCategoryUpdate,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
     """Update category for multiple transactions at once."""
     if not payload.ids:
@@ -303,7 +314,7 @@ async def bulk_update_category(
     from sqlalchemy import update
     await db.execute(
         update(Transaction)
-        .where(Transaction.id.in_(payload.ids))
+        .where(Transaction.id.in_(payload.ids), Transaction.profile_id == pid)
         .values(category_id=payload.category_id)
     )
     await db.commit()
@@ -317,8 +328,9 @@ async def export_transactions(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
-    filters = []
+    filters = [Transaction.profile_id == pid]
     if account_id is not None:
         filters.append(Transaction.account_id == account_id)
     if category_id is not None:
@@ -331,7 +343,7 @@ async def export_transactions(
     stmt = (
         select(Transaction)
         .options(selectinload(Transaction.account), selectinload(Transaction.category))
-        .where(and_(*filters) if filters else True)
+        .where(and_(*filters))
         .order_by(Transaction.date.desc())
     )
     result = await db.execute(stmt)
@@ -362,8 +374,8 @@ async def export_transactions(
 
 
 @router.get("/{transaction_id}", response_model=TransactionOut)
-async def get_transaction(transaction_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Transaction).where(Transaction.id == transaction_id))
+async def get_transaction(transaction_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(Transaction).where(Transaction.id == transaction_id, Transaction.profile_id == pid))
     txn = result.scalar_one_or_none()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -375,8 +387,9 @@ async def update_transaction(
     transaction_id: int,
     payload: TransactionUpdate,
     db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
 ):
-    result = await db.execute(select(Transaction).where(Transaction.id == transaction_id))
+    result = await db.execute(select(Transaction).where(Transaction.id == transaction_id, Transaction.profile_id == pid))
     txn = result.scalar_one_or_none()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -388,8 +401,8 @@ async def update_transaction(
 
 
 @router.delete("/{transaction_id}", status_code=204)
-async def delete_transaction(transaction_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Transaction).where(Transaction.id == transaction_id))
+async def delete_transaction(transaction_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    result = await db.execute(select(Transaction).where(Transaction.id == transaction_id, Transaction.profile_id == pid))
     txn = result.scalar_one_or_none()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")

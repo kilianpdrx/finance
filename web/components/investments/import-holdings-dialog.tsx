@@ -6,31 +6,15 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatCents } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { HoldingsImportReview, type DuplicateAction } from "./holdings-import-review";
 import {
   holdingsImportPreview,
   holdingsImportConfirm,
   type HoldingsImportPreviewResponse,
   type HoldingImportItem,
   type HoldingsImportConfirmResponse,
-  type ParsedHoldingPreview,
 } from "@/lib/api/hooks";
-
-const TYPE_LABELS: Record<string, string> = {
-  stock: "Action",
-  etf: "ETF",
-  crypto: "Crypto",
-  bond: "Obligation",
-  fund: "Fonds",
-};
-
-const DUPLICATE_LABELS: Record<string, string> = {
-  skip: "Ignorer",
-  replace: "Remplacer",
-  merge: "Fusionner",
-};
 
 type Step = "drop" | "review" | "done";
 
@@ -47,7 +31,7 @@ export function ImportHoldingsDialog({
   const [step, setStep] = useState<Step>("drop");
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<HoldingsImportPreviewResponse | null>(null);
-  const [actions, setActions] = useState<Record<string, "skip" | "replace" | "merge">>({});
+  const [actions, setActions] = useState<Record<string, DuplicateAction>>({});
   const [result, setResult] = useState<HoldingsImportConfirmResponse | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -69,7 +53,7 @@ export function ImportHoldingsDialog({
     try {
       const data = await holdingsImportPreview(file, accountId);
       setPreview(data);
-      const defaultActions: Record<string, "skip" | "replace" | "merge"> = {};
+      const defaultActions: Record<string, DuplicateAction> = {};
       for (const h of data.holdings) {
         if (h.is_duplicate) defaultActions[h.ticker] = "skip";
       }
@@ -106,6 +90,7 @@ export function ImportHoldingsDialog({
         currency: h.currency,
         asset_type: h.asset_type,
         last_price_cents: h.last_price_cents,
+        isin: h.isin,
         duplicate_action: h.is_duplicate ? (actions[h.ticker] ?? "skip") : "skip",
       }));
       const res = await holdingsImportConfirm({ account_id: accountId, holdings: items });
@@ -118,9 +103,6 @@ export function ImportHoldingsDialog({
       setLoading(false);
     }
   };
-
-  const newCount = preview ? preview.holdings.filter((h) => !h.is_duplicate).length : 0;
-  const dupCount = preview?.duplicates ?? 0;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -159,61 +141,11 @@ export function ImportHoldingsDialog({
 
         {step === "review" && preview && (
           <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <span className="rounded-md bg-brand/10 px-2 py-0.5 text-xs font-semibold text-brand">
-                {preview.format.toUpperCase()}
-              </span>
-              <span className="text-sm text-muted-foreground">
-                {newCount} nouvelle{newCount !== 1 ? "s" : ""}{dupCount > 0 && `, ${dupCount} doublon${dupCount !== 1 ? "s" : ""}`}
-              </span>
-            </div>
-
-            <div className="max-h-[360px] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs text-muted-foreground">
-                    <th className="py-2 text-left font-medium">Ticker</th>
-                    <th className="py-2 text-left font-medium">Nom</th>
-                    <th className="py-2 text-left font-medium">Type</th>
-                    <th className="py-2 text-right font-medium">Qté</th>
-                    <th className="py-2 text-right font-medium">Coût</th>
-                    <th className="py-2 text-right font-medium">Devise</th>
-                    <th className="py-2 text-center font-medium">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.holdings.map((h) => (
-                    <tr key={h.ticker} className={cn("border-b border-border/60", h.is_duplicate && "bg-amber-500/5")}>
-                      <td className="py-2 font-mono text-xs font-semibold">{h.ticker}</td>
-                      <td className="max-w-[160px] truncate py-2">{h.name}</td>
-                      <td className="py-2 text-xs text-muted-foreground">{TYPE_LABELS[h.asset_type] ?? h.asset_type}</td>
-                      <td className="nums py-2 text-right">{h.quantity % 1 === 0 ? h.quantity : h.quantity.toFixed(4)}</td>
-                      <td className="nums py-2 text-right">{formatCents(h.cost_basis_cents, h.currency)}</td>
-                      <td className="py-2 text-right text-xs">{h.currency}</td>
-                      <td className="py-2 text-center">
-                        {h.is_duplicate ? (
-                          <Select
-                            value={actions[h.ticker] ?? "skip"}
-                            onValueChange={(v) => setActions((prev) => ({ ...prev, [h.ticker]: v as "skip" | "replace" | "merge" }))}
-                          >
-                            <SelectTrigger className="h-7 w-[110px] text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="skip">{DUPLICATE_LABELS.skip}</SelectItem>
-                              <SelectItem value="replace">{DUPLICATE_LABELS.replace}</SelectItem>
-                              <SelectItem value="merge">{DUPLICATE_LABELS.merge}</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <span className="text-xs text-positive">Nouvelle</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <HoldingsImportReview
+              preview={preview}
+              actions={actions}
+              onActionChange={(ticker, v) => setActions((prev) => ({ ...prev, [ticker]: v }))}
+            />
 
             <DialogFooter>
               <Button variant="outline" onClick={() => { reset(); }}>Annuler</Button>

@@ -12,8 +12,10 @@ import {
   Legend,
 } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useBenchmarks, useBenchmarkHistory, useHoldingHistory, type BenchmarkPoint } from "@/lib/api/hooks";
+import { useBenchmarks, useBenchmarkHistory, usePortfolioPerformance, type BenchmarkPoint } from "@/lib/api/hooks";
 import { cn } from "@/lib/utils";
+
+const PORTFOLIO_KEY = "__portfolio__";
 
 const PERIODS = [
   { value: "3mo", label: "3M" },
@@ -32,26 +34,24 @@ const BENCH_COLORS: Record<string, string> = {
 };
 
 interface Props {
+  accountId: number;
   accountName: string;
   accountColor: string;
   holdings: { ticker: string; quantity: number; cost_basis_cents: number; current_value_cents: number | null }[];
 }
 
-export function BenchmarkChart({ accountName, accountColor, holdings }: Props) {
+export function BenchmarkChart({ accountId, accountName, accountColor, holdings }: Props) {
   const [period, setPeriod] = useState("1y");
   const [selectedBenchmarks, setSelectedBenchmarks] = useState<string[]>(["sp500", "msci_world"]);
   const { data: benchmarkList = [] } = useBenchmarks();
 
-  const mainTicker = holdings.length > 0 ? holdings.reduce((a, b) =>
-    (b.current_value_cents ?? 0) > (a.current_value_cents ?? 0) ? b : a
-  ).ticker : null;
-
   const bench1 = useBenchmarkHistory(selectedBenchmarks[0] ?? null, period);
   const bench2 = useBenchmarkHistory(selectedBenchmarks[1] ?? null, period);
   const bench3 = useBenchmarkHistory(selectedBenchmarks[2] ?? null, period);
+  const portfolio = usePortfolioPerformance(holdings.length > 0 ? accountId : null, period);
 
   const benchQueries = [bench1, bench2, bench3].slice(0, selectedBenchmarks.length);
-  const isLoading = benchQueries.some((q) => q.isLoading);
+  const isLoading = benchQueries.some((q) => q.isLoading) || portfolio.isLoading;
 
   const toggleBenchmark = (key: string) => {
     setSelectedBenchmarks((prev) =>
@@ -67,6 +67,10 @@ export function BenchmarkChart({ accountName, accountColor, holdings }: Props) {
       if (!dateMap[pt.date]) dateMap[pt.date] = {};
       dateMap[pt.date][selectedBenchmarks[i]] = pt.pct;
     }
+  }
+  for (const pt of portfolio.data?.data ?? []) {
+    if (!dateMap[pt.date]) dateMap[pt.date] = {};
+    dateMap[pt.date][PORTFOLIO_KEY] = pt.pct;
   }
 
   const chartData = Object.entries(dateMap)
@@ -152,18 +156,26 @@ export function BenchmarkChart({ accountName, accountColor, holdings }: Props) {
                 new Date(d + "T00:00:00").toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })
               }
               formatter={(value: number, name: string) => {
-                const benchInfo = benchmarkList.find((b) => b.key === name);
-                const label = benchInfo?.name ?? name;
+                const label = name === PORTFOLIO_KEY ? "Mon portefeuille" : (benchmarkList.find((b) => b.key === name)?.name ?? name);
                 return [`${value >= 0 ? "+" : ""}${value.toFixed(2)}%`, label];
               }}
             />
             <Legend
-              formatter={(value: string) => {
-                const benchInfo = benchmarkList.find((b) => b.key === value);
-                return benchInfo?.name ?? value;
-              }}
+              formatter={(value: string) =>
+                value === PORTFOLIO_KEY ? "Mon portefeuille" : (benchmarkList.find((b) => b.key === value)?.name ?? value)
+              }
               wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
             />
+            {portfolio.data?.data?.length ? (
+              <Line
+                dataKey={PORTFOLIO_KEY}
+                name={PORTFOLIO_KEY}
+                stroke={accountColor}
+                strokeWidth={3}
+                dot={false}
+                connectNulls
+              />
+            ) : null}
             {selectedBenchmarks.map((key) => (
               <Line
                 key={key}

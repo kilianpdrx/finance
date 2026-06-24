@@ -29,11 +29,11 @@ export function yearOf(m: string): string {
   return m.split("-")[0];
 }
 
-/** 24-month continuous range: 12 past + current + 11 future. */
-export function build24Months(): string[] {
+/** Continuous month range relative to the current month, by offset (inclusive). */
+export function buildMonths(startOffset: number, endOffset: number): string[] {
   const now = new Date();
   const months: string[] = [];
-  for (let offset = -12; offset <= 11; offset++) {
+  for (let offset = startOffset; offset <= endOffset; offset++) {
     const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
     months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   }

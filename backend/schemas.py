@@ -8,6 +8,22 @@ CURRENCY_SYMBOLS = {
     "EUR": "€", "CHF": "CHF", "USD": "$", "GBP": "£", "JPY": "¥", "CAD": "CA$",
 }
 
+
+class ProfileCreate(BaseModel):
+    name: str
+    color: str = "#6366f1"
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+
+class ProfileOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    color: str
+    is_default: bool
+
 def cents_to_display(cents: int, currency: str = "EUR") -> str:
     """Convert integer cents to French-formatted string: 1234567 -> '12 345,67 €'"""
     negative = cents < 0
@@ -341,6 +357,8 @@ class HoldingCreate(BaseModel):
 
 class HoldingUpdate(BaseModel):
     name: Optional[str] = None
+    ticker: Optional[str] = None
+    isin: Optional[str] = None
     quantity: Optional[float] = None
     cost_basis_cents: Optional[int] = None
     currency: Optional[str] = None
@@ -378,6 +396,7 @@ class ParsedHoldingPreview(BaseModel):
     currency: str
     asset_type: str
     last_price_cents: Optional[int] = None
+    isin: Optional[str] = None
     is_duplicate: bool = False
     existing_holding_id: Optional[int] = None
     existing_quantity: Optional[float] = None
@@ -397,6 +416,7 @@ class HoldingImportItem(BaseModel):
     currency: str
     asset_type: str
     last_price_cents: Optional[int] = None
+    isin: Optional[str] = None
     duplicate_action: str = "skip"  # "skip" | "replace" | "merge"
 
 class HoldingsImportConfirmRequest(BaseModel):
