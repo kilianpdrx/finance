@@ -56,12 +56,12 @@ def detect_holdings_format(file_bytes: bytes) -> str | None:
     lines = text.splitlines()
 
     for line in lines:
-        if line.startswith("Transaction History;Header;") and "Symbol" in line:
+        if "Transaction History" in line and "Header" in line and "Symbol" in line:
             return "ibkr"
 
-    if lines:
-        header = lines[0].lower().strip().lstrip("﻿")
-        if "isin" in header and "buyingprice" in header:
+    for line in lines:
+        line_lower = line.lower()
+        if "isin" in line_lower and "buyingprice" in line_lower:
             return "bourso"
 
     return None
@@ -71,11 +71,21 @@ def parse_ibkr_holdings(file_bytes: bytes) -> list[ParsedHolding]:
     text = _decode(file_bytes)
     lines = text.splitlines()
 
+    # Detect delimiter: comma vs semicolon
+    delimiter = ";"
+    for line in lines:
+        if "Transaction History" in line and "Header" in line and "Symbol" in line:
+            if "," in line and line.count(",") > line.count(";"):
+                delimiter = ","
+            break
+
     headers: list[str] = []
     data_rows: list[dict[str, str]] = []
 
-    for line in lines:
-        parts = line.split(";")
+    # Use csv.reader to handle quotes and delimiters safely
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+
+    for parts in reader:
         if len(parts) < 3:
             continue
         section, row_type = parts[0].strip(), parts[1].strip()
@@ -95,8 +105,8 @@ def parse_ibkr_holdings(file_bytes: bytes) -> list[ParsedHolding]:
         if not symbol or symbol == "-":
             continue
 
-        qty = _parse_number(row.get("Quantity", "0"))
-        price = _parse_number(row.get("Price", "0"))
+        qty = _parse_smart_number(row.get("Quantity", "0"))
+        price = _parse_smart_number(row.get("Price", "0"))
         price_ccy = row.get("Price Currency", "USD").strip()
         description = row.get("Description", "")
 
@@ -130,8 +140,30 @@ def parse_ibkr_holdings(file_bytes: bytes) -> list[ParsedHolding]:
 
 
 def parse_bourso_holdings(file_bytes: bytes) -> list[ParsedHolding]:
-    text = file_bytes.decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(text), delimiter=";")
+    text = _decode(file_bytes)
+    lines = text.splitlines()
+
+    # Find the header line containing "isin" and "buyingprice" (case-insensitive)
+    header_idx = -1
+    for idx, line in enumerate(lines):
+        line_lower = line.lower()
+        if "isin" in line_lower and "buyingprice" in line_lower:
+            header_idx = idx
+            break
+
+    if header_idx == -1:
+        header_idx = 0
+
+    csv_text = "\n".join(lines[header_idx:])
+
+    # Detect delimiter
+    delimiter = ";"
+    if header_idx < len(lines):
+        header_line = lines[header_idx]
+        if "," in header_line and header_line.count(",") > header_line.count(";"):
+            delimiter = ","
+
+    reader = csv.DictReader(io.StringIO(csv_text), delimiter=delimiter)
 
     result: list[ParsedHolding] = []
     for row in reader:
@@ -140,9 +172,9 @@ def parse_bourso_holdings(file_bytes: bytes) -> list[ParsedHolding]:
         if not isin or not name:
             continue
 
-        qty = _parse_french_number(row.get("quantity", "0"))
-        buying_price = _parse_french_number(row.get("buyingPrice", "0"))
-        last_price = _parse_french_number(row.get("lastPrice", "0"))
+        qty = _parse_smart_number(row.get("quantity", "0"))
+        buying_price = _parse_smart_number(row.get("buyingPrice", "0"))
+        last_price = _parse_smart_number(row.get("lastPrice", "0"))
 
         cost_basis_cents = round(qty * buying_price * 100)
         last_price_cents = round(last_price * 100) if last_price else None
@@ -168,6 +200,128 @@ def parse_bourso_holdings(file_bytes: bytes) -> list[ParsedHolding]:
     return result
 
 
+def parse_custom_holdings(file_bytes: bytes, profile) -> list[ParsedHolding]:
+    text = _decode(file_bytes)
+    lines = text.splitlines()
+
+    # Find the header line by matching the mapped columns
+    mapping = profile.column_mapping or {}
+    expected_cols = [str(v).lower().strip() for v in mapping.values() if v]
+
+    header_idx = -1
+    for idx, line in enumerate(lines):
+        line_lower = line.lower()
+        if expected_cols and any(col in line_lower for col in expected_cols):
+            matches = sum(1 for col in expected_cols if col in line_lower)
+            if matches >= len(expected_cols) * 0.5:
+                header_idx = idx
+                break
+
+    if header_idx == -1:
+        header_idx = 0
+
+    csv_text = "\n".join(lines[header_idx:])
+
+    # Detect delimiter
+    delimiter = profile.delimiter or ";"
+    if header_idx < len(lines):
+        header_line = lines[header_idx]
+        if "," in header_line and header_line.count(",") > header_line.count(";"):
+            delimiter = ","
+
+    reader = csv.DictReader(io.StringIO(csv_text), delimiter=delimiter)
+
+    col_ticker = mapping.get("ticker")
+    col_isin = mapping.get("isin")
+    col_name = mapping.get("name")
+    col_quantity = mapping.get("quantity")
+    col_buying_price = mapping.get("buyingPrice")
+    col_last_price = mapping.get("lastPrice")
+    col_currency = mapping.get("currency")
+
+    result: list[ParsedHolding] = []
+    for row in reader:
+        ticker = (row.get(col_ticker) if col_ticker else "") or ""
+        isin = (row.get(col_isin) if col_isin else "") or ""
+        name = (row.get(col_name) if col_name else "") or ""
+
+        ticker = ticker.strip()
+        isin = isin.strip()
+        name = name.strip().strip('"')
+
+        # Require at least name and ticker/isin to exist
+        if not name or (not ticker and not isin):
+            continue
+
+        qty_str = row.get(col_quantity) if col_quantity else "0"
+        qty = _parse_smart_number(qty_str) if qty_str else 0.0
+
+        buying_price_str = row.get(col_buying_price) if col_buying_price else "0"
+        buying_price = _parse_smart_number(buying_price_str) if buying_price_str else 0.0
+
+        last_price_str = row.get(col_last_price) if col_last_price else None
+        last_price = _parse_smart_number(last_price_str) if last_price_str else None
+
+        cost_basis_cents = round(qty * buying_price * 100)
+        last_price_cents = round(last_price * 100) if last_price else None
+
+        ccy = "EUR"
+        if col_currency and row.get(col_currency):
+            ccy = row.get(col_currency).strip()
+
+        name_upper = name.upper()
+        asset_type = "etf" if ("ETF" in name_upper or "UCITS" in name_upper) else "stock"
+        if "PROFILE" in name_upper or "SELECT" in name_upper:
+            asset_type = "fund"
+
+        if not ticker and isin:
+            ticker = ISIN_TICKER_MAP.get(isin, isin)
+
+        result.append(ParsedHolding(
+            ticker=ticker,
+            name=name,
+            quantity=qty,
+            cost_basis_cents=cost_basis_cents,
+            currency=ccy,
+            asset_type=asset_type,
+            last_price_cents=last_price_cents,
+            isin=isin,
+        ))
+
+    return result
+
+
+def detect_custom_holdings_profile(file_bytes: bytes, profiles: list) -> any:
+    text = _decode(file_bytes)
+    lines = text.splitlines()
+    if not lines:
+        return None
+
+    best_profile = None
+    best_score = 0
+
+    for p in profiles:
+        mapping = p.column_mapping or {}
+        expected_cols = [str(v).lower().strip() for v in mapping.values() if v]
+        if not expected_cols:
+            continue
+
+        for line in lines[:20]:
+            line_lower = line.lower()
+            score = sum(1 for col in expected_cols if col in line_lower)
+            if score > best_score:
+                best_score = score
+                best_profile = p
+
+    if best_profile:
+        mapping = best_profile.column_mapping or {}
+        expected_cols = [str(v).lower().strip() for v in mapping.values() if v]
+        if best_score >= len(expected_cols) * 0.5:
+            return best_profile
+
+    return None
+
+
 def _decode(raw: bytes) -> str:
     for enc in ("utf-8-sig", "utf-8", "latin-1"):
         try:
@@ -189,3 +343,24 @@ def _parse_french_number(s: str) -> float:
     if not s or s == "-":
         return 0.0
     return float(s)
+
+
+def _parse_smart_number(s: str) -> float:
+    s = s.strip().replace("\xa0", "").replace(" ", "")
+    if not s or s == "-":
+        return 0.0
+
+    # English thousand separator + decimal point: "1,234.56"
+    if "," in s and "." in s:
+        if s.rfind(",") < s.rfind("."):
+            s = s.replace(",", "")
+        else:
+            s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        # Standard French decimal comma (e.g. "12,50" -> "12.50")
+        s = s.replace(",", ".")
+
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0

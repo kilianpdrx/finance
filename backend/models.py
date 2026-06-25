@@ -247,6 +247,38 @@ class PriceCache(Base):
     source = Column(String, default="live")
 
 
+class DividendCache(Base):
+    """Cached dividend data fetched from yfinance for each ticker."""
+    __tablename__ = "dividend_cache"
+
+    id = Column(Integer, primary_key=True)
+    ticker = Column(String, unique=True, nullable=False)
+    yield_pct = Column(Float, nullable=True)           # e.g. 2.5 for 2.5%
+    annual_rate = Column(Float, nullable=True)          # e.g. 1.20 for $1.20/share
+    currency = Column(String, nullable=True)            # dividend currency
+    ex_date = Column(Date, nullable=True)               # next ex-dividend date
+    frequency = Column(String, nullable=True)           # "monthly", "quarterly", "semi-annual", "annual"
+    fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    payout_ratio = Column(Float, nullable=True)         # e.g. 0.45 for 45%
+    five_year_avg_yield = Column(Float, nullable=True)  # e.g. 2.3 for 2.3%
+    growth_rate_5y = Column(Float, nullable=True)       # 5-year CAGR, e.g. 8.5 for 8.5%
+    last_dividend_value = Column(Float, nullable=True)  # last payment per share
+    last_dividend_date = Column(Date, nullable=True)
+    dividend_date = Column(Date, nullable=True)         # next payment date
+    sector = Column(String, nullable=True)
+    industry = Column(String, nullable=True)
+
+
+class DividendHistory(Base):
+    """Historical dividend payments per ticker (shared market data)."""
+    __tablename__ = "dividend_history"
+
+    id = Column(Integer, primary_key=True)
+    ticker = Column(String, nullable=False, index=True)
+    payment_date = Column(Date, nullable=False)
+    amount = Column(Float, nullable=False)              # per-share amount in stock currency
+
+
 class IsinTicker(Base):
     """Persistent ISIN→Yahoo-symbol lookup ("big slow memory").
 

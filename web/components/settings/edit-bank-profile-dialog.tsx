@@ -18,18 +18,30 @@ const FIELDS: { key: string; label: string }[] = [
   { key: "balance", label: "Solde" },
 ];
 
+const INVEST_FIELDS: { key: string; label: string }[] = [
+  { key: "ticker", label: "Ticker / Symbole" },
+  { key: "isin", label: "ISIN" },
+  { key: "name", label: "Nom de la position" },
+  { key: "quantity", label: "Quantité" },
+  { key: "buyingPrice", label: "Prix de revient unitaire" },
+  { key: "lastPrice", label: "Dernier cours (optionnel)" },
+  { key: "currency", label: "Devise (optionnel)" },
+];
+
 const DATE_FORMATS = ["%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y", "%d.%m.%Y"];
 
 export function EditBankProfileDialog({
   open,
   onOpenChange,
   profile,
+  isInvestment = false,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  profile: BankProfile | null;
+  profile: any | null;
+  isInvestment?: boolean;
 }) {
-  const { update } = useBankProfileMutations();
+  const { create, update } = useBankProfileMutations();
   const [name, setName] = useState("");
   const [delimiter, setDelimiter] = useState(";");
   const [encoding, setEncoding] = useState("utf-8");
@@ -38,13 +50,22 @@ export function EditBankProfileDialog({
 
   useEffect(() => {
     if (profile) {
-      setName(profile.name);
+      setName(profile.name || "");
       setDelimiter(profile.delimiter ?? ";");
       setEncoding(profile.encoding ?? "utf-8");
       setDateFormat(profile.date_format ?? "%d/%m/%Y");
       setMapping({ ...(profile.column_mapping ?? {}) } as Record<string, string>);
+    } else {
+      setName("");
+      setDelimiter(";");
+      setEncoding("utf-8");
+      setDateFormat("%d/%m/%Y");
+      setMapping({});
     }
   }, [profile]);
+
+  const isProfileInvestment = isInvestment || (profile && profile.column_mapping && ("quantity" in profile.column_mapping || "buyingPrice" in profile.column_mapping || "ticker" in profile.column_mapping));
+  const fields = isProfileInvestment ? INVEST_FIELDS : FIELDS;
 
   const submit = async () => {
     if (!profile) return;
@@ -52,29 +73,51 @@ export function EditBankProfileDialog({
     const cleaned: Record<string, string> = {};
     for (const [k, v] of Object.entries(mapping)) if (v?.trim()) cleaned[k] = v.trim();
     try {
-      await update.mutateAsync({
-        id: profile.id,
-        body: { name: name.trim(), delimiter, encoding, date_format: dateFormat, column_mapping: cleaned },
-      });
-      toast.success("Profil mis à jour");
+      if (profile.id !== undefined && profile.id !== 0) {
+        await update.mutateAsync({
+          id: profile.id,
+          body: { name: name.trim(), delimiter, encoding, date_format: dateFormat, column_mapping: cleaned },
+        });
+        toast.success("Profil mis à jour");
+      } else {
+        await create.mutateAsync({
+          name: name.trim(),
+          delimiter,
+          encoding,
+          date_format: dateFormat,
+          column_mapping: cleaned,
+          detection_fingerprint: { columns: Object.values(cleaned) },
+        });
+        toast.success("Profil créé");
+      }
       onOpenChange(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
     }
   };
 
+  const title = profile?.id === undefined || profile?.id === 0
+    ? (isProfileInvestment ? "Créer un profil d'investissement" : "Créer un profil bancaire")
+    : (isProfileInvestment ? "Modifier le profil d'investissement" : "Modifier le profil bancaire");
+
+  const description = isProfileInvestment
+    ? "Associez chaque champ de la position au nom exact de la colonne CSV."
+    : "Associez chaque champ du relevé au nom exact de la colonne CSV.";
+
+  const isPending = create.isPending || update.isPending;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Modifier le profil bancaire</DialogTitle>
-          <DialogDescription>Associez chaque champ au nom exact de la colonne CSV.</DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
           <div className="space-y-1">
-            <Label>Nom</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
+            <Label>Nom du profil</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={isProfileInvestment ? "Ex: MyBroker CSV" : "Ex: Crédit Agricole Relevé"} />
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1">
@@ -102,9 +145,9 @@ export function EditBankProfileDialog({
 
           <div className="space-y-2">
             <Label>Correspondance des colonnes</Label>
-            {FIELDS.map((f) => (
+            {fields.map((f) => (
               <div key={f.key} className="flex items-center gap-3">
-                <span className="w-32 shrink-0 text-sm text-muted-foreground">{f.label}</span>
+                <span className="w-36 shrink-0 text-sm text-muted-foreground">{f.label}</span>
                 <Input
                   value={mapping[f.key] ?? ""}
                   onChange={(e) => setMapping((m) => ({ ...m, [f.key]: e.target.value }))}
@@ -118,8 +161,8 @@ export function EditBankProfileDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Annuler</Button>
-          <Button onClick={submit} disabled={update.isPending || !name.trim()}>
-            {update.isPending ? "…" : "Enregistrer"}
+          <Button onClick={submit} disabled={isPending || !name.trim()}>
+            {isPending ? "…" : "Enregistrer"}
           </Button>
         </DialogFooter>
       </DialogContent>

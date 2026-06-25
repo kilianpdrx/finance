@@ -287,6 +287,30 @@ async def lifespan(app: FastAPI):
             await db.execute(text("ALTER TABLE price_cache ADD COLUMN source TEXT DEFAULT 'live'"))
             await db.commit()
 
+        # Expand dividend_cache with new columns
+        for div_col in ("payout_ratio", "five_year_avg_yield", "growth_rate_5y",
+                        "last_dividend_value", "last_dividend_date", "dividend_date",
+                        "sector", "industry"):
+            if not await _has_col("dividend_cache", div_col):
+                col_type = "DATE" if div_col.endswith("_date") else "REAL" if div_col in (
+                    "payout_ratio", "five_year_avg_yield", "growth_rate_5y", "last_dividend_value"
+                ) else "TEXT"
+                await db.execute(text(f"ALTER TABLE dividend_cache ADD COLUMN {div_col} {col_type}"))
+        await db.commit()
+
+        # Dividend history table
+        await db.execute(text(
+            "CREATE TABLE IF NOT EXISTS dividend_history ("
+            "  id INTEGER PRIMARY KEY,"
+            "  ticker TEXT NOT NULL,"
+            "  payment_date DATE NOT NULL,"
+            "  amount REAL NOT NULL,"
+            "  UNIQUE(ticker, payment_date)"
+            ")"
+        ))
+        await db.execute(text("CREATE INDEX IF NOT EXISTS ix_div_hist_ticker ON dividend_history(ticker)"))
+        await db.commit()
+
         # Persistent ISIN→ticker lookup table (seeded from the hardcoded map once).
         await db.execute(text(
             "CREATE TABLE IF NOT EXISTS isin_ticker ("

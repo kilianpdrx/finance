@@ -4,17 +4,20 @@ from sqlalchemy import select, and_, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
-from models import Account, AccountType, AccountBalanceSnapshot, Holding, PriceCache
+from models import Account, AccountType, AccountBalanceSnapshot, Holding, PriceCache, BankProfile
 from schemas import (
     HoldingCreate, HoldingUpdate, HoldingOut,
     HoldingsImportPreviewResponse, ParsedHoldingPreview,
     HoldingsImportConfirmRequest, HoldingsImportConfirmResponse,
 )
 from services.market_data import (
-    refresh_all_prices, get_cached_price, fetch_historical_prices, resolve_yahoo_symbol,
+    refresh_all_prices, get_cached_price, get_cached_dividend, fetch_historical_prices, resolve_yahoo_symbol,
     store_isin_ticker, reverse_lookup_isin, fetch_isin_for_ticker, _fetch_stock_prices,
 )
-from services.holdings_csv_parser import detect_holdings_format, parse_ibkr_holdings, parse_bourso_holdings
+from services.holdings_csv_parser import (
+    detect_holdings_format, parse_ibkr_holdings, parse_bourso_holdings,
+    detect_custom_holdings_profile, parse_custom_holdings
+)
 from services.fx import get_rate
 from datetime import date, datetime
 
@@ -46,6 +49,17 @@ async def _enrich_holding(db: AsyncSession, h: Holding, account_currency: str = 
         "price_fetched_at": None,
         "value_in_account_ccy_cents": None,
         "price_status": "missing",
+        # Dividend fields
+        "dividend_yield": None,
+        "yield_on_cost": None,
+        "est_annual_income_cents": None,
+        "ex_dividend_date": None,
+        "payout_ratio": None,
+        "dividend_growth_rate": None,
+        "frequency": None,
+        "sector": None,
+        "industry": None,
+        "dividend_date": None,
     }
     lookup_ticker = h.ticker.lower() if h.asset_type == "crypto" else h.ticker.upper()
     cached = await get_cached_price(db, lookup_ticker)
@@ -103,6 +117,30 @@ async def _enrich_holding(db: AsyncSession, h: Holding, account_currency: str = 
     else:
         rate = await get_rate(db, h.currency, account_currency, date.today())
         out["value_in_account_ccy_cents"] = round(value * rate) if rate else value
+
+    # ── Dividend enrichment ─────────────────────────────────────────────
+    lookup_div = h.ticker.upper() if h.asset_type != "crypto" else None
+    if lookup_div:
+        div = await get_cached_dividend(db, lookup_div)
+        if div:
+            out["dividend_yield"] = div.yield_pct
+            out["payout_ratio"] = round(div.payout_ratio * 100, 1) if div.payout_ratio else None
+            out["dividend_growth_rate"] = div.growth_rate_5y
+            out["frequency"] = div.frequency
+            out["sector"] = div.sector
+            out["industry"] = div.industry
+            if div.ex_date:
+                out["ex_dividend_date"] = str(div.ex_date)
+            if div.dividend_date:
+                out["dividend_date"] = str(div.dividend_date)
+
+            if div.annual_rate and div.annual_rate > 0:
+                est_income = div.annual_rate * h.quantity
+                out["est_annual_income_cents"] = round(est_income * 100)
+
+                if h.cost_basis_cents and h.cost_basis_cents > 0:
+                    yoc = (est_income / (h.cost_basis_cents / 100)) * 100
+                    out["yield_on_cost"] = round(yoc, 2)
 
     return out
 
@@ -352,6 +390,37 @@ async def account_performance(
 
 # ── Holdings CSV Import ──────────────────────────────────────────────────────
 
+def normalize_string(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    return s.strip().strip('"').strip("'").strip().upper()
+
+
+def find_matching_holding(p, existing_list: list[Holding]) -> Optional[Holding]:
+    # 1. Match by ISIN
+    p_isin = normalize_string(getattr(p, "isin", None))
+    if p_isin:
+        for ex in existing_list:
+            if normalize_string(ex.isin) == p_isin:
+                return ex
+
+    # 2. Match by ticker
+    p_ticker = normalize_string(p.ticker)
+    if p_ticker:
+        for ex in existing_list:
+            if normalize_string(ex.ticker) == p_ticker:
+                return ex
+
+    # 3. Match by name
+    p_name = normalize_string(p.name)
+    if p_name:
+        for ex in existing_list:
+            if normalize_string(ex.name) == p_name:
+                return ex
+
+    return None
+
+
 @router.post("/import/preview", response_model=HoldingsImportPreviewResponse)
 async def import_preview(
     account_id: int = Query(...),
@@ -360,27 +429,53 @@ async def import_preview(
     pid: int = Depends(current_profile_id),
 ):
     raw = await file.read()
-    fmt = detect_holdings_format(raw)
-    if not fmt:
-        raise HTTPException(400, "Format CSV non reconnu. Formats supportés : IBKR, Boursorama.")
 
-    if fmt == "ibkr":
-        parsed = parse_ibkr_holdings(raw)
+    # Try custom profiles from the database first
+    db_profiles = (await db.execute(
+        select(BankProfile).where(BankProfile.profile_id == pid)
+    )).scalars().all()
+
+    invest_profiles = [
+        p for p in db_profiles
+        if p.column_mapping and any(k in p.column_mapping for k in ["quantity", "buyingPrice", "ticker", "isin"])
+    ]
+
+    matched_profile = detect_custom_holdings_profile(raw, invest_profiles)
+
+    if matched_profile:
+        fmt = matched_profile.name
+        parsed = parse_custom_holdings(raw, matched_profile)
     else:
-        parsed = parse_bourso_holdings(raw)
+        fmt = detect_holdings_format(raw)
+        if not fmt:
+            raise HTTPException(400, "Format CSV non reconnu. Formats supportés : IBKR, Boursorama ou profil d'investissement personnalisé.")
+
+        if fmt == "ibkr":
+            parsed = parse_ibkr_holdings(raw)
+        else:
+            parsed = parse_bourso_holdings(raw)
 
     existing = await db.execute(
         select(Holding).where(Holding.account_id == account_id, Holding.profile_id == pid)
     )
-    existing_map = {h.ticker: h for h in existing.scalars().all()}
+    existing_list = existing.scalars().all()
 
     previews: list[ParsedHoldingPreview] = []
     dups = 0
     for p in parsed:
-        ex = existing_map.get(p.ticker)
+        ex = find_matching_holding(p, existing_list)
         is_dup = ex is not None
         if is_dup:
             dups += 1
+            # Align parsed values to DB corrections (like CAC.PA vs C40.PA)
+            p.ticker = ex.ticker
+            if ex.name:
+                p.name = ex.name
+            if ex.isin and not p.isin:
+                p.isin = ex.isin
+            if ex.asset_type:
+                p.asset_type = ex.asset_type
+
         previews.append(ParsedHoldingPreview(
             ticker=p.ticker,
             name=p.name,
@@ -415,7 +510,7 @@ async def import_confirm(
     existing = await db.execute(
         select(Holding).where(Holding.account_id == body.account_id, Holding.profile_id == pid)
     )
-    existing_map = {h.ticker: h for h in existing.scalars().all()}
+    existing_list = existing.scalars().all()
 
     created = 0
     updated = 0
@@ -425,7 +520,7 @@ async def import_confirm(
     today = date.today()
 
     for item in body.holdings:
-        ex = existing_map.get(item.ticker)
+        ex = find_matching_holding(item, existing_list)
 
         # When the broker gave us a same-day price, resolve & validate the live
         # Yahoo symbol so ongoing refreshes price the correct instrument.
@@ -558,6 +653,26 @@ async def investment_accounts(db: AsyncSession = Depends(get_db), pid: int = Dep
         holdings_gain_cents = holdings_value_cents - holdings_cost_basis_cents if has_holdings else None
         holdings_gain_pct = round(holdings_gain_cents / abs(holdings_cost_basis_cents) * 100, 2) if has_holdings and holdings_cost_basis_cents != 0 else None
 
+        # ── Dividend KPIs ────────────────────────────────────────────
+        est_annual_div_cents = 0
+        div_weighted_yield_num = 0
+        div_weighted_yield_den = 0
+        for eh in enriched_holdings:
+            inc = eh.get("est_annual_income_cents") or 0
+            v = eh.get("value_in_account_ccy_cents") or 0
+            if inc > 0:
+                # Convert income to account currency if needed
+                if eh["currency"] != acc_ccy:
+                    rate = await get_rate(db, eh["currency"], acc_ccy, date.today())
+                    inc = round(inc * rate) if rate else inc
+                est_annual_div_cents += inc
+            dy = eh.get("dividend_yield")
+            if dy and v > 0:
+                div_weighted_yield_num += dy * v
+                div_weighted_yield_den += v
+
+        avg_yield = round(div_weighted_yield_num / div_weighted_yield_den, 2) if div_weighted_yield_den > 0 else None
+
         if has_holdings and holdings_value_cents > 0:
             current_value = holdings_value_cents
 
@@ -621,6 +736,8 @@ async def investment_accounts(db: AsyncSession = Depends(get_db), pid: int = Dep
             "holdings_gain_cents": holdings_gain_cents,
             "holdings_gain_pct": holdings_gain_pct,
             "allocation_by_type": allocation_by_type if has_holdings else None,
+            "est_annual_div_cents": est_annual_div_cents if has_holdings else None,
+            "avg_dividend_yield": avg_yield,
         })
 
     return accounts_out
@@ -719,3 +836,102 @@ async def investment_total_series(db: AsyncSession = Depends(get_db), pid: int =
         })
 
     return result_series
+
+
+@router.get("/dividend-calendar")
+async def dividend_calendar(
+    months: int = Query(12, ge=1, le=24),
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Project future dividend income by month, based on frequency + last payment."""
+    from dateutil.relativedelta import relativedelta
+
+    accs = (await db.execute(
+        select(Account).where(
+            and_(Account.is_active == True, Account.account_type == AccountType.investissement, Account.profile_id == pid)
+        )
+    )).scalars().all()
+
+    today = date.today()
+    start_month = today.replace(day=1)
+    month_keys = []
+    for i in range(months):
+        m = start_month + relativedelta(months=i)
+        month_keys.append(m.strftime("%Y-%m"))
+
+    freq_months = {"monthly": 1, "quarterly": 3, "semi-annual": 6, "annual": 12}
+    monthly_items: dict[str, list[dict]] = {mk: [] for mk in month_keys}
+    by_sector: dict[str, int] = {}
+
+    for acc in accs:
+        acc_ccy = acc.currency or "EUR"
+        holdings = (await db.execute(
+            select(Holding).where(Holding.account_id == acc.id, Holding.profile_id == pid)
+        )).scalars().all()
+
+        for h in holdings:
+            if h.asset_type == "crypto":
+                continue
+            div = await get_cached_dividend(db, h.ticker.upper())
+            if not div or not div.annual_rate or div.annual_rate <= 0 or not div.frequency:
+                continue
+
+            interval = freq_months.get(div.frequency, 12)
+            per_payment = div.annual_rate / (12 / interval) if interval else div.annual_rate
+            per_payment_cents = round(per_payment * h.quantity * 100)
+
+            # Convert to base currency if needed
+            rate_to_acc = 1.0
+            div_ccy = div.currency or h.currency
+            if div_ccy != acc_ccy:
+                r = await get_rate(db, div_ccy, acc_ccy, today)
+                rate_to_acc = r if r else 1.0
+
+            converted_cents = round(per_payment_cents * rate_to_acc)
+
+            # Anchor from last dividend date or ex_date
+            anchor = div.last_dividend_date or div.ex_date
+            if anchor:
+                # Find next payment after today
+                next_pay = anchor
+                while next_pay < today:
+                    next_pay = next_pay + relativedelta(months=interval)
+                # Project forward
+                pay = next_pay
+                for _ in range(months):
+                    mk = pay.strftime("%Y-%m")
+                    if mk in monthly_items:
+                        monthly_items[mk].append({
+                            "ticker": h.ticker,
+                            "name": h.name,
+                            "amount_cents": converted_cents,
+                            "currency": acc_ccy,
+                            "sector": div.sector,
+                        })
+                    pay = pay + relativedelta(months=interval)
+            else:
+                # No anchor — spread evenly across the year
+                for mk in month_keys:
+                    monthly_items[mk].append({
+                        "ticker": h.ticker,
+                        "name": h.name,
+                        "amount_cents": round(div.annual_rate * h.quantity * 100 * rate_to_acc / 12),
+                        "currency": acc_ccy,
+                        "sector": div.sector,
+                    })
+
+            # Sector aggregation (annual)
+            sector = div.sector or "Autre"
+            annual_cents = round(div.annual_rate * h.quantity * 100 * rate_to_acc)
+            by_sector[sector] = by_sector.get(sector, 0) + annual_cents
+
+    monthly_out = []
+    for mk in month_keys:
+        items = monthly_items[mk]
+        total = sum(it["amount_cents"] for it in items)
+        monthly_out.append({"month": mk, "total_cents": total, "items": items})
+
+    sector_out = [{"sector": s, "est_annual_cents": v} for s, v in sorted(by_sector.items(), key=lambda x: -x[1])]
+
+    return {"monthly": monthly_out, "by_sector": sector_out}

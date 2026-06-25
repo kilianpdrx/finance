@@ -65,6 +65,17 @@ export interface HoldingOut {
   price_fetched_at: string | null;
   value_in_account_ccy_cents: number | null;
   price_status: "ok" | "fallback" | "mismatch" | "missing";
+  // Dividend fields
+  dividend_yield: number | null;
+  yield_on_cost: number | null;
+  est_annual_income_cents: number | null;
+  ex_dividend_date: string | null;
+  payout_ratio: number | null;
+  dividend_growth_rate: number | null;
+  frequency: string | null;
+  sector: string | null;
+  industry: string | null;
+  dividend_date: string | null;
 }
 export interface InvestmentAccount {
   id: number;
@@ -92,6 +103,8 @@ export interface InvestmentAccount {
   holdings_gain_cents: number | null;
   holdings_gain_pct: number | null;
   allocation_by_type: Record<string, number> | null;
+  est_annual_div_cents: number | null;
+  avg_dividend_yield: number | null;
 }
 export interface InvestmentSeriesPoint {
   month: string;
@@ -199,6 +212,33 @@ export function useInvestmentAccounts() {
 export function useInvestmentTotalSeries() {
   return useQuery({ queryKey: ["investments", "total-series"], queryFn: () => unwrap(api.GET("/api/investments/total-series")) as Promise<InvestmentSeriesPoint[]> });
 }
+
+export interface DividendCalendarItem {
+  ticker: string;
+  name: string;
+  amount_cents: number;
+  currency: string;
+  sector: string | null;
+}
+export interface DividendCalendarMonth {
+  month: string;
+  total_cents: number;
+  items: DividendCalendarItem[];
+}
+export interface DividendCalendarResponse {
+  monthly: DividendCalendarMonth[];
+  by_sector: { sector: string; est_annual_cents: number }[];
+}
+export function useDividendCalendar(months = 12) {
+  return useQuery({
+    queryKey: ["investments", "dividend-calendar", months],
+    queryFn: async () => {
+      const res = await fetch(`/api/investments/dividend-calendar?months=${months}`);
+      if (!res.ok) throw new Error("Failed to fetch dividend calendar");
+      return res.json() as Promise<DividendCalendarResponse>;
+    },
+  });
+}
 export function useSettings() {
   return useQuery({
     queryKey: ["settings"],
@@ -297,6 +337,11 @@ export function useBankProfileMutations() {
   const invalidate = useInvalidate();
   const onSuccess = () => invalidate("bank-profiles");
   return {
+    create: useMutation({
+      mutationFn: (body: Partial<BankProfile>) =>
+        unwrap(api.POST("/api/bank-profiles", { body: body as any })),
+      onSuccess,
+    }),
     update: useMutation({
       mutationFn: ({ id, body }: { id: number; body: Partial<BankProfile> }) =>
         unwrap(api.PUT("/api/bank-profiles/{profile_id}", { params: { path: { profile_id: id } }, body: body as BankProfile })),

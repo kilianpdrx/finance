@@ -106,7 +106,7 @@ export function ImportHoldingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-5xl">
         <DialogHeader>
           <DialogTitle>Importer des positions (CSV)</DialogTitle>
         </DialogHeader>

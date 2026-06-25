@@ -8,6 +8,24 @@ import { EditHoldingDialog } from "./edit-holding-dialog";
 import { formatCents } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+const FREQ_LABELS: Record<string, string> = {
+  monthly: "M",
+  quarterly: "Q",
+  "semi-annual": "SA",
+  annual: "A",
+};
+function freqLabel(freq: string | null | undefined) {
+  return freq ? FREQ_LABELS[freq] ?? freq : "—";
+}
+function dividendSafetyColor(h: { payout_ratio?: number | null; dividend_growth_rate?: number | null }) {
+  const pr = h.payout_ratio;
+  const gr = h.dividend_growth_rate;
+  if (pr == null) return "bg-muted-foreground/40";
+  if (pr > 80) return "bg-red-500";
+  if (pr > 60 || (gr != null && gr < 0)) return "bg-yellow-500";
+  return "bg-emerald-500";
+}
+
 const TYPE_LABELS: Record<string, string> = {
   stock: "Action",
   etf: "ETF",
@@ -43,6 +61,13 @@ export function HoldingsTable({ holdings, currency }: { holdings: HoldingOut[]; 
             <th className="py-2 text-right font-medium">+/-</th>
             <th className="py-2 text-right font-medium">%</th>
             <th className="py-2 text-right font-medium">Alloc.</th>
+            <th className="py-2 text-right font-medium">Yield</th>
+            <th className="py-2 text-right font-medium">YOC</th>
+            <th className="py-2 text-right font-medium">Rev. Est.</th>
+            <th className="py-2 text-right font-medium">Freq.</th>
+            <th className="py-2 text-right font-medium">Payout</th>
+            <th className="py-2 text-right font-medium">DGR 5a</th>
+            <th className="py-2 text-right font-medium">Ex-Date</th>
             <th className="w-14" />
           </tr>
         </thead>
@@ -86,6 +111,26 @@ export function HoldingsTable({ holdings, currency }: { holdings: HoldingOut[]; 
                     {h.gain_pct != null ? `${h.gain_pct >= 0 ? "+" : ""}${h.gain_pct.toFixed(2)}%` : "—"}
                   </td>
                   <td className="nums py-2 text-right text-xs text-muted-foreground">{alloc != null ? `${alloc}%` : "—"}</td>
+                  <td className="nums py-2 text-right text-xs text-muted-foreground">
+                    {h.dividend_yield != null ? (
+                      <span className="inline-flex items-center gap-1">
+                        <span className={cn("inline-block size-1.5 rounded-full", dividendSafetyColor(h))} />
+                        {h.dividend_yield.toFixed(2)}%
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td className="nums py-2 text-right text-xs text-muted-foreground">{h.yield_on_cost != null ? `${h.yield_on_cost.toFixed(2)}%` : "—"}</td>
+                  <td className="nums py-2 text-right text-xs text-muted-foreground">
+                    {h.est_annual_income_cents != null ? `${formatCents(h.est_annual_income_cents, h.currency, { decimals: 0 })}/an` : "—"}
+                  </td>
+                  <td className="nums py-2 text-right text-xs text-muted-foreground">{freqLabel(h.frequency)}</td>
+                  <td className="nums py-2 text-right text-xs text-muted-foreground">{h.payout_ratio != null ? `${h.payout_ratio.toFixed(0)}%` : "—"}</td>
+                  <td className={cn("nums py-2 text-right text-xs", h.dividend_growth_rate != null && h.dividend_growth_rate >= 0 ? "text-positive" : h.dividend_growth_rate != null ? "text-negative" : "text-muted-foreground")}>
+                    {h.dividend_growth_rate != null ? `${h.dividend_growth_rate >= 0 ? "+" : ""}${h.dividend_growth_rate.toFixed(1)}%` : "—"}
+                  </td>
+                  <td className="nums py-2 text-right text-xs text-muted-foreground">
+                    {h.ex_dividend_date ? new Date(h.ex_dividend_date).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—"}
+                  </td>
                   <td className="py-2 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1.5">
                       <button onClick={() => setEditing(h)} className="text-muted-foreground transition-colors hover:text-foreground" title="Modifier le ticker / ISIN">
@@ -99,7 +144,7 @@ export function HoldingsTable({ holdings, currency }: { holdings: HoldingOut[]; 
                 </tr>
                 {isExpanded && (
                   <tr>
-                    <td colSpan={12} className="border-b border-border/60 px-4 pb-3">
+                    <td colSpan={19} className="border-b border-border/60 px-4 pb-3">
                       <HoldingPriceChart ticker={h.ticker} currency={h.price_currency ?? h.currency} />
                     </td>
                   </tr>

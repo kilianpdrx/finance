@@ -8,7 +8,7 @@ from cachetools import TTLCache
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Holding, PriceCache
+from models import Holding, PriceCache, DividendCache
 
 _history_cache: TTLCache = TTLCache(maxsize=200, ttl=3600)
 
@@ -59,6 +59,154 @@ async def _fetch_stock_prices(tickers: list[str]) -> dict[str, tuple[float, str]
         return await asyncio.get_event_loop().run_in_executor(None, _sync_fetch)
     except Exception as e:
         logger.warning("yfinance batch fetch failed: %s", e)
+        return {}
+
+
+def _detect_frequency(dividends_series) -> str | None:
+    """Detect dividend frequency from actual payment history (last 2 years)."""
+    if dividends_series is None or len(dividends_series) == 0:
+        return None
+    from datetime import datetime as _dt, timedelta, timezone
+    cutoff = _dt.now(timezone.utc) - timedelta(days=730)
+    recent = []
+    for d in dividends_series.index:
+        dt = d.to_pydatetime()
+        if dt.tzinfo is None:
+            from datetime import timezone as _tz
+            dt = dt.replace(tzinfo=_tz.utc)
+        if dt >= cutoff:
+            recent.append(d)
+    n = len(recent)
+    if n >= 20:
+        return "monthly"
+    if n >= 7:
+        return "quarterly"
+    if n >= 3:
+        return "semi-annual"
+    if n >= 1:
+        return "annual"
+    return None
+
+
+def _compute_dividend_growth_rate(dividends_series) -> float | None:
+    """Compute 5-year dividend CAGR from payment history."""
+    if dividends_series is None or len(dividends_series) < 4:
+        return None
+    by_year: dict[int, float] = {}
+    for dt_idx, amount in dividends_series.items():
+        yr = dt_idx.year
+        by_year[yr] = by_year.get(yr, 0) + float(amount)
+    from datetime import datetime as _dt
+    current_year = _dt.now().year
+    # Exclude current year (incomplete)
+    years = sorted(y for y in by_year if y < current_year and by_year[y] > 0)
+    if len(years) < 2:
+        return None
+    # Use up to 5 full years
+    if len(years) > 5:
+        years = years[-5:]
+    oldest = by_year[years[0]]
+    latest = by_year[years[-1]]
+    if oldest <= 0 or latest <= 0:
+        return None
+    n = years[-1] - years[0]
+    if n <= 0:
+        return None
+    cagr = ((latest / oldest) ** (1 / n) - 1) * 100
+    return round(cagr, 2)
+
+
+async def _fetch_dividend_details(tickers: list[str]) -> dict[str, dict]:
+    """Fetch dividend info (yield, rate, ex-date, frequency, payout, sector, history) via yfinance."""
+    if not tickers:
+        return {}
+
+    def _sync_fetch():
+        import yfinance as yf
+        result = {}
+        for ticker in tickers:
+            try:
+                t = yf.Ticker(ticker)
+                info = t.info or {}
+                div_yield = info.get("dividendYield")  # decimal, e.g. 0.025
+                div_rate = info.get("dividendRate")     # annual $/share
+                ex_date_ts = info.get("exDividendDate")  # unix timestamp or None
+                currency = (info.get("currency") or "USD").upper()
+
+                # Skip if no dividend data at all
+                if div_yield is None and div_rate is None:
+                    continue
+
+                ex_date = None
+                if ex_date_ts:
+                    try:
+                        from datetime import datetime as _dt
+                        ex_date = _dt.utcfromtimestamp(ex_date_ts).date()
+                    except Exception:
+                        pass
+
+                # Dividend payment date
+                div_date = None
+                div_date_ts = info.get("dividendDate")
+                if div_date_ts:
+                    try:
+                        from datetime import datetime as _dt
+                        div_date = _dt.utcfromtimestamp(div_date_ts).date()
+                    except Exception:
+                        pass
+
+                # Last dividend
+                last_div_val = info.get("lastDividendValue")
+                last_div_date = None
+                last_div_ts = info.get("lastDividendDate")
+                if last_div_ts:
+                    try:
+                        from datetime import datetime as _dt
+                        last_div_date = _dt.utcfromtimestamp(last_div_ts).date()
+                    except Exception:
+                        pass
+
+                # Frequency from actual dividend history
+                try:
+                    dividends = t.dividends
+                except Exception:
+                    dividends = None
+                frequency = _detect_frequency(dividends)
+                growth_rate = _compute_dividend_growth_rate(dividends)
+
+                # Convert dividends Series to list of (date, amount) for history storage
+                history = []
+                if dividends is not None and len(dividends) > 0:
+                    for dt_idx, amount in dividends.items():
+                        history.append((dt_idx.date(), float(amount)))
+
+                payout_ratio = info.get("payoutRatio")  # decimal
+                five_yr = info.get("fiveYearAvgDividendYield")  # already in %
+
+                result[ticker] = {
+                    "yield_pct": round(div_yield * 100, 4) if div_yield else None,
+                    "annual_rate": round(div_rate, 6) if div_rate else None,
+                    "currency": currency,
+                    "ex_date": ex_date,
+                    "frequency": frequency,
+                    "payout_ratio": round(payout_ratio, 4) if payout_ratio else None,
+                    "five_year_avg_yield": round(five_yr, 2) if five_yr else None,
+                    "growth_rate_5y": growth_rate,
+                    "last_dividend_value": round(last_div_val, 6) if last_div_val else None,
+                    "last_dividend_date": last_div_date,
+                    "dividend_date": div_date,
+                    "sector": info.get("sector"),
+                    "industry": info.get("industry"),
+                    "history": history,
+                }
+            except Exception as e:
+                logger.warning("yfinance dividend fetch failed for %s: %s", ticker, e)
+        return result
+
+    try:
+        return await asyncio.get_event_loop().run_in_executor(None, _sync_fetch)
+    except Exception as e:
+        logger.warning("Dividend details batch fetch failed: %s", e)
         return {}
 
 
@@ -342,6 +490,51 @@ async def refresh_all_prices(db: AsyncSession) -> int:
     if fallback:
         logger.info("Applied broker reference price for %d holding(s) without a trusted live quote.", fallback)
 
+    # ── Dividend data ────────────────────────────────────────────────────────
+    div_count = 0
+    hist_count = 0
+    if stock_tickers:
+        div_data = await _fetch_dividend_details(stock_tickers)
+        for ticker, info in div_data.items():
+            ex_date_str = str(info["ex_date"]) if info.get("ex_date") else None
+            last_div_date_str = str(info["last_dividend_date"]) if info.get("last_dividend_date") else None
+            div_date_str = str(info["dividend_date"]) if info.get("dividend_date") else None
+            await db.execute(text(
+                "INSERT OR REPLACE INTO dividend_cache "
+                "(ticker, yield_pct, annual_rate, currency, ex_date, frequency, fetched_at, "
+                "payout_ratio, five_year_avg_yield, growth_rate_5y, last_dividend_value, "
+                "last_dividend_date, dividend_date, sector, industry) "
+                "VALUES (:ticker, :yld, :rate, :ccy, :ex, :freq, :ts, "
+                ":payout, :five_yr, :growth, :last_val, :last_dt, :div_dt, :sector, :industry)"
+            ), {
+                "ticker": ticker,
+                "yld": info.get("yield_pct"),
+                "rate": info.get("annual_rate"),
+                "ccy": info.get("currency"),
+                "ex": ex_date_str,
+                "freq": info.get("frequency"),
+                "ts": now,
+                "payout": info.get("payout_ratio"),
+                "five_yr": info.get("five_year_avg_yield"),
+                "growth": info.get("growth_rate_5y"),
+                "last_val": info.get("last_dividend_value"),
+                "last_dt": last_div_date_str,
+                "div_dt": div_date_str,
+                "sector": info.get("sector"),
+                "industry": info.get("industry"),
+            })
+            div_count += 1
+
+            # Persist dividend history
+            for pay_date, amount in info.get("history", []):
+                await db.execute(text(
+                    "INSERT OR IGNORE INTO dividend_history (ticker, payment_date, amount) "
+                    "VALUES (:t, :d, :a)"
+                ), {"t": ticker, "d": str(pay_date), "a": amount})
+                hist_count += 1
+
+        logger.info("Cached dividend data for %d ticker(s), %d history entries.", div_count, hist_count)
+
     await db.commit()
     logger.info("Refreshed %d prices (%d stocks, %d crypto)", count, len(stock_prices), len(crypto_prices))
     return count
@@ -350,6 +543,14 @@ async def refresh_all_prices(db: AsyncSession) -> int:
 async def get_cached_price(db: AsyncSession, ticker: str) -> Optional[PriceCache]:
     result = await db.execute(
         select(PriceCache).where(PriceCache.ticker == ticker)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_cached_dividend(db: AsyncSession, ticker: str) -> Optional[DividendCache]:
+    """Read cached dividend data for a ticker."""
+    result = await db.execute(
+        select(DividendCache).where(DividendCache.ticker == ticker)
     )
     return result.scalar_one_or_none()
 

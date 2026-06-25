@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw, TrendingUp, Wand2 } from "lucide-react";
+import { RefreshCw, TrendingUp, Wand2, Coins, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,8 @@ import { InvestmentRow } from "@/components/investments/investment-row";
 import { PctBadge } from "@/components/investments/pct-badge";
 import { AllocationDonut, type AllocationHolding } from "@/components/investments/allocation-donut";
 import { NetworthArea } from "@/components/charts/networth-area";
+import { DividendCalendar } from "@/components/investments/dividend-calendar";
+import { DividendSectorDonut } from "@/components/investments/dividend-sector-donut";
 import { useInvestmentAccounts, useInvestmentTotalSeries, useRefreshPrices, useResolveTickers, useBaseCurrency, type NetWorthPoint } from "@/lib/api/hooks";
 import { formatCents } from "@/lib/format";
 
@@ -43,6 +45,8 @@ export default function InvestissementsPage() {
         name: h.name,
         ticker: h.ticker,
         value_cents: h.value_in_account_ccy_cents ?? h.current_value_cents ?? 0,
+        est_annual_income_cents: h.est_annual_income_cents,
+        dividend_yield: h.dividend_yield,
       });
     }
   }
@@ -55,6 +59,16 @@ export default function InvestissementsPage() {
   }
 
   const chartData: NetWorthPoint[] = series.map((s) => ({ month: s.month, total: s.total_cents }));
+
+  // Aggregate dividend KPIs across all accounts
+  const totalEstDivCents = accounts.reduce((s, a) => s + (a.est_annual_div_cents ?? 0), 0);
+  const divWeightedNum = accounts.reduce((s, a) => {
+    const dy = a.avg_dividend_yield ?? 0;
+    const v = a.current_value_cents ?? 0;
+    return s + dy * v;
+  }, 0);
+  const divWeightedDen = accounts.reduce((s, a) => s + (a.current_value_cents ?? 0), 0);
+  const avgYield = divWeightedDen > 0 ? Math.round((divWeightedNum / divWeightedDen) * 100) / 100 : null;
 
   const handleRefresh = () => {
     refreshPrices.mutate(undefined, {
@@ -86,6 +100,7 @@ export default function InvestissementsPage() {
     <Tabs defaultValue="synthese" className="space-y-5">
       <TabsList>
         <TabsTrigger value="synthese">Synthèse</TabsTrigger>
+        <TabsTrigger value="dividendes">Dividendes</TabsTrigger>
         <TabsTrigger value="long-terme">Long terme ({longTermAccounts.length})</TabsTrigger>
         <TabsTrigger value="live">Live ({liveAccounts.length})</TabsTrigger>
       </TabsList>
@@ -98,6 +113,36 @@ export default function InvestissementsPage() {
             {totalPerfPct != null && <PctBadge value={totalPerfPct} amountCents={totalPerfCents} currency={baseCurrency} />}
           </p>
         </div>
+
+        {/* Dividend KPI cards */}
+        {totalEstDivCents > 0 && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Card>
+              <CardContent className="flex items-center gap-3 py-4">
+                <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/10">
+                  <Coins className="size-5 text-emerald-500" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Revenus Est. Dividendes / an</p>
+                  <p className="nums blurable text-lg font-semibold text-emerald-500">{formatCents(totalEstDivCents, baseCurrency)}</p>
+                </div>
+              </CardContent>
+            </Card>
+            {avgYield != null && avgYield > 0 && (
+              <Card>
+                <CardContent className="flex items-center gap-3 py-4">
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-brand/10">
+                    <TrendingUp className="size-5 text-brand" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Rendement Moyen Pondéré</p>
+                    <p className="nums text-lg font-semibold text-brand">{avgYield.toFixed(2)}%</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
 
         {Object.keys(globalAllocation).length > 1 && (
           <Card>
@@ -112,6 +157,60 @@ export default function InvestissementsPage() {
             <CardContent className="pt-2"><NetworthArea data={chartData} currency={baseCurrency} /></CardContent>
           </Card>
         )}
+      </TabsContent>
+
+      {/* ── Dividendes ──────────────────────────────────────────────────── */}
+      <TabsContent value="dividendes" className="space-y-5">
+        {/* KPI cards */}
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Card>
+            <CardContent className="flex items-center gap-3 py-4">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/10">
+                <Coins className="size-5 text-emerald-500" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Revenus Annuels Estimés</p>
+                <p className="nums blurable text-lg font-semibold text-emerald-500">{formatCents(totalEstDivCents, baseCurrency)}</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="flex items-center gap-3 py-4">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-brand/10">
+                <CalendarDays className="size-5 text-brand" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Revenus Mensuels Estimés</p>
+                <p className="nums blurable text-lg font-semibold text-brand">{formatCents(Math.round(totalEstDivCents / 12), baseCurrency)}</p>
+              </div>
+            </CardContent>
+          </Card>
+          {avgYield != null && avgYield > 0 && (
+            <Card>
+              <CardContent className="flex items-center gap-3 py-4">
+                <div className="flex size-10 items-center justify-center rounded-xl bg-brand/10">
+                  <TrendingUp className="size-5 text-brand" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Rendement Moyen Pondéré</p>
+                  <p className="nums text-lg font-semibold text-brand">{avgYield.toFixed(2)}%</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
+        {/* 12-month projection bar chart */}
+        <Card>
+          <CardHeader><CardTitle>Projection des revenus sur 12 mois</CardTitle></CardHeader>
+          <CardContent><DividendCalendar currency={baseCurrency} /></CardContent>
+        </Card>
+
+        {/* Sector breakdown */}
+        <Card>
+          <CardHeader><CardTitle>Répartition par secteur</CardTitle></CardHeader>
+          <CardContent><DividendSectorDonut currency={baseCurrency} /></CardContent>
+        </Card>
       </TabsContent>
 
       {/* ── Long terme (snapshot-based) ──────────────────────────────────── */}

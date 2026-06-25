@@ -21,6 +21,8 @@ export interface AllocationHolding {
   name: string;
   ticker: string;
   value_cents: number;
+  est_annual_income_cents?: number | null;
+  dividend_yield?: number | null;
 }
 
 export function AllocationDonut({
@@ -114,6 +116,31 @@ export function AllocationDonut({
                 </li>
               );
             })}
+          </ul>
+        </div>
+      )}
+
+      {/* Dividend income breakdown */}
+      {clickable && holdings && holdings.some((h) => (h.est_annual_income_cents ?? 0) > 0) && (
+        <div className="min-w-0 border-t border-border/50 pt-4">
+          <p className="mb-2 text-sm font-semibold">Revenus dividendes estimés (top 10)</p>
+          <ul className="space-y-1.5">
+            {holdings
+              .filter((h) => (h.est_annual_income_cents ?? 0) > 0)
+              .sort((a, b) => (b.est_annual_income_cents ?? 0) - (a.est_annual_income_cents ?? 0))
+              .slice(0, 10)
+              .map((h) => (
+                <li key={`div-${h.ticker}-${h.name}`} className="flex items-center gap-2 text-xs">
+                  <span className="font-mono font-semibold">{h.ticker.toUpperCase()}</span>
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">{h.name}</span>
+                  <span className="nums blurable text-emerald-500 font-medium">
+                    {formatCents(h.est_annual_income_cents ?? 0, currency, { decimals: 0 })}/an
+                  </span>
+                  {h.dividend_yield != null && (
+                    <span className="nums w-14 shrink-0 text-right text-muted-foreground">{h.dividend_yield.toFixed(2)}%</span>
+                  )}
+                </li>
+              ))}
           </ul>
         </div>
       )}

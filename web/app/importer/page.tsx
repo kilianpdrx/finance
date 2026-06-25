@@ -180,7 +180,7 @@ export default function ImporterPage() {
 
   if (step === "holdings-review" && holdingsPreview) {
     return (
-      <div className="mx-auto max-w-3xl space-y-4">
+      <div className="mx-auto max-w-5xl space-y-4">
         <h2 className="text-lg font-semibold">Positions — {selectedAccObj?.name}</h2>
         <HoldingsImportReview
           preview={holdingsPreview}
