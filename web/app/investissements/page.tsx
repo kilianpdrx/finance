@@ -1,6 +1,7 @@
 "use client";
 
-import { RefreshCw, TrendingUp, Wand2, Coins, CalendarDays } from "lucide-react";
+import { useState } from "react";
+import { RefreshCw, TrendingUp, Wand2, Coins, CalendarDays, DownloadCloud } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,9 @@ import { AllocationDonut, type AllocationHolding } from "@/components/investment
 import { NetworthArea } from "@/components/charts/networth-area";
 import { DividendCalendar } from "@/components/investments/dividend-calendar";
 import { DividendSectorDonut } from "@/components/investments/dividend-sector-donut";
-import { useInvestmentAccounts, useInvestmentTotalSeries, useRefreshPrices, useResolveTickers, useBaseCurrency, type NetWorthPoint } from "@/lib/api/hooks";
+import { DividendPositionsTable } from "@/components/investments/dividend-positions-table";
+import { IbkrSyncDialog } from "@/components/investments/ibkr-sync-dialog";
+import { useInvestmentAccounts, useInvestmentTotalSeries, useRefreshPrices, useResolveTickers, useBaseCurrency, useIbkrStatus, type NetWorthPoint } from "@/lib/api/hooks";
 import { formatCents } from "@/lib/format";
 
 export default function InvestissementsPage() {
@@ -22,6 +25,8 @@ export default function InvestissementsPage() {
   const refreshPrices = useRefreshPrices();
   const resolveTickers = useResolveTickers();
   const baseCurrency = useBaseCurrency();
+  const { data: ibkrStatus } = useIbkrStatus();
+  const [ibkrOpen, setIbkrOpen] = useState(false);
 
   const totalCurrent = accounts.reduce((s, a) => s + (a.current_value_cents ?? 0), 0);
   const totalPerfCents = accounts.reduce((s, a) => s + (a.perf_from_start_cents ?? 0), 0);
@@ -30,6 +35,7 @@ export default function InvestissementsPage() {
 
   const liveAccounts = accounts.filter((a) => a.has_holdings);
   const longTermAccounts = accounts.filter((a) => !a.has_holdings);
+  const allHoldings = accounts.flatMap((a) => a.holdings ?? []);
 
   const globalAllocation: Record<string, number> = {};
   const globalHoldings: AllocationHolding[] = [];
@@ -211,6 +217,12 @@ export default function InvestissementsPage() {
           <CardHeader><CardTitle>Répartition par secteur</CardTitle></CardHeader>
           <CardContent><DividendSectorDonut currency={baseCurrency} /></CardContent>
         </Card>
+
+        {/* All dividend-paying positions */}
+        <Card>
+          <CardHeader><CardTitle>Positions versant un dividende</CardTitle></CardHeader>
+          <CardContent><DividendPositionsTable holdings={allHoldings} currency={baseCurrency} /></CardContent>
+        </Card>
       </TabsContent>
 
       {/* ── Long terme (snapshot-based) ──────────────────────────────────── */}
@@ -225,6 +237,12 @@ export default function InvestissementsPage() {
       {/* ── Live (Yahoo-priced holdings) ─────────────────────────────────── */}
       <TabsContent value="live" className="space-y-2">
         <div className="flex items-center justify-end gap-2">
+          {ibkrStatus?.configured && (
+            <Button variant="outline" size="sm" onClick={() => setIbkrOpen(true)} title="Récupérer les positions depuis IBKR">
+              <DownloadCloud className="mr-1.5 size-3.5" />
+              Synchroniser IBKR
+            </Button>
+          )}
           {liveAccounts.length > 0 && (
             <>
               <Button variant="outline" size="sm" onClick={handleResolve} disabled={resolveTickers.isPending} title="Corriger les tickers introuvables via OpenFIGI">
@@ -238,6 +256,9 @@ export default function InvestissementsPage() {
             </>
           )}
         </div>
+        {ibkrStatus?.account_id != null && (
+          <IbkrSyncDialog open={ibkrOpen} onOpenChange={setIbkrOpen} accountId={ibkrStatus.account_id} />
+        )}
         {liveAccounts.length === 0 ? (
           <Card><EmptyState icon={TrendingUp} title="Aucun compte live" description="Importez un CSV de positions (PEA, IBKR) pour suivre des cours en direct." /></Card>
         ) : (

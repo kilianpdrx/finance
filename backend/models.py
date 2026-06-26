@@ -227,6 +227,9 @@ class Holding(Base):
     isin = Column(String, nullable=True)
     ref_price_cents = Column(Integer, nullable=True)
     ref_price_date = Column(Date, nullable=True)
+    # When true, the holding is excluded from the yfinance/CoinGecko auto-refresh
+    # and keeps its manual / broker-reference price (ref_price_cents).
+    price_locked = Column(Boolean, default=False)
 
     account = relationship("Account")
 

@@ -57,6 +57,7 @@ export interface HoldingOut {
   asset_type: string;
   added_date: string | null;
   notes: string | null;
+  price_locked: boolean;
   current_price_cents: number | null;
   current_value_cents: number | null;
   gain_cents: number | null;
@@ -592,6 +593,42 @@ export function useProfileMutations() {
       onSuccess,
     }),
   };
+}
+
+export interface IbkrStatus {
+  configured: boolean;
+  auto_sync: boolean;
+  account_id: number | null;
+  last_sync: string | null;
+  last_status: string | null;
+  min_interval_seconds: number;
+}
+
+export function useIbkrStatus() {
+  return useQuery({
+    queryKey: ["investments", "ibkr-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/investments/ibkr/status");
+      if (!res.ok) throw new Error("Failed to fetch IBKR status");
+      return res.json() as Promise<IbkrStatus>;
+    },
+  });
+}
+
+// Fetches IBKR positions and returns a preview to feed HoldingsImportReview.
+// Confirm reuses the existing holdingsImportConfirm.
+export function useIbkrSyncPreview() {
+  return useMutation({
+    mutationFn: async (accountId?: number): Promise<HoldingsImportPreviewResponse> => {
+      const qs = accountId ? `?account_id=${accountId}` : "";
+      const res = await fetch(`/api/investments/ibkr/sync-preview${qs}`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail ?? "Échec de la synchronisation IBKR");
+      }
+      return res.json();
+    },
+  });
 }
 
 export function useResolveTickers() {

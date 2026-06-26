@@ -9,8 +9,10 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { KpiStat } from "@/components/dashboard/kpi-stat";
 import { SpendingDonut } from "@/components/charts/spending-donut";
+import { PatrimoineDonut } from "@/components/charts/patrimoine-donut";
 import { CashflowChart } from "@/components/charts/cashflow-chart";
 import { NetworthArea } from "@/components/charts/networth-area";
+import { TopExpenses } from "@/components/dashboard/top-expenses";
 import {
   useAnalyticsContext,
   useSummary,
@@ -18,6 +20,7 @@ import {
   useByCategory,
   useNetWorth,
 } from "@/lib/api/hooks";
+import { patrimoineByType } from "@/lib/networth";
 
 const fade = {
   hidden: { opacity: 0, y: 12 },
@@ -54,6 +57,7 @@ export default function DashboardPage() {
 
   const s = summary.data;
   const nw = netWorth.data ?? [];
+  const patrimoine = patrimoineByType(nw, accounts);
   const nwDelta =
     nw.length >= 2
       ? ((Number(nw[nw.length - 1].total) - Number(nw[nw.length - 2].total)) / Math.abs(Number(nw[nw.length - 2].total) || 1)) * 100
@@ -105,6 +109,24 @@ export default function DashboardPage() {
         <motion.div className="h-full" variants={fade} initial="hidden" animate="show" custom={5}>
           <Card className="h-full">
             <CardHeader>
+              <CardTitle>Répartition du patrimoine</CardTitle>
+              <CardDescription>Par type de compte</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {Object.keys(patrimoine).length ? (
+                <PatrimoineDonut byType={patrimoine} currency={currency} />
+              ) : (
+                <EmptyState icon={PieIcon} title="Aucun patrimoine" />
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+
+      <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
+        <motion.div className="h-full" variants={fade} initial="hidden" animate="show" custom={6}>
+          <Card className="h-full">
+            <CardHeader>
               <CardTitle>Répartition des dépenses</CardTitle>
               <CardDescription>Par catégorie</CardDescription>
             </CardHeader>
@@ -117,9 +139,21 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         </motion.div>
+
+        <motion.div className="h-full" variants={fade} initial="hidden" animate="show" custom={7}>
+          <Card className="h-full">
+            <CardHeader>
+              <CardTitle>Top 10 des dépenses</CardTitle>
+              <CardDescription>Sur la période sélectionnée</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <TopExpenses query={query} currency={currency} />
+            </CardContent>
+          </Card>
+        </motion.div>
       </div>
 
-      <motion.div variants={fade} initial="hidden" animate="show" custom={6}>
+      <motion.div variants={fade} initial="hidden" animate="show" custom={8}>
         <Card>
           <CardHeader>
             <CardTitle>Revenus & dépenses</CardTitle>
@@ -161,6 +195,16 @@ function DashboardSkeleton() {
         <Card className="p-5">
           <Skeleton className="h-4 w-40" />
           <Skeleton className="mx-auto mt-6 size-44 rounded-full" />
+        </Card>
+      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card className="p-5">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="mx-auto mt-6 size-44 rounded-full" />
+        </Card>
+        <Card className="p-5">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="mt-4 h-[260px] w-full rounded-xl" />
         </Card>
       </div>
       <Card className="p-5">

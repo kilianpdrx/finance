@@ -278,6 +278,8 @@ async def lifespan(app: FastAPI):
             await db.execute(text("ALTER TABLE holdings ADD COLUMN ref_price_cents INTEGER"))
         if "ref_price_date" not in col_names:
             await db.execute(text("ALTER TABLE holdings ADD COLUMN ref_price_date DATE"))
+        if "price_locked" not in col_names:
+            await db.execute(text("ALTER TABLE holdings ADD COLUMN price_locked BOOLEAN DEFAULT 0"))
         await db.commit()
 
         # Add source column to price_cache (live vs broker-fallback) if missing.
@@ -369,6 +371,29 @@ async def lifespan(app: FastAPI):
             logger.info("Startup price refresh complete (%d prices)", n)
         except Exception as e:
             logger.warning("Startup price refresh failed: %s", e)
+
+    # ── IBKR Flex positions sync on startup (silent; per profile) ───────────────
+    # Only profiles with ibkr_auto_sync="true" and full creds actually hit the
+    # network — sync_ibkr_holdings short-circuits to a no-op otherwise.
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select as sql_select
+        from models import Profile
+        from services.ibkr_flex import sync_ibkr_holdings, get_setting
+        try:
+            profiles_list = (await db.execute(sql_select(Profile))).scalars().all()
+            for prof in profiles_list:
+                try:
+                    if (await get_setting(db, prof.id, "ibkr_auto_sync")) != "true":
+                        continue
+                    res = await sync_ibkr_holdings(db, prof.id, mode="auto")
+                    if res.get("ok"):
+                        logger.info("IBKR startup sync (profile %d): %s", prof.id, res)
+                    elif res.get("reason") != "not_configured":
+                        logger.warning("IBKR startup sync (profile %d): %s", prof.id, res.get("reason"))
+                except Exception as e:
+                    logger.warning("IBKR startup sync failed (profile %d): %s", prof.id, e)
+        except Exception as e:
+            logger.warning("IBKR startup iteration failed: %s", e)
 
     # ── Scheduler ─────────────────────────────────────────────────────────────────
     scheduler = AsyncIOScheduler()

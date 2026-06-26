@@ -435,6 +435,8 @@ async def refresh_all_prices(db: AsyncSession) -> int:
     stock_tickers = []
     crypto_ids = []
     for h in holdings:
+        if h.price_locked:
+            continue  # excluded from auto-refresh — keeps its manual/ref price
         if h.asset_type == "crypto":
             crypto_ids.append(h.ticker.lower())
         else:
@@ -472,15 +474,18 @@ async def refresh_all_prices(db: AsyncSession) -> int:
     for h in holdings:
         if h.asset_type == "crypto" or not h.ref_price_cents:
             continue
-        live = stock_prices.get(h.ticker.upper())
         ref = h.ref_price_cents
-        trusted = (
-            live is not None
-            and live[1] == h.currency
-            and abs(round(live[0] * 100) - ref) / ref <= _REF_DEVIATION_TOL
-        )
-        if trusted:
-            continue
+        # A locked holding always keeps its manual/broker price, regardless of any
+        # live quote that may exist for the same ticker.
+        if not h.price_locked:
+            live = stock_prices.get(h.ticker.upper())
+            trusted = (
+                live is not None
+                and live[1] == h.currency
+                and abs(round(live[0] * 100) - ref) / ref <= _REF_DEVIATION_TOL
+            )
+            if trusted:
+                continue
         await db.execute(text(
             "INSERT OR REPLACE INTO price_cache (ticker, price_cents, currency, fetched_at, source) "
             "VALUES (:ticker, :price_cents, :currency, :fetched_at, 'ref')"

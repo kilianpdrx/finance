@@ -139,6 +139,14 @@ async def summary(
             balance = t_q.scalar() or 0
         net_worth += await convert_cents(db, balance, acc_ccy, base_ccy, today)
 
+        # Holdings-priced investment accounts carry their value in positions, not in
+        # transactions/snapshots — add the live holdings value so net worth matches
+        # the Investissements page.
+        from routers.investments import account_holdings_value_cents
+        hv = await account_holdings_value_cents(db, acc_id, acc_ccy)
+        if hv:
+            net_worth += await convert_cents(db, hv, acc_ccy, base_ccy, today)
+
     last_date_q = await db.execute(select(func.max(Transaction.date)).where(Transaction.profile_id == pid))
     last_date = last_date_q.scalar()
     last_transaction_date = str(last_date) if last_date else None
@@ -415,17 +423,48 @@ async def net_worth_history(
     all_accounts = await db.execute(acc_q)
     acc_map = {a.id: a for a in all_accounts.scalars()}
 
+    # Holdings-priced investment accounts have no transactions/snapshots — inject
+    # their reconstructed month-end value (clamped to the requested window) so they
+    # count toward net worth, matching the Investissements page.
+    from routers.investments import _holdings_monthly_values, account_holdings_value_cents
+    from models import AccountType
     today = date.today()
+    today_month = today.strftime("%Y-%m")
+    existing_months = sorted(monthly_totals.keys())
+    lo = date_from.strftime("%Y-%m") if date_from else (existing_months[0] if existing_months else None)
+    hi = date_to.strftime("%Y-%m") if date_to else (existing_months[-1] if existing_months else None)
+    # The current month within the window gets the live holdings value (includes
+    # locked / no-history positions); earlier months use historical reconstruction.
+    current_month = today_month if (not hi or today_month <= hi) and (not lo or today_month >= lo) else None
+    for acc in acc_map.values():
+        if acc.account_type != AccountType.investissement:
+            continue
+        for entry in await _holdings_monthly_values(db, acc.id, acc.currency or "EUR"):
+            m = entry["month"]
+            if (lo and m < lo) or (hi and m > hi) or m == current_month:
+                continue
+            monthly_totals.setdefault(m, {})[acc.id] = entry["amount_cents"]
+        if current_month:
+            live = await account_holdings_value_cents(db, acc.id, acc.currency or "EUR")
+            if live:
+                monthly_totals.setdefault(current_month, {})[acc.id] = live
+
     result = []
+    last_known: dict = {}
     for month in sorted(monthly_totals.keys()):
+        # Carry each account's last-known balance forward so it persists in months
+        # where it has no new data (otherwise a holdings/snapshot account would drop
+        # out of the total on months without a transaction).
+        last_known.update(monthly_totals[month])
         entry = {"month": month, "total": 0}
-        for acc_id, balance in monthly_totals[month].items():
+        for acc_id, balance in last_known.items():
             acc = acc_map.get(acc_id)
             if not acc:
                 continue
             acc_ccy = acc.currency or "EUR"
             converted = await convert_cents(db, balance, acc_ccy, base_ccy, today)
             entry[acc.name] = converted
+            entry[f"{acc.name}_native"] = balance
             entry["total"] += converted
         result.append(entry)
     return result

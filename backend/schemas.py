@@ -365,6 +365,8 @@ class HoldingUpdate(BaseModel):
     asset_type: Optional[str] = None
     added_date: Optional[date] = None
     notes: Optional[str] = None
+    price_locked: Optional[bool] = None
+    ref_price_cents: Optional[int] = None
 
 class HoldingOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -378,6 +380,7 @@ class HoldingOut(BaseModel):
     asset_type: str
     added_date: Optional[date] = None
     notes: Optional[str] = None
+    price_locked: bool = False
     current_price_cents: Optional[int] = None
     current_value_cents: Optional[int] = None
     gain_cents: Optional[int] = None

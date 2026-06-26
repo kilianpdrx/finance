@@ -20,6 +20,7 @@ export function ProfileManageDialog({ open, onOpenChange }: { open: boolean; onO
 
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState(COLORS[1]);
+  const [editingColorId, setEditingColorId] = useState<number | null>(null);
 
   const addProfile = async () => {
     if (!newName.trim()) return;
@@ -56,22 +57,42 @@ export function ProfileManageDialog({ open, onOpenChange }: { open: boolean; onO
 
         <div className="space-y-2">
           {profiles.map((p) => (
-            <div key={p.id} className="flex items-center gap-3 rounded-lg border border-border px-3 py-2">
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold text-white" style={{ backgroundColor: p.color }}>
-                {p.name[0]?.toUpperCase()}
-              </span>
-              <Input
-                defaultValue={p.name}
-                className="h-8 flex-1 border-transparent bg-transparent px-1 text-sm shadow-none hover:border-border focus:border-border"
-                onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== p.name) update.mutate({ id: p.id, body: { name: v } }); }}
-              />
-              {p.id === activeProfileId && <span title="Actif"><Check className="size-4 text-brand" /></span>}
-              {p.is_default ? (
-                <span className="text-[10px] text-muted-foreground">défaut</span>
-              ) : (
-                <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-negative" onClick={() => del(p.id)}>
-                  <Trash2 className="size-4" />
-                </Button>
+            <div key={p.id} className="rounded-lg border border-border px-3 py-2">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  title="Changer la couleur"
+                  onClick={() => setEditingColorId(editingColorId === p.id ? null : p.id)}
+                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold text-white transition hover:ring-2 hover:ring-border"
+                  style={{ backgroundColor: p.color }}
+                >
+                  {p.name[0]?.toUpperCase()}
+                </button>
+                <Input
+                  defaultValue={p.name}
+                  className="h-8 flex-1 border-transparent bg-transparent px-1 text-sm shadow-none hover:border-border focus:border-border"
+                  onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== p.name) update.mutate({ id: p.id, body: { name: v } }); }}
+                />
+                {p.id === activeProfileId && <span title="Actif"><Check className="size-4 text-brand" /></span>}
+                {p.is_default ? (
+                  <span className="text-[10px] text-muted-foreground">défaut</span>
+                ) : (
+                  <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-negative" onClick={() => del(p.id)}>
+                    <Trash2 className="size-4" />
+                  </Button>
+                )}
+              </div>
+              {editingColorId === p.id && (
+                <div className="mt-2 flex gap-1.5 pl-10">
+                  {COLORS.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => { update.mutate({ id: p.id, body: { color: c } }); setEditingColorId(null); }}
+                      className="size-6 rounded-full ring-offset-2 ring-offset-background transition"
+                      style={{ backgroundColor: c, boxShadow: p.color === c ? `0 0 0 2px ${c}` : undefined }}
+                    />
+                  ))}
+                </div>
               )}
             </div>
           ))}

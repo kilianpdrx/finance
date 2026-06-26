@@ -41,6 +41,7 @@ async def _enrich_holding(db: AsyncSession, h: Holding, account_currency: str = 
         "asset_type": h.asset_type,
         "added_date": str(h.added_date) if h.added_date else None,
         "notes": h.notes,
+        "price_locked": bool(h.price_locked),
         "current_price_cents": None,
         "current_value_cents": None,
         "gain_cents": None,
@@ -145,6 +146,19 @@ async def _enrich_holding(db: AsyncSession, h: Holding, account_currency: str = 
     return out
 
 
+async def account_holdings_value_cents(db: AsyncSession, account_id: int, account_ccy: str) -> int:
+    """Current total value of an account's holdings, in the account currency (cents).
+
+    Shared with analytics (net worth / summary) so holdings-priced investment
+    accounts are counted at their live value, not 0. Returns 0 if no holdings."""
+    holdings = (await db.execute(select(Holding).where(Holding.account_id == account_id))).scalars().all()
+    total = 0
+    for h in holdings:
+        eh = await _enrich_holding(db, h, account_ccy)
+        total += eh.get("value_in_account_ccy_cents") or 0
+    return total
+
+
 # ── Holdings CRUD ─────────────────────────────────────────────────────────────
 
 @router.get("/accounts/{account_id}/holdings")
@@ -200,9 +214,19 @@ async def update_holding(holding_id: int, body: HoldingUpdate, db: AsyncSession 
     if (("ticker" in updates) or ("isin" in updates)) and h.isin and h.ticker:
         await store_isin_ticker(db, h.isin, h.ticker, h.name, h.currency, source="manual")
 
+    # A manual price (for a locked / un-priced holding) is stored as the broker
+    # reference and reflected in price_cache immediately so the row updates at once.
+    if "ref_price_cents" in updates and h.ref_price_cents is not None:
+        h.ref_price_date = date.today()
+        await db.execute(text(
+            "INSERT OR REPLACE INTO price_cache (ticker, price_cents, currency, fetched_at, source) "
+            "VALUES (:t, :p, :c, :f, 'ref')"
+        ), {"t": h.ticker.upper(), "p": h.ref_price_cents, "c": h.currency, "f": datetime.utcnow()})
+
     await db.commit()
 
-    if ticker_changed and h.asset_type != "crypto":
+    # Don't pull a live Yahoo quote for a locked holding (the manual price wins).
+    if ticker_changed and h.asset_type != "crypto" and not h.price_locked:
         try:
             # Drop the stale cache row for the old symbol, then fetch the new one.
             await db.execute(text("DELETE FROM price_cache WHERE UPPER(ticker) = :t"), {"t": old_ticker.upper()})
@@ -245,7 +269,7 @@ async def resolve_tickers(db: AsyncSession = Depends(get_db), pid: int = Depends
     holdings = (await db.execute(select(Holding).where(Holding.profile_id == pid))).scalars().all()
     resolved = 0
     for h in holdings:
-        if h.asset_type == "crypto":
+        if h.asset_type == "crypto" or h.price_locked:
             continue
         # Backfill a missing ISIN (e.g. IBKR positions) so the editor can prefill it.
         if not h.isin:
@@ -460,6 +484,19 @@ async def import_preview(
     )
     existing_list = existing.scalars().all()
 
+    previews, dups = _build_holding_previews(parsed, existing_list)
+
+    return HoldingsImportPreviewResponse(
+        format=fmt, holdings=previews, total=len(previews), duplicates=dups,
+    )
+
+
+def _build_holding_previews(parsed, existing_list: list[Holding]) -> tuple[list[ParsedHoldingPreview], int]:
+    """Match parsed holdings against existing ones and build preview rows.
+
+    Shared by the CSV import and the IBKR Flex sync so both flow through the same
+    dedup + review pipeline. Aligns a duplicate's ticker/name/isin to the DB row
+    (preserving manual corrections like CAC.PA → C40.PA)."""
     previews: list[ParsedHoldingPreview] = []
     dups = 0
     for p in parsed:
@@ -467,7 +504,6 @@ async def import_preview(
         is_dup = ex is not None
         if is_dup:
             dups += 1
-            # Align parsed values to DB corrections (like CAC.PA vs C40.PA)
             p.ticker = ex.ticker
             if ex.name:
                 p.name = ex.name
@@ -490,10 +526,7 @@ async def import_preview(
             existing_quantity=ex.quantity if ex else None,
             existing_cost_basis_cents=ex.cost_basis_cents if ex else None,
         ))
-
-    return HoldingsImportPreviewResponse(
-        format=fmt, holdings=previews, total=len(previews), duplicates=dups,
-    )
+    return previews, dups
 
 
 @router.post("/import/confirm", response_model=HoldingsImportConfirmResponse)
@@ -587,6 +620,173 @@ async def import_confirm(
         pass
 
     return HoldingsImportConfirmResponse(created=created, updated=updated, skipped=skipped)
+
+
+# ── IBKR Flex Web Service sync ───────────────────────────────────────────────
+
+@router.get("/ibkr/status")
+async def ibkr_status(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    """Drive the Settings UI + sync button. Never returns the token value."""
+    from services.ibkr_flex import get_setting, MIN_SYNC_INTERVAL_SECONDS
+    token = await get_setting(db, pid, "ibkr_flex_token")
+    query = await get_setting(db, pid, "ibkr_query_id")
+    acct = await get_setting(db, pid, "ibkr_account_id")
+    return {
+        "configured": bool(token and query and acct),
+        "auto_sync": (await get_setting(db, pid, "ibkr_auto_sync")) == "true",
+        "account_id": int(acct) if acct and acct.isdigit() else None,
+        "last_sync": await get_setting(db, pid, "ibkr_last_sync"),
+        "last_status": await get_setting(db, pid, "ibkr_last_sync_status"),
+        "min_interval_seconds": MIN_SYNC_INTERVAL_SECONDS,
+    }
+
+
+@router.post("/ibkr/sync-preview", response_model=HoldingsImportPreviewResponse)
+async def ibkr_sync_preview(
+    account_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Fetch IBKR positions and return a preview for the review UI (no writes)."""
+    from services.ibkr_flex import (
+        fetch_flex_statement, parse_open_positions, get_setting, record_sync,
+        FlexError, MIN_SYNC_INTERVAL_SECONDS,
+    )
+
+    token = await get_setting(db, pid, "ibkr_flex_token")
+    query = await get_setting(db, pid, "ibkr_query_id")
+    acct_raw = await get_setting(db, pid, "ibkr_account_id")
+    acct = account_id or (int(acct_raw) if acct_raw and acct_raw.isdigit() else None)
+    if not token or not query or not acct:
+        raise HTTPException(400, "IBKR Flex non configuré (token, identifiant de requête et compte requis).")
+
+    # Rate-limit guard: refuse repeated manual fetches within the window.
+    last = await get_setting(db, pid, "ibkr_last_sync")
+    if last:
+        try:
+            elapsed = (datetime.utcnow() - datetime.fromisoformat(last)).total_seconds()
+            if elapsed < MIN_SYNC_INTERVAL_SECONDS:
+                raise HTTPException(
+                    429,
+                    f"Synchronisation trop fréquente. Réessayez dans {int(MIN_SYNC_INTERVAL_SECONDS - elapsed)} s.",
+                    headers={"Retry-After": str(int(MIN_SYNC_INTERVAL_SECONDS - elapsed))},
+                )
+        except ValueError:
+            pass
+
+    try:
+        xml = await fetch_flex_statement(token, query)
+        parsed = parse_open_positions(xml)
+    except FlexError as e:
+        await record_sync(db, pid, ok=False, detail=str(e))
+        status = 429 if e.kind == "rate_limit" else (400 if e.kind == "config" else 502)
+        raise HTTPException(status, str(e))
+
+    existing = (await db.execute(
+        select(Holding).where(Holding.account_id == acct, Holding.profile_id == pid)
+    )).scalars().all()
+    previews, dups = _build_holding_previews(parsed, existing)
+    await record_sync(db, pid, ok=True, detail=f"aperçu {len(previews)} positions")
+    return HoldingsImportPreviewResponse(
+        format="ibkr_flex", holdings=previews, total=len(previews), duplicates=dups,
+    )
+
+
+@router.post("/ibkr/sync", response_model=HoldingsImportConfirmResponse)
+async def ibkr_sync_now(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    """Silent server-side upsert (no review) — same path the launch sync uses."""
+    from services.ibkr_flex import sync_ibkr_holdings
+    res = await sync_ibkr_holdings(db, pid, mode="auto")
+    if not res.get("ok"):
+        reason = res.get("reason", "")
+        if reason == "not_configured":
+            raise HTTPException(400, "IBKR Flex non configuré.")
+        status = 429 if res.get("kind") == "rate_limit" else 502
+        raise HTTPException(status, reason or "Échec de la synchronisation IBKR.")
+    return HoldingsImportConfirmResponse(
+        created=res.get("created", 0), updated=res.get("updated", 0), skipped=0,
+    )
+
+
+@router.get("/ibkr/dividends-probe")
+async def ibkr_dividends_probe(
+    query_id: str = Query("1554450"),
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """PROTOTYPE / read-only: fetch an IBKR dividend Flex query and compare the
+    actual dividends it reports against the current yfinance estimates. Writes
+    nothing and does not touch the dividend cache — purely for assessment."""
+    from services.ibkr_flex import fetch_flex_statement, parse_dividends, get_setting, FlexError
+    from models import DividendCache
+
+    token = await get_setting(db, pid, "ibkr_flex_token")
+    if not token:
+        raise HTTPException(400, "Jeton IBKR Flex non configuré.")
+    try:
+        xml = await fetch_flex_statement(token, query_id)
+        parsed = parse_dividends(xml)
+    except FlexError as e:
+        status = 429 if e.kind == "rate_limit" else (400 if e.kind == "config" else 502)
+        raise HTTPException(status, str(e))
+
+    # IBKR actual: realised cash dividends summed per symbol over the statement period.
+    by_ticker_actual: dict[str, dict] = {}
+    dates: list[str] = []
+    for ev in parsed["events"]:
+        sym = (ev.get("symbol") or ev.get("isin") or "?").upper()
+        slot = by_ticker_actual.setdefault(sym, {"gross": 0.0, "tax": 0.0, "net": 0.0, "currency": ev.get("currency"), "count": 0})
+        amt = ev.get("amount") or 0.0
+        if "Withholding" in (ev.get("type") or ""):
+            slot["tax"] += amt          # tax amounts are negative in IBKR
+        else:
+            slot["gross"] += amt
+        slot["net"] += amt
+        slot["count"] += 1
+        if ev.get("date"):
+            dates.append(ev["date"])
+
+    period = {"from": min(dates), "to": max(dates)} if dates else None
+    span_days = None
+    if period:
+        try:
+            span_days = (datetime.fromisoformat(period["to"]) - datetime.fromisoformat(period["from"])).days or 1
+        except ValueError:
+            span_days = None
+
+    # yfinance estimate: annual_rate * quantity from dividend_cache, per held ticker.
+    holdings = (await db.execute(select(Holding).where(Holding.profile_id == pid))).scalars().all()
+    comparison = []
+    for h in holdings:
+        tkey = h.ticker.upper()
+        div = (await db.execute(select(DividendCache).where(DividendCache.ticker == tkey))).scalar_one_or_none()
+        yf_est = round((div.annual_rate or 0) * h.quantity, 2) if div and div.annual_rate else None
+        actual = by_ticker_actual.get(tkey) or (by_ticker_actual.get((h.isin or "").upper()) if h.isin else None)
+        ibkr_net = round(actual["net"], 2) if actual else None
+        ibkr_annualised = None
+        if actual and span_days and span_days > 0:
+            ibkr_annualised = round(actual["net"] * 365 / span_days, 2)
+        comparison.append({
+            "ticker": h.ticker,
+            "isin": h.isin,
+            "yf_est_annual": yf_est,
+            "ibkr_paid_period": ibkr_net,
+            "ibkr_annualised": ibkr_annualised,
+            "ibkr_currency": actual["currency"] if actual else None,
+            "ibkr_payments": actual["count"] if actual else 0,
+        })
+
+    return {
+        "query_id": query_id,
+        "sections": parsed["sections"],
+        "period": period,
+        "event_count": len(parsed["events"]),
+        "accrual_count": len(parsed["accruals"]),
+        "events": parsed["events"],
+        "accruals": parsed["accruals"],
+        "by_ticker_actual": by_ticker_actual,
+        "comparison": comparison,
+    }
 
 
 # ── Investment accounts (enhanced with holdings) ──────────────────────────────

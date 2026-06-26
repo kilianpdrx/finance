@@ -10,19 +10,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { NetworthArea } from "@/components/charts/networth-area";
 import { AccountDialog, ACCOUNT_TYPE_LABELS } from "@/components/accounts/account-dialog";
 import { SnapshotDialog } from "@/components/accounts/snapshot-dialog";
-import { useAccounts, useNetWorth, useAccountMutations, type Account, type NetWorthPoint } from "@/lib/api/hooks";
+import { useAccounts, useNetWorth, useAccountMutations, type Account } from "@/lib/api/hooks";
+import { balancesFromNetWorth } from "@/lib/networth";
 import { formatCents } from "@/lib/format";
-
-function balancesFromNetWorth(nw: NetWorthPoint[], accounts: Account[]): Record<number, number> {
-  if (!nw.length) return {};
-  const last = nw[nw.length - 1];
-  const map: Record<number, number> = {};
-  for (const a of accounts) {
-    const v = (last[`${a.name}_native`] ?? last[a.name]) as number | undefined;
-    if (typeof v === "number") map[a.id] = v;
-  }
-  return map;
-}
 
 export default function ComptesPage() {
   const { data: accounts = [], isLoading } = useAccounts();

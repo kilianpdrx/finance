@@ -6,6 +6,7 @@ import { RulesTab } from "@/components/settings/rules-tab";
 import { MlTab } from "@/components/settings/ml-tab";
 import { ProfilesTab } from "@/components/settings/profiles-tab";
 import { GeneralTab } from "@/components/settings/general-tab";
+import { IbkrTab } from "@/components/settings/ibkr-tab";
 import { useAccounts } from "@/lib/api/hooks";
 
 export default function ParametresPage() {
@@ -18,12 +19,14 @@ export default function ParametresPage() {
         <TabsTrigger value="rules">Règles</TabsTrigger>
         <TabsTrigger value="ml">Modèle ML</TabsTrigger>
         <TabsTrigger value="profiles">Profils bancaires</TabsTrigger>
+        <TabsTrigger value="ibkr">IBKR</TabsTrigger>
       </TabsList>
       <TabsContent value="general"><GeneralTab /></TabsContent>
       <TabsContent value="categories"><CategoriesTab /></TabsContent>
       <TabsContent value="rules"><RulesTab accounts={accounts} /></TabsContent>
       <TabsContent value="ml"><MlTab /></TabsContent>
       <TabsContent value="profiles"><ProfilesTab /></TabsContent>
+      <TabsContent value="ibkr"><IbkrTab /></TabsContent>
     </Tabs>
   );
 }

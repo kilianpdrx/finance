@@ -13,6 +13,22 @@ MODE="${MODE:-dev}"
 
 echo "=== Finance Dashboard (UI=$UI, MODE=$MODE) ==="
 
+# Free a TCP port by killing whatever is already listening on it.
+free_port() {
+  local port="$1"
+  local pids
+  pids=$(lsof -ti "tcp:$port" 2>/dev/null || true)
+  if [ -n "$pids" ]; then
+    echo "Port $port in use — stopping existing process(es): $pids"
+    kill $pids 2>/dev/null || true
+    sleep 1
+    pids=$(lsof -ti "tcp:$port" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+      kill -9 $pids 2>/dev/null || true
+    fi
+  fi
+}
+
 # Activate conda env if available
 if command -v conda &>/dev/null; then
   source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -34,6 +50,10 @@ fi
 # Install frontend deps
 echo "Installing frontend dependencies ($UI_DIR)..."
 cd "$UI_DIR" && npm install --silent && cd "$ROOT"
+
+# Free the ports before launching (avoids EADDRINUSE from a previous run)
+free_port 8000
+free_port "$UI_PORT"
 
 # Start backend
 if [ "$MODE" = "prod" ]; then
