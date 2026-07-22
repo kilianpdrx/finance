@@ -10,7 +10,7 @@ from models import Transaction, BankProfile, Account, ImportBatch
 from schemas import DetectResponse, ConfirmResponse, BankProfileOut, BankProfileCreate
 from services.bank_detector import detect_bank
 from services.csv_parser import parse_csv
-from services.categorizer import categorize
+from services.categorizer import categorize, categorize_batch
 from services.transfer_detector import detect_internal_transfers
 from utils import generate_import_hash
 
@@ -195,6 +195,15 @@ async def parse_preview(
     cats_result = await db.execute(select(CatModel).where(CatModel.profile_id == pid))
     cat_map = {c.id: {"name": c.name, "color": c.color} for c in cats_result.scalars()}
 
+    # Batch categorize uncategorized transactions to avoid N+1 queries
+    uncat_txns = []
+    for t, h in zip(transactions, hashes):
+        if t.category_id is None and h not in existing_hashes:
+            uncat_txns.append(t.model_dump())
+
+    categorized_pairs = await categorize_batch(uncat_txns, db, pid)
+    cat_iter = iter(categorized_pairs)
+
     result_rows = []
     seen_hashes: set = set()  # Track intra-file duplicates
     for t, h in zip(transactions, hashes):
@@ -203,7 +212,7 @@ async def parse_preview(
         cat_id = t.category_id
         cat_source = None
         if cat_id is None and not is_duplicate:
-            cat_id, cat_source = await categorize(t.model_dump(), db, pid)
+            cat_id, cat_source = next(cat_iter, (None, None))
         result_rows.append({
             "date": str(t.date),
             "description": t.description,
@@ -216,6 +225,7 @@ async def parse_preview(
             "is_duplicate": is_duplicate,
             "categorization_source": cat_source,
         })
+
 
     return {
         "transactions": result_rows,
@@ -338,6 +348,17 @@ async def confirm(
     import hashlib as _hl
     import time as _time
 
+    # Pre-categorize all uncategorized items in batch
+    uncat_txns = []
+    for t, h in zip(transactions, hashes):
+        if (h not in existing_hashes or h in force_hashes) and h not in overrides and t.category_id is None:
+            txn_dict = t.model_dump()
+            txn_dict['account_id'] = account_id
+            uncat_txns.append(txn_dict)
+
+    categorized_pairs = await categorize_batch(uncat_txns, db, pid)
+    cat_iter = iter(categorized_pairs)
+
     for t, h in zip(transactions, hashes):
         is_forced_dup = h in existing_hashes and h in force_hashes
         if h in existing_hashes and h not in force_hashes:
@@ -347,11 +368,11 @@ async def confirm(
         if h in overrides:
             cat_id = overrides[h]
         elif t.category_id is None:
-            txn_dict = t.model_dump()
-            txn_dict['account_id'] = account_id
-            cat_id, _ = await categorize(txn_dict, db, pid)
+            cat_tuple = next(cat_iter, (None, None))
+            cat_id = cat_tuple[0]
         else:
             cat_id = t.category_id
+
 
         # For force-imported duplicates, generate a unique hash
         final_hash = h

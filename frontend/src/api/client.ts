@@ -301,16 +301,6 @@ export const analytics = {
   },
 }
 
-// ── ML ────────────────────────────────────────────────────────────────────────
-
-export const ml = {
-  status: () => fetchJSON<MLStatus>(`${BASE}/ml/status`),
-  train: () => fetchJSON<{ accuracy: number; sample_count: number }>(`${BASE}/ml/train`, { method: 'POST' }),
-  suggestRules: (topN = 5) =>
-    fetchJSON<Array<{category_id: number, conditions: Array<{field: string, operator: string, value: string}>, priority: number, logic_operator: string}>>(
-      `${BASE}/ml/suggest-rules?top_n=${topN}`
-    ),
-}
 
 // ── Bank Profiles ──────────────────────────────────────────────────────────────
 

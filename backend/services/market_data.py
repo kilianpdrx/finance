@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
@@ -48,11 +48,24 @@ async def _fetch_stock_prices(tickers: list[str]) -> dict[str, tuple[float, str]
                 else:
                     close = data["Close"][ticker].iloc[-1]
                 if close and close == close:  # NaN check
-                    info = yf.Ticker(ticker).fast_info
-                    currency = getattr(info, "currency", "USD") or "USD"
+                    t_upper = ticker.upper()
+                    if t_upper.endswith((".PA", ".DE", ".AS", ".MI", ".MC", ".BR", ".F", ".LS")):
+                        currency = "EUR"
+                    elif t_upper.endswith((".SW", ".VX")):
+                        currency = "CHF"
+                    elif t_upper.endswith(".L"):
+                        currency = "GBP"
+                    else:
+                        currency = "USD"
+                        try:
+                            info = yf.Ticker(ticker).fast_info
+                            currency = getattr(info, "currency", "USD") or "USD"
+                        except Exception:
+                            pass
                     result[ticker] = (float(close), currency.upper())
             except Exception as e:
                 logger.warning("yfinance price extraction failed for %s: %s", ticker, e)
+
         return result
 
     try:
@@ -124,6 +137,7 @@ async def _fetch_dividend_details(tickers: list[str]) -> dict[str, dict]:
     def _sync_fetch():
         import yfinance as yf
         result = {}
+        blocked = 0
         for ticker in tickers:
             try:
                 t = yf.Ticker(ticker)
@@ -200,7 +214,19 @@ async def _fetch_dividend_details(tickers: list[str]) -> dict[str, dict]:
                     "history": history,
                 }
             except Exception as e:
-                logger.warning("yfinance dividend fetch failed for %s: %s", ticker, e)
+                # Yahoo throttling shows up as "Invalid Crumb" / "unable to access" /
+                # a NoneType error from inside `.info`. Collapse those into one summary
+                # line instead of a noisy per-ticker stack of warnings.
+                msg = str(e)
+                if "Crumb" in msg or "unable to access" in msg or "NoneType" in msg:
+                    blocked += 1
+                else:
+                    logger.warning("yfinance dividend fetch failed for %s: %s", ticker, e)
+        if blocked:
+            logger.warning(
+                "Yahoo blocked dividend lookups for %d/%d ticker(s) (rate limit / auth) — keeping cached values.",
+                blocked, len(tickers),
+            )
         return result
 
     try:
@@ -496,10 +522,32 @@ async def refresh_all_prices(db: AsyncSession) -> int:
         logger.info("Applied broker reference price for %d holding(s) without a trusted live quote.", fallback)
 
     # ── Dividend data ────────────────────────────────────────────────────────
+    # Dividend metadata comes from yfinance's `.info` endpoint, which Yahoo throttles
+    # hard (HTTP 401 "Invalid Crumb"). It also changes rarely (quarterly at most), so
+    # only refresh tickers whose cached data is missing or older than the TTL — this
+    # keeps the 15-min price tick from hammering `.info` every cycle.
     div_count = 0
     hist_count = 0
+    DIVIDEND_TTL = timedelta(hours=20)
     if stock_tickers:
-        div_data = await _fetch_dividend_details(stock_tickers)
+        fresh_rows = await db.execute(text(
+            "SELECT ticker, fetched_at FROM dividend_cache"
+        ))
+        fresh_at = {r[0]: r[1] for r in fresh_rows}
+        stale_tickers = []
+        for t in stock_tickers:
+            ts = fresh_at.get(t)
+            if not ts:
+                stale_tickers.append(t)
+                continue
+            try:
+                last = ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts))
+                if now - last >= DIVIDEND_TTL:
+                    stale_tickers.append(t)
+            except (ValueError, TypeError):
+                stale_tickers.append(t)
+
+        div_data = await _fetch_dividend_details(stale_tickers) if stale_tickers else {}
         for ticker, info in div_data.items():
             ex_date_str = str(info["ex_date"]) if info.get("ex_date") else None
             last_div_date_str = str(info["last_dividend_date"]) if info.get("last_dividend_date") else None

@@ -453,7 +453,6 @@ function ImportReviewStep({
       <div className="flex gap-4 text-xs text-gray-500 dark:text-gray-400">
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-200 dark:bg-amber-900/40" /> Non catégorisée</span>
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-green-200 dark:bg-green-900/40" /> Règle automatique</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-purple-200 dark:bg-purple-900/40" /> Modèle ML</span>
       </div>
 
       {/* Table */}
@@ -485,8 +484,6 @@ function ImportReviewStep({
                       ? 'bg-amber-50/50 dark:bg-amber-900/10'
                       : txn.categorization_source === 'rule'
                       ? 'bg-green-50/50 dark:bg-green-900/10'
-                      : txn.categorization_source === 'ml'
-                      ? 'bg-purple-50/50 dark:bg-purple-900/10'
                       : ''
                   }`}>
                     <td className="px-4 py-2 text-gray-600 dark:text-gray-400 text-xs whitespace-nowrap">{txn.date}</td>

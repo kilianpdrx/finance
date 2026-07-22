@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "./client";
 import type { components } from "./schema";
 import { useDateRangeStore, useSelectedAccountsStore } from "../stores";
@@ -169,6 +169,29 @@ export function useByCategory(query: AnalyticsQuery) {
 export function useNetWorth(query: AnalyticsQuery) {
   return useQuery({ queryKey: ["analytics", "net-worth", query], queryFn: () => unwrap(api.GET("/api/analytics/net-worth", { params: { query } })) as Promise<NetWorthPoint[]> });
 }
+
+/** By-category breakdown fetched once per account (for the per-account donut row).
+ *  Reuses the existing /by-category endpoint; one parallel query per account id. */
+export function useByCategoryPerAccount(query: AnalyticsQuery, accountIds: number[]) {
+  const results = useQueries({
+    queries: accountIds.map((id) => ({
+      queryKey: ["analytics", "by-category", { ...query, account_ids: String(id) }],
+      queryFn: () => unwrap(api.GET("/api/analytics/by-category", { params: { query: { ...query, account_ids: String(id) } } })) as Promise<CategoryBreakdown[]>,
+    })),
+  });
+  return accountIds.map((id, i) => ({ accountId: id, data: results[i]?.data ?? [], isLoading: results[i]?.isLoading ?? false }));
+}
+
+/** Cash-flow fetched once per account (for the per-account flux charts). */
+export function useCashFlowPerAccount(query: AnalyticsQuery, accountIds: number[]) {
+  const results = useQueries({
+    queries: accountIds.map((id) => ({
+      queryKey: ["analytics", "cash-flow", { ...query, account_ids: String(id) }],
+      queryFn: () => unwrap(api.GET("/api/analytics/cash-flow", { params: { query: { ...query, account_ids: String(id) } } })) as Promise<CashFlowMonth[]>,
+    })),
+  });
+  return accountIds.map((id, i) => ({ accountId: id, data: results[i]?.data ?? [], isLoading: results[i]?.isLoading ?? false }));
+}
 export function useSpendingTrends(query: AnalyticsQuery) {
   return useQuery({ queryKey: ["analytics", "spending-trends", query], queryFn: () => unwrap(api.GET("/api/analytics/spending-trends", { params: { query } })) as Promise<SpendingTrend[]> });
 }
@@ -194,10 +217,8 @@ export function useImportBatches() {
 export function useAllRules() {
   return useQuery({ queryKey: ["rules"], queryFn: () => unwrap(api.GET("/api/categories/rules/all")) });
 }
-export function useMlStatus() {
-  return useQuery({ queryKey: ["ml", "status"], queryFn: () => unwrap(api.GET("/api/ml/status")) });
-}
 export function useBankProfiles() {
+
   return useQuery({ queryKey: ["bank-profiles"], queryFn: () => unwrap(api.GET("/api/bank-profiles")) });
 }
 export function useSnapshots(accountId: number | null) {
@@ -309,12 +330,6 @@ export function useRuleMutations() {
   };
 }
 
-export function useMlMutations() {
-  const invalidate = useInvalidate();
-  return {
-    train: useMutation({ mutationFn: () => unwrap(api.POST("/api/ml/train")), onSuccess: () => invalidate("ml") }),
-  };
-}
 
 export function useSnapshotMutations() {
   const invalidate = useInvalidate();

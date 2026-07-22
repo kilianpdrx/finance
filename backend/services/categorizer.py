@@ -84,9 +84,15 @@ def evaluate_conditions(txn_data: dict, conditions: List[dict], logic_operator: 
     return all(results) if logic_operator != "OR" else any(results)
 
 
-async def categorize(txn_data: dict, db: AsyncSession, profile_id: Optional[int] = None) -> tuple[Optional[int], Optional[str]]:
-    """Return (category_id, source) for the given transaction dictionary.
-    source is 'rule', 'ml', or None. Rules + ML model are scoped to the profile."""
+async def categorize_batch(
+    txns_data: List[dict],
+    db: AsyncSession,
+    profile_id: Optional[int] = None,
+) -> List[tuple[Optional[int], Optional[str]]]:
+    """Categorize a list of transactions efficiently by querying active rules once."""
+    if not txns_data:
+        return []
+
     conds = [CategoryRule.is_active == True]
     if profile_id is not None:
         conds.append(CategoryRule.profile_id == profile_id)
@@ -97,25 +103,39 @@ async def categorize(txn_data: dict, db: AsyncSession, profile_id: Optional[int]
     )
     rules = result.scalars().all()
 
-    for rule in rules:
-        if not rule.conditions:
-            continue
+    out = []
+    for txn_data in txns_data:
+        matched_category = None
+        matched_source = None
+        for rule in rules:
+            if not rule.conditions:
+                continue
+            if rule.account_id is not None and str(rule.account_id) != str(txn_data.get('account_id', '')):
+                continue
 
-        # Skip rules scoped to a different account
-        if rule.account_id is not None and str(rule.account_id) != str(txn_data.get('account_id', '')):
-            continue
+            logic_op = getattr(rule, 'logic_operator', 'AND') or 'AND'
+            if evaluate_conditions(txn_data, rule.conditions, logic_op):
+                matched_category = rule.category_id
+                matched_source = "rule"
+                break
 
-        logic_op = getattr(rule, 'logic_operator', 'AND') or 'AND'
-        if evaluate_conditions(txn_data, rule.conditions, logic_op):
-            return rule.category_id, "rule"
+        if matched_category is None:
+            try:
+                from services.ml_trainer import predict
+                cat_id = predict(str(txn_data.get('description', '')), profile_id)
+                if cat_id is not None:
+                    matched_category = cat_id
+                    matched_source = "ml"
+            except Exception:
+                pass
 
-    # ML fallback (per-profile model)
-    try:
-        from services.ml_trainer import predict
-        cat_id = predict(str(txn_data.get('description', '')), profile_id)
-        if cat_id is not None:
-            return cat_id, "ml"
-    except Exception:
-        pass
+        out.append((matched_category, matched_source))
 
-    return None, None
+    return out
+
+
+async def categorize(txn_data: dict, db: AsyncSession, profile_id: Optional[int] = None) -> tuple[Optional[int], Optional[str]]:
+    """Return (category_id, source) for the given transaction dictionary."""
+    results = await categorize_batch([txn_data], db, profile_id)
+    return results[0] if results else (None, None)
+

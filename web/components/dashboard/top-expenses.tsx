@@ -5,7 +5,7 @@ import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
 import { Inbox } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useTransactions, type AnalyticsQuery, type Transaction } from "@/lib/api/hooks";
+import { useTransactions, useCategories, type AnalyticsQuery, type Transaction } from "@/lib/api/hooks";
 import { formatCents } from "@/lib/format";
 
 /** Top 10 biggest expenses (debits, internal transfers excluded) for the period. */
@@ -17,6 +17,9 @@ export function TopExpenses({ query, currency }: { query: AnalyticsQuery; curren
     is_internal_transfer: false,
     limit: 1000,
   });
+  const { data: categories = [] } = useCategories();
+  const catName = (id: number | null | undefined) =>
+    id == null ? "Non catégorisé" : categories.find((c) => c.id === id)?.name ?? "Non catégorisé";
 
   const top = useMemo(
     () => [...(data as Transaction[])].sort((a, b) => b.amount_cents - a.amount_cents).slice(0, 10),
@@ -36,7 +39,9 @@ export function TopExpenses({ query, currency }: { query: AnalyticsQuery; curren
           </span>
           <div className="min-w-0 flex-1">
             <p className="line-clamp-1 text-sm">{t.description}</p>
-            {t.account_name && <p className="truncate text-xs text-muted-foreground">{t.account_name}</p>}
+            <p className="truncate text-xs text-muted-foreground">
+              {catName(t.category_id)}{t.account_name ? ` · ${t.account_name}` : ""}
+            </p>
           </div>
           <span className="nums blurable shrink-0 text-sm font-semibold text-negative">
             −{formatCents(t.amount_cents, t.currency)}

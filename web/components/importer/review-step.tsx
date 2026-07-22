@@ -123,7 +123,8 @@ export function ReviewStep({
                 const cid = catId(t);
                 const uncat = cid === null;
                 return (
-                  <tr key={t.import_hash} className={cn("border-t border-border", uncat ? "bg-warning/8" : t.categorization_source === "rule" ? "bg-positive/6" : t.categorization_source === "ml" ? "bg-info/6" : "")}>
+                  <tr key={t.import_hash} className={cn("border-t border-border", uncat ? "bg-warning/8" : t.categorization_source === "rule" ? "bg-positive/6" : "")}>
+
                     <td className="nums whitespace-nowrap px-4 py-2 text-xs text-muted-foreground">{t.date}</td>
                     <td className="max-w-xs px-4 py-2 text-xs"><span className="block truncate" title={t.description}>{t.description}</span></td>
                     <td className={cn("nums whitespace-nowrap px-4 py-2 text-right text-xs font-medium", t.is_debit ? "text-negative" : "text-positive")}>{money(t.amount_cents, t.is_debit)}</td>

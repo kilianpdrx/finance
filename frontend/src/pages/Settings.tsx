@@ -1,16 +1,17 @@
 import { useEffect, useState, useMemo } from 'react'
-import { categories as catApi, ml, bankProfiles as bankProfilesApi, accounts as accApi } from '../api/client'
+import { categories as catApi, bankProfiles as bankProfilesApi, accounts as accApi } from '../api/client'
 import { useAccountsStore } from '../store'
-import type { Category, CategoryRule, MLStatus, BankProfile, Account, Transaction } from '../types'
+import type { Category, CategoryRule, BankProfile, Account, Transaction } from '../types'
 
-type Tab = 'categories' | 'regles' | 'banques' | 'modele'
+
+type Tab = 'categories' | 'regles' | 'banques'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'categories', label: 'Catégories' },
   { id: 'regles', label: 'Règles' },
   { id: 'banques', label: 'Profils bancaires' },
-  { id: 'modele', label: 'Modèle ML' },
 ]
+
 
 export default function Settings() {
   const [tab, setTab] = useState<Tab>('categories')
@@ -45,7 +46,7 @@ export default function Settings() {
       {tab === 'categories' && <CategoriesTab accounts={accounts} />}
       {tab === 'regles' && <ReglesTab accounts={accounts} />}
       {tab === 'banques' && <BankProfilesTab />}
-      {tab === 'modele' && <ModeleTab />}
+
     </div>
   )
 }
@@ -1083,177 +1084,4 @@ function BankProfilesTab() {
 }
 
 
-// ── ML tab ────────────────────────────────────────────────────────────────────
 
-function ModeleTab() {
-  const [status, setStatus] = useState<MLStatus | null>(null)
-  const [training, setTraining] = useState(false)
-  const [result, setResult] = useState<{ accuracy: number; sample_count: number } | null>(null)
-  const [error, setError] = useState('')
-  const [suggestions, setSuggestions] = useState<Array<{category_id: number, conditions: Array<{field: string, operator: string, value: string}>, priority: number, logic_operator: string}>>([])
-  const [suggestLoading, setSuggestLoading] = useState(false)
-  const [cats, setCats] = useState<Category[]>([])
-
-  useEffect(() => {
-    ml.status().then(setStatus).catch(console.error)
-    catApi.list().then(setCats).catch(console.error)
-  }, [])
-
-  const catMap = useMemo(() => Object.fromEntries(cats.map(c => [c.id, c])), [cats])
-
-  const handleTrain = async () => {
-    setTraining(true)
-    setError('')
-    setResult(null)
-    try {
-      const res = await ml.train()
-      setResult(res)
-      setStatus(await ml.status())
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Erreur d\'entraînement')
-    } finally {
-      setTraining(false)
-    }
-  }
-
-  const handleSuggest = async () => {
-    setSuggestLoading(true)
-    setError('')
-    try {
-      const res = await ml.suggestRules()
-      setSuggestions(res)
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Impossible de générer des suggestions')
-    } finally {
-      setSuggestLoading(false)
-    }
-  }
-
-  const handleAcceptSuggestion = async (suggestion: typeof suggestions[0]) => {
-    try {
-      await catApi.createRule(suggestion.category_id, {
-        conditions: suggestion.conditions,
-        category_id: suggestion.category_id,
-        priority: suggestion.priority,
-        is_active: true,
-        account_id: null,
-        logic_operator: suggestion.logic_operator as 'AND' | 'OR',
-      })
-      setSuggestions(prev => prev.filter(s => s !== suggestion))
-    } catch (e) {
-      console.error('Failed to create rule from suggestion:', e)
-    }
-  }
-
-  return (
-    <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 p-6 space-y-5">
-      <h3 className="font-semibold text-gray-900 dark:text-white">Modèle de catégorisation automatique</h3>
-
-      {status && (
-        <div className="space-y-2 text-sm max-w-lg">
-          <div className="flex justify-between">
-            <span className="text-gray-500">Statut</span>
-            <span className={status.trained ? 'text-green-500 font-medium' : 'text-gray-400'}>
-              {status.trained ? 'Entraîné' : 'Non entraîné'}
-            </span>
-          </div>
-          {status.last_trained && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Dernière mise à jour</span>
-              <span className="text-gray-700 dark:text-gray-300">
-                {new Date(status.last_trained).toLocaleString('fr-FR')}
-              </span>
-            </div>
-          )}
-          {status.sample_count !== null && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Échantillons</span>
-              <span className="text-gray-700 dark:text-gray-300">{status.sample_count}</span>
-            </div>
-          )}
-          {status.accuracy !== null && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Précision</span>
-              <span className="font-medium text-emerald-600 dark:text-emerald-400">
-                {(status.accuracy * 100).toFixed(1)}%
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {result && (
-        <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg text-sm text-green-700 dark:text-green-400">
-          Modèle entraîné avec succès — précision: {(result.accuracy * 100).toFixed(1)}% sur {result.sample_count} échantillons
-        </div>
-      )}
-
-      {error && (
-        <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-lg text-sm text-red-700 dark:text-red-400">
-          {error}
-        </div>
-      )}
-
-      <p className="text-sm text-gray-500 max-w-lg">
-        Le modèle apprend à partir de vos transactions catégorisées pour suggérer automatiquement des catégories lors de futurs imports. Il nécessite au minimum 10 transactions catégorisées.
-      </p>
-
-      <div className="flex gap-3 max-w-lg">
-        <button
-          onClick={handleTrain}
-          disabled={training}
-          className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
-        >
-          {training ? 'Entraînement en cours…' : 'Réentraîner le modèle'}
-        </button>
-        {status?.trained && (
-          <button
-            onClick={handleSuggest}
-            disabled={suggestLoading}
-            className="flex-1 py-2.5 border border-emerald-400 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-50 rounded-lg font-medium transition-colors"
-          >
-            {suggestLoading ? 'Analyse…' : 'Suggérer des règles'}
-          </button>
-        )}
-      </div>
-
-      {/* Suggestions */}
-      {suggestions.length > 0 && (
-        <div className="border-t border-gray-200 dark:border-slate-600 pt-4 space-y-3">
-          <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Règles suggérées ({suggestions.length})
-          </h4>
-          <div className="space-y-2">
-            {suggestions.map((s, idx) => (
-              <div key={idx} className="p-3 bg-gray-50 dark:bg-slate-800 rounded-lg flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded">
-                      {catMap[s.category_id]?.name ?? `#${s.category_id}`}
-                    </span>
-                    <span className="text-xs text-gray-400">
-                      {s.logic_operator === 'OR' ? 'OU' : 'ET'}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {s.conditions.map((c, ci) => (
-                      <span key={ci} className="text-xs font-mono bg-white dark:bg-slate-900 px-2 py-0.5 rounded text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-slate-600">
-                        {c.field} {c.operator} "{c.value}"
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleAcceptSuggestion(s)}
-                  className="text-xs px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded font-medium flex-shrink-0"
-                >
-                  Accepter
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}

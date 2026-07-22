@@ -4,9 +4,8 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type R
 import { useQueries } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
 import { api, unwrap } from "@/lib/api/client";
-import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CourantTabs, type CourantSelection } from "@/components/analytics/courant-tabs";
 import { useAccounts, useBudgetMutation, type BudgetFullResponse } from "@/lib/api/hooks";
 import { buildMonths, cellDisplayValue, mergeYears, yearOf, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
 import { formatCents, formatMonthLabel, deriveCurrency } from "@/lib/format";
@@ -14,8 +13,6 @@ import { formatCents, formatMonthLabel, deriveCurrency } from "@/lib/format";
 // Column geometry (must match the Tailwind widths used in the table).
 const COL_W = 96; // month cell  = w-24
 const STEP = 12; // months added per lazy extension
-
-const ALL = "__all__";
 
 // Total-row bands use OPAQUE backgrounds (bg-muted) so the sticky TOTAL/label
 // columns don't let the horizontally-scrolled month cells bleed through.
@@ -30,8 +27,8 @@ export default function BudgetPage() {
   const courant = useMemo(() => accounts.filter((a) => a.account_type === "courant"), [accounts]);
   const courantIds = courant.map((a) => a.id);
   const courantKey = courantIds.join(",");
-  const [accountSel, setAccountSel] = useState(ALL);
-  const accountId = accountSel === ALL ? undefined : Number(accountSel);
+  const [accountSel, setAccountSel] = useState<CourantSelection>("all");
+  const accountId = accountSel === "all" ? undefined : accountSel;
   const budgetMut = useBudgetMutation();
 
   const today = new Date();
@@ -215,13 +212,7 @@ export default function BudgetPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">Double-cliquez sur une cellule pour saisir un ajustement manuel. Faites défiler horizontalement, année après année.</p>
         <div className="flex items-center gap-3">
-          <Select value={accountSel} onValueChange={setAccountSel}>
-            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>Tous les comptes</SelectItem>
-              {courant.map((a) => <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <CourantTabs accounts={accounts} value={accountSel} onChange={setAccountSel} />
           <span className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground">
             <Pencil className="size-3 text-warning" /> = ajustement manuel
           </span>

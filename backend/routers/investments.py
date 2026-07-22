@@ -1,10 +1,10 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
-from sqlalchemy import select, and_, delete, text
+from sqlalchemy import select, and_, delete, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
-from models import Account, AccountType, AccountBalanceSnapshot, Holding, PriceCache, BankProfile
+from models import Account, AccountType, AccountBalanceSnapshot, Holding, PriceCache, BankProfile, DividendCache, IsinTicker
 from schemas import (
     HoldingCreate, HoldingUpdate, HoldingOut,
     HoldingsImportPreviewResponse, ParsedHoldingPreview,
@@ -24,139 +24,173 @@ from datetime import date, datetime
 router = APIRouter()
 
 
+async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], account_currency: str = "EUR") -> list[dict]:
+    """Bulk enrich holdings with ISIN mappings, cached prices, and cached dividends in 3 queries."""
+    if not holdings:
+        return []
+
+    tickers = [h.ticker for h in holdings]
+    tickers_upper = [t.upper() for t in tickers]
+    lookup_tickers = [h.ticker.lower() if h.asset_type == "crypto" else h.ticker.upper() for h in holdings]
+
+    # 1. Bulk ISIN reverse lookups
+    from models import IsinTicker
+    isin_rows = (await db.execute(
+        select(IsinTicker.isin, IsinTicker.ticker)
+        .where(func.upper(IsinTicker.ticker).in_(tickers_upper))
+        .order_by(IsinTicker.updated_at.desc())
+    )).all()
+    isin_map: dict[str, str] = {}
+    for isin_val, ticker_val in isin_rows:
+        t_upper = ticker_val.upper()
+        if t_upper not in isin_map:
+            isin_map[t_upper] = isin_val
+
+    # 2. Bulk PriceCache lookups
+    prices_rows = (await db.execute(
+        select(PriceCache).where(PriceCache.ticker.in_(lookup_tickers))
+    )).scalars().all()
+    price_map: dict[str, PriceCache] = {p.ticker: p for p in prices_rows}
+
+    # 3. Bulk DividendCache lookups
+    div_rows = (await db.execute(
+        select(DividendCache).where(DividendCache.ticker.in_(tickers_upper))
+    )).scalars().all()
+    div_map: dict[str, DividendCache] = {d.ticker: d for d in div_rows}
+
+    out_list = []
+    today = date.today()
+
+    for h in holdings:
+        eff_isin = h.isin or isin_map.get(h.ticker.upper())
+        out = {
+            "id": h.id,
+            "account_id": h.account_id,
+            "ticker": h.ticker,
+            "isin": eff_isin,
+            "name": h.name,
+            "quantity": h.quantity,
+            "cost_basis_cents": h.cost_basis_cents,
+            "currency": h.currency,
+            "asset_type": h.asset_type,
+            "added_date": str(h.added_date) if h.added_date else None,
+            "notes": h.notes,
+            "price_locked": bool(h.price_locked),
+            "current_price_cents": None,
+            "current_value_cents": None,
+            "gain_cents": None,
+            "gain_pct": None,
+            "price_currency": h.currency,
+            "price_fetched_at": None,
+            "value_in_account_ccy_cents": None,
+            "price_status": "missing",
+            # Dividend fields
+            "dividend_yield": None,
+            "yield_on_cost": None,
+            "est_annual_income_cents": None,
+            "ex_dividend_date": None,
+            "payout_ratio": None,
+            "dividend_growth_rate": None,
+            "frequency": None,
+            "sector": None,
+            "industry": None,
+            "dividend_date": None,
+        }
+
+        lookup_ticker = h.ticker.lower() if h.asset_type == "crypto" else h.ticker.upper()
+        cached = price_map.get(lookup_ticker)
+
+        if not cached:
+            if h.ref_price_cents:
+                out["price_status"] = "fallback"
+                price_cents = h.ref_price_cents
+                out["current_price_cents"] = price_cents
+                out["price_currency"] = h.currency
+                value = round(h.quantity * price_cents)
+                out["current_value_cents"] = value
+                out["gain_cents"] = value - h.cost_basis_cents
+                if h.cost_basis_cents != 0:
+                    out["gain_pct"] = round((value - h.cost_basis_cents) / abs(h.cost_basis_cents) * 100, 2)
+                if h.currency == account_currency:
+                    out["value_in_account_ccy_cents"] = value
+                else:
+                    rate = await get_rate(db, h.currency, account_currency, today)
+                    out["value_in_account_ccy_cents"] = round(value * rate) if rate else value
+            out_list.append(out)
+            continue
+
+        out["price_fetched_at"] = str(cached.fetched_at)
+        cache_source = getattr(cached, "source", "live") or "live"
+
+        if cache_source == "ref":
+            out["price_status"] = "fallback"
+            price_cents = cached.price_cents
+        elif cached.currency == h.currency:
+            price_cents = cached.price_cents
+            out["price_status"] = "ok"
+        else:
+            out["price_status"] = "mismatch"
+            rate = await get_rate(db, cached.currency, h.currency, today)
+            if rate:
+                price_cents = round(cached.price_cents * rate)
+            else:
+                price_cents = cached.price_cents
+
+        out["current_price_cents"] = price_cents
+        out["price_currency"] = h.currency
+
+        value = round(h.quantity * price_cents)
+        out["current_value_cents"] = value
+        out["gain_cents"] = value - h.cost_basis_cents
+        if h.cost_basis_cents != 0:
+            out["gain_pct"] = round((value - h.cost_basis_cents) / abs(h.cost_basis_cents) * 100, 2)
+
+        if h.currency == account_currency:
+            out["value_in_account_ccy_cents"] = value
+        else:
+            rate = await get_rate(db, h.currency, account_currency, today)
+            out["value_in_account_ccy_cents"] = round(value * rate) if rate else value
+
+        # Dividend enrichment
+        lookup_div = h.ticker.upper() if h.asset_type != "crypto" else None
+        if lookup_div:
+            div = div_map.get(lookup_div)
+            if div:
+                out["dividend_yield"] = div.yield_pct
+                out["payout_ratio"] = round(div.payout_ratio * 100, 1) if div.payout_ratio else None
+                out["dividend_growth_rate"] = div.growth_rate_5y
+                out["frequency"] = div.frequency
+                out["sector"] = div.sector
+                out["industry"] = div.industry
+                if div.ex_date:
+                    out["ex_dividend_date"] = str(div.ex_date)
+                if div.dividend_date:
+                    out["dividend_date"] = str(div.dividend_date)
+
+                if div.annual_rate and div.annual_rate > 0:
+                    est_income = div.annual_rate * h.quantity
+                    out["est_annual_income_cents"] = round(est_income * 100)
+
+                    if h.cost_basis_cents and h.cost_basis_cents > 0:
+                        yoc = (est_income / (h.cost_basis_cents / 100)) * 100
+                        out["yield_on_cost"] = round(yoc, 2)
+
+        out_list.append(out)
+
+    return out_list
+
+
 async def _enrich_holding(db: AsyncSession, h: Holding, account_currency: str = "EUR") -> dict:
     """Build HoldingOut dict with live price data from cache."""
-    # ISIN: stored on the holding, or reverse-resolved from the persistent map
-    # (so manually-mapped IBKR positions, e.g. ASML→NL…, prefill in the editor).
-    eff_isin = h.isin or await reverse_lookup_isin(db, h.ticker)
-    out = {
-        "id": h.id,
-        "account_id": h.account_id,
-        "ticker": h.ticker,
-        "isin": eff_isin,
-        "name": h.name,
-        "quantity": h.quantity,
-        "cost_basis_cents": h.cost_basis_cents,
-        "currency": h.currency,
-        "asset_type": h.asset_type,
-        "added_date": str(h.added_date) if h.added_date else None,
-        "notes": h.notes,
-        "price_locked": bool(h.price_locked),
-        "current_price_cents": None,
-        "current_value_cents": None,
-        "gain_cents": None,
-        "gain_pct": None,
-        "price_currency": h.currency,
-        "price_fetched_at": None,
-        "value_in_account_ccy_cents": None,
-        "price_status": "missing",
-        # Dividend fields
-        "dividend_yield": None,
-        "yield_on_cost": None,
-        "est_annual_income_cents": None,
-        "ex_dividend_date": None,
-        "payout_ratio": None,
-        "dividend_growth_rate": None,
-        "frequency": None,
-        "sector": None,
-        "industry": None,
-        "dividend_date": None,
-    }
-    lookup_ticker = h.ticker.lower() if h.asset_type == "crypto" else h.ticker.upper()
-    cached = await get_cached_price(db, lookup_ticker)
-    if not cached:
-        # No live quote — fall back to the broker reference price if we have one.
-        if h.ref_price_cents:
-            out["price_status"] = "fallback"
-            price_cents = h.ref_price_cents
-            out["current_price_cents"] = price_cents
-            out["price_currency"] = h.currency
-            value = round(h.quantity * price_cents)
-            out["current_value_cents"] = value
-            out["gain_cents"] = value - h.cost_basis_cents
-            if h.cost_basis_cents != 0:
-                out["gain_pct"] = round((value - h.cost_basis_cents) / abs(h.cost_basis_cents) * 100, 2)
-            if h.currency == account_currency:
-                out["value_in_account_ccy_cents"] = value
-            else:
-                rate = await get_rate(db, h.currency, account_currency, date.today())
-                out["value_in_account_ccy_cents"] = round(value * rate) if rate else value
-        return out
-
-    out["price_fetched_at"] = str(cached.fetched_at)
-    cache_source = getattr(cached, "source", "live") or "live"
-
-    if cache_source == "ref":
-        # The cached value is the broker fallback, not a live yfinance quote → the
-        # ticker isn't priced by yf (badge the position so the user can fix it).
-        out["price_status"] = "fallback"
-        price_cents = cached.price_cents
-    elif cached.currency == h.currency:
-        price_cents = cached.price_cents
-        out["price_status"] = "ok"
-    else:
-        # Live quote in a different currency than the holding → likely a wrong
-        # instrument (e.g. a EUR ETF priced from its USD listing).
-        out["price_status"] = "mismatch"
-        rate = await get_rate(db, cached.currency, h.currency, date.today())
-        if rate:
-            price_cents = round(cached.price_cents * rate)
-        else:
-            price_cents = cached.price_cents
-
-    out["current_price_cents"] = price_cents
-    out["price_currency"] = h.currency
-
-    value = round(h.quantity * price_cents)
-    out["current_value_cents"] = value
-    out["gain_cents"] = value - h.cost_basis_cents
-    if h.cost_basis_cents != 0:
-        out["gain_pct"] = round((value - h.cost_basis_cents) / abs(h.cost_basis_cents) * 100, 2)
-
-    if h.currency == account_currency:
-        out["value_in_account_ccy_cents"] = value
-    else:
-        rate = await get_rate(db, h.currency, account_currency, date.today())
-        out["value_in_account_ccy_cents"] = round(value * rate) if rate else value
-
-    # ── Dividend enrichment ─────────────────────────────────────────────
-    lookup_div = h.ticker.upper() if h.asset_type != "crypto" else None
-    if lookup_div:
-        div = await get_cached_dividend(db, lookup_div)
-        if div:
-            out["dividend_yield"] = div.yield_pct
-            out["payout_ratio"] = round(div.payout_ratio * 100, 1) if div.payout_ratio else None
-            out["dividend_growth_rate"] = div.growth_rate_5y
-            out["frequency"] = div.frequency
-            out["sector"] = div.sector
-            out["industry"] = div.industry
-            if div.ex_date:
-                out["ex_dividend_date"] = str(div.ex_date)
-            if div.dividend_date:
-                out["dividend_date"] = str(div.dividend_date)
-
-            if div.annual_rate and div.annual_rate > 0:
-                est_income = div.annual_rate * h.quantity
-                out["est_annual_income_cents"] = round(est_income * 100)
-
-                if h.cost_basis_cents and h.cost_basis_cents > 0:
-                    yoc = (est_income / (h.cost_basis_cents / 100)) * 100
-                    out["yield_on_cost"] = round(yoc, 2)
-
-    return out
+    res = await enrich_holdings_batch(db, [h], account_currency)
+    return res[0]
 
 
 async def account_holdings_value_cents(db: AsyncSession, account_id: int, account_ccy: str) -> int:
-    """Current total value of an account's holdings, in the account currency (cents).
-
-    Shared with analytics (net worth / summary) so holdings-priced investment
-    accounts are counted at their live value, not 0. Returns 0 if no holdings."""
+    """Current total value of an account's holdings, in the account currency (cents)."""
     holdings = (await db.execute(select(Holding).where(Holding.account_id == account_id))).scalars().all()
-    total = 0
-    for h in holdings:
-        eh = await _enrich_holding(db, h, account_ccy)
-        total += eh.get("value_in_account_ccy_cents") or 0
-    return total
+    enriched = await enrich_holdings_batch(db, holdings, account_ccy)
+    return sum(eh.get("value_in_account_ccy_cents") or 0 for eh in enriched)
 
 
 # ── Holdings CRUD ─────────────────────────────────────────────────────────────
@@ -169,7 +203,8 @@ async def list_holdings(account_id: int, db: AsyncSession = Depends(get_db), pid
         select(Holding).where(Holding.account_id == account_id, Holding.profile_id == pid)
     )
     holdings = result.scalars().all()
-    return [await _enrich_holding(db, h, acc_ccy) for h in holdings]
+    return await enrich_holdings_batch(db, holdings, acc_ccy)
+
 
 
 @router.post("/accounts/{account_id}/holdings")
@@ -833,7 +868,9 @@ async def investment_accounts(db: AsyncSession = Depends(get_db), pid: int = Dep
             select(Holding).where(Holding.account_id == acc.id, Holding.profile_id == pid)
         )
         holdings = holdings_result.scalars().all()
-        enriched_holdings = [await _enrich_holding(db, h, acc_ccy) for h in holdings]
+        enriched_holdings = await enrich_holdings_batch(db, holdings, acc_ccy)
+
+
         has_holdings = len(holdings) > 0
 
         holdings_value_cents = 0
@@ -955,6 +992,8 @@ async def _holdings_monthly_values(db: AsyncSession, account_id: int, acc_ccy: s
     # Per-holding {date: close} scaled to the account currency.
     histories: list[tuple[float, dict[str, float]]] = []
     for h in holdings:
+        if h.price_locked:
+            continue  # manual-priced (e.g. a fund Yahoo can't fetch) — skip history
         raw = await fetch_historical_prices(h.ticker, "2y")
         if not raw:
             continue
