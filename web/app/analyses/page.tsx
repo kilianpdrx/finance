@@ -112,20 +112,7 @@ export default function AnalysesPage() {
           {trends.isLoading ? <Skeleton className="h-80 w-full rounded-2xl" /> : !trends.data?.length ? (
             <Card><EmptyState icon={Inbox} title="Pas de données" /></Card>
           ) : (
-            <>
-              {globalTrends.length > 0 && (
-                <section className="space-y-2">
-                  <h3 className="text-sm font-semibold text-muted-foreground">Catégories globales</h3>
-                  <CategoryTrendGrid data={globalTrends} currency={currency} accounts={accounts} />
-                </section>
-              )}
-              {specificTrends.length > 0 && (
-                <section className="space-y-2">
-                  <h3 className="text-sm font-semibold text-muted-foreground">Catégories par compte</h3>
-                  <CategoryTrendGrid data={specificTrends} currency={currency} accounts={accounts} />
-                </section>
-              )}
-            </>
+            <CategoryTrendGrid data={trends.data} currency={currency} accounts={accounts} />
           )}
         </TabsContent>
 
@@ -134,20 +121,7 @@ export default function AnalysesPage() {
           {trends.isLoading ? <Skeleton className="h-80 w-full rounded-2xl" /> : !trends.data?.length ? (
             <Card><EmptyState icon={Inbox} title="Pas de données" /></Card>
           ) : (
-            <>
-              {globalTrends.length > 0 && (
-                <section className="space-y-2">
-                  <h3 className="text-sm font-semibold text-muted-foreground">Catégories globales</h3>
-                  <MonthlyDistribution data={globalTrends} currency={currency} />
-                </section>
-              )}
-              {specificTrends.length > 0 && (
-                <section className="space-y-2">
-                  <h3 className="text-sm font-semibold text-muted-foreground">Catégories par compte</h3>
-                  <MonthlyDistribution data={specificTrends} currency={currency} />
-                </section>
-              )}
-            </>
+            <MonthlyDistribution data={trends.data} currency={currency} />
           )}
         </TabsContent>
 
@@ -171,27 +145,15 @@ export default function AnalysesPage() {
           )}
         </TabsContent>
 
-        {/* ── Récurrents (global vs account-specific) ─────────────────── */}
+        {/* ── Récurrents ────────────────────────────────────────────── */}
         <TabsContent value="recurring" className="space-y-5">
           {recurring.isLoading ? <Card className="p-4"><Skeleton className="h-64 w-full" /></Card> : !recurring.data?.length ? (
             <Card><EmptyState icon={Inbox} title="Aucune transaction récurrente détectée" /></Card>
           ) : (
-            <>
-              {globalRecurring.length > 0 && (
-                <section className="space-y-2">
-                  <h3 className="text-sm font-semibold text-muted-foreground">Catégories globales</h3>
-                  <RecurringTable rows={globalRecurring} currency={currency} catName={catName} />
-                </section>
-              )}
-              {specificRecurring.length > 0 && (
-                <section className="space-y-2">
-                  <h3 className="text-sm font-semibold text-muted-foreground">Catégories par compte</h3>
-                  <RecurringTable rows={specificRecurring} currency={currency} catName={catName} />
-                </section>
-              )}
-            </>
+            <RecurringTable rows={recurring.data} currency={currency} catName={catName} />
           )}
         </TabsContent>
+
       </Tabs>
     </div>
   );

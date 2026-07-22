@@ -367,7 +367,32 @@ export function useBankProfileMutations() {
   };
 }
 
+export function useSystemMutations() {
+  const invalidate = useInvalidate();
+  return {
+    restore: useMutation({
+      mutationFn: async (file: File) => {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch("/api/system/restore", {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: "Erreur de restauration" }));
+          throw new Error(err.detail || "Erreur lors de la restauration");
+        }
+        return res.json();
+      },
+      onSuccess: () => {
+        invalidate();
+      },
+    }),
+  };
+}
+
 export function useHoldingMutations() {
+
   const invalidate = useInvalidate();
   const onSuccess = () => invalidate("investments");
   return {
