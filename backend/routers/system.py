@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Ports used by the app: frontend (Next.js dev 3000 / legacy Vite 5173) and backend (8000).
-_APP_PORTS = (3000, 5173, 8000)
+# Ports used by the app: frontend (Next.js dev 3000) and backend (8000).
+_APP_PORTS = (3000, 8000)
 
 
 def _pids_on_port(port: int) -> set[int]:
@@ -68,7 +68,7 @@ def _shutdown_worker() -> None:
 
 @router.post("/shutdown")
 async def shutdown():
-    """Stop both servers cleanly and free ports 3000/5173/8000.
+    """Stop both servers cleanly and free ports 3000/8000.
 
     Spawns a background thread so this request can return before the process
     is killed; the client uses the response to show a "stopped" state.
@@ -93,6 +93,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db, DB_PATH, engine
 from dependencies import current_profile_id
 from models import Transaction, Account, Category
+from utils import csv_safe_cell
+
+# Upper bound on an uploaded restore file (defensive: avoids reading an
+# unbounded upload fully into memory).
+MAX_RESTORE_BYTES = 200 * 1024 * 1024  # 200 MB
 
 
 @router.get("/backup")
@@ -120,50 +125,80 @@ async def restore_backup(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Restore database from an uploaded SQLite backup file."""
-    # 1. Header validation
-    header = await file.read(16)
-    if not header.startswith(b"SQLite format 3\x00"):
+    """Restore database from an uploaded SQLite backup file.
+
+    Hardened flow: read with a size cap, validate the magic header AND a full
+    ``PRAGMA integrity_check`` on the uploaded file in a temp location, keep a
+    timestamped copy of the current DB, then atomically swap the new one in.
+    """
+    import sqlite3
+    import shutil
+
+    # 1. Read with a size cap (chunked, so an oversized upload can't exhaust memory).
+    buf = bytearray()
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        buf += chunk
+        if len(buf) > MAX_RESTORE_BYTES:
+            raise HTTPException(status_code=413, detail="Fichier trop volumineux (max 200 Mo).")
+    content = bytes(buf)
+    if not content.startswith(b"SQLite format 3\x00"):
         raise HTTPException(
             status_code=400,
             detail="Fichier invalide : il ne s'agit pas d'un fichier de base de données SQLite valide.",
         )
-    await file.seek(0)
 
-    # 2. Flush & dispose active connection pool
+    # 2. Stage to a temp file and run a full integrity check (read-only) before
+    #    we touch the live database.
+    tmp_path = DB_PATH.with_name(DB_PATH.name + ".restore.tmp")
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(content)
+        con = sqlite3.connect(f"file:{tmp_path}?mode=ro", uri=True)
+        try:
+            result = con.execute("PRAGMA integrity_check").fetchone()
+        finally:
+            con.close()
+        if not result or result[0] != "ok":
+            raise HTTPException(status_code=400, detail="La sauvegarde est corrompue (échec du contrôle d'intégrité).")
+    except HTTPException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    except Exception as e:
+        tmp_path.unlink(missing_ok=True)
+        logger.error("Restore validation failed: %s", e)
+        raise HTTPException(status_code=400, detail=f"Fichier SQLite illisible : {e}")
+
+    # 3. Flush & dispose the active pool, snapshot the current DB, then atomically swap.
     try:
         await db.execute(text("PRAGMA wal_checkpoint(TRUNCATE);"))
     except Exception:
         pass
     await engine.dispose()
 
-    # 3. Write uploaded file to DB_PATH
     try:
-        content = await file.read()
-        with open(DB_PATH, "wb") as f:
-            f.write(content)
-
-        # Cleanup stale WAL/SHM files
-        wal_file = Path(f"{DB_PATH}-wal")
-        shm_file = Path(f"{DB_PATH}-shm")
-        if wal_file.exists():
-            wal_file.unlink()
-        if shm_file.exists():
-            shm_file.unlink()
+        if DB_PATH.exists():
+            prev = DB_PATH.with_name(f"finance.pre-restore-{datetime.now():%Y%m%d-%H%M%S}.db")
+            shutil.copy2(DB_PATH, prev)
+            logger.info("Saved pre-restore snapshot to %s", prev.name)
+        os.replace(tmp_path, DB_PATH)  # atomic on the same filesystem
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{DB_PATH}{suffix}")
+            if sidecar.exists():
+                sidecar.unlink()
     except Exception as e:
-        logger.error("Failed to restore database file: %s", e)
-        raise HTTPException(status_code=500, detail=f"Erreur lors de l'écriture du fichier : {e}")
+        tmp_path.unlink(missing_ok=True)
+        logger.error("Failed to swap in restored database: %s", e)
+        raise HTTPException(status_code=500, detail=f"Erreur lors du remplacement : {e}")
 
-    # 4. Run Alembic upgrade to ensure schema consistency
+    # 4. Reconcile schema/Alembic bookkeeping for the restored DB (best-effort).
     try:
-        from alembic.config import Config
-        from alembic import command
-        alembic_ini = Path(__file__).parent.parent / "alembic.ini"
-        if alembic_ini.exists():
-            alembic_cfg = Config(str(alembic_ini))
-            await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
+        from database import sync_schema
+        await sync_schema()
     except Exception as e:
-        logger.warning("Alembic upgrade post-restore warning: %s", e)
+        logger.warning("Schema sync post-restore warning: %s", e)
 
     return {"success": True, "message": "Base de données restaurée avec succès."}
 
@@ -218,14 +253,14 @@ async def export_transactions_csv(
 
         writer.writerow([
             str(t.date),
-            acc_name,
-            bank_name,
-            cat_name,
-            t.description,
+            csv_safe_cell(acc_name),
+            csv_safe_cell(bank_name),
+            csv_safe_cell(cat_name),
+            csv_safe_cell(t.description),
             f"{amount_eur:.2f}".replace(".", ","),
             row_type,
             t.import_hash or "",
-            t.notes or "",
+            csv_safe_cell(t.notes or ""),
         ])
 
     csv_content = output.getvalue()

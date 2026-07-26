@@ -1,7 +1,15 @@
-# Database & ML
+# Database (SQLite main + WAL/SHM sidecars, and any stray copy)
 backend/data/finance.db
-backend/data/model.pkl
-backend/data/model_meta.json
+backend/data/*.db
+backend/data/*.db-wal
+backend/data/*.db-shm
+backend/finance.db
+backend/*.db-wal
+backend/*.db-shm
+
+# Bank statement exports — contain personal financial data, never commit
+csv files/
+*.ml.pkl
 
 # Python
 __pycache__/
@@ -13,8 +21,10 @@ dist/
 build/
 
 # Frontend
-frontend/node_modules/
-frontend/dist/
+web/node_modules/
+web/.next/
+web/test-results/
+web/playwright-report/
 
 # Environment
 .env
