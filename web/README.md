@@ -1,8 +1,8 @@
 # Finance — Web (Next.js)
 
-Next.js 15 (App Router) frontend that re-platforms the legacy Vite SPA in `../frontend`.
-It is a **BFF over the existing FastAPI backend** — the Python backend (ML, pandas,
-analytics) is unchanged. `next.config.ts` rewrites `/api/*` → `http://localhost:8000`.
+Next.js 15 (App Router) frontend for the Finance dashboard. It is a **BFF over the
+FastAPI backend** — the catch-all route at `app/api/[...path]/route.ts` proxies
+`/api/*` → `process.env.BACKEND_URL` (default `http://localhost:8000`).
 
 ## Stack
 
@@ -17,7 +17,7 @@ analytics) is unchanged. `next.config.ts` rewrites `/api/*` → `http://localhos
 
 ```bash
 # from repo root — runs backend + this app
-./start.sh                 # http://localhost:3000  (UI=legacy ./start.sh for old SPA)
+./start.sh                 # http://localhost:3000  (MODE=prod ./start.sh for a prod build)
 
 # or this app alone (backend must be on :8000)
 npm install

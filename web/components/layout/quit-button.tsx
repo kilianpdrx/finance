@@ -20,7 +20,7 @@ export function QuitButton() {
   const quit = async () => {
     setPending(true);
     try {
-      // Backend frees ports 3000/5173/8000 then terminates; the request may
+      // Backend frees ports 3000/8000 then terminates; the request may
       // not resolve cleanly because the server is killed — that's expected.
       await fetch("/api/system/shutdown", { method: "POST" }).catch(() => {});
     } finally {
