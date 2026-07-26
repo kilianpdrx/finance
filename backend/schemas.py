@@ -9,13 +9,17 @@ CURRENCY_SYMBOLS = {
 }
 
 
+DEFAULT_MODULES = ["banking", "budgeting", "investments", "goals", "loans"]
+
 class ProfileCreate(BaseModel):
     name: str
     color: str = "#6366f1"
+    enabled_modules: List[str] = DEFAULT_MODULES
 
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
+    enabled_modules: Optional[List[str]] = None
 
 class ProfileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -23,6 +27,8 @@ class ProfileOut(BaseModel):
     name: str
     color: str
     is_default: bool
+    enabled_modules: List[str] = DEFAULT_MODULES
+
 
 def cents_to_display(cents: int, currency: str = "EUR") -> str:
     """Convert integer cents to French-formatted string: 1234567 -> '12 345,67 €'"""
@@ -36,6 +42,26 @@ def cents_to_display(cents: int, currency: str = "EUR") -> str:
     return f"-{result}" if negative else result
 
 
+# ── Loan Details ─────────────────────────────────────────────────────────────
+
+class LoanDetailsBase(BaseModel):
+    principal_cents: Optional[int] = None
+    interest_rate_pct: Optional[float] = None
+    monthly_payment_cents: Optional[int] = None
+    term_months: Optional[int] = None
+    start_date: Optional[date] = None
+
+class LoanDetailsCreate(LoanDetailsBase):
+    pass
+
+class LoanDetailsUpdate(LoanDetailsBase):
+    pass
+
+class LoanDetailsOut(LoanDetailsBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    account_id: int
+
 # ── Account ──────────────────────────────────────────────────────────────────
 
 class AccountBase(BaseModel):
@@ -46,7 +72,7 @@ class AccountBase(BaseModel):
     color: str = "#6366f1"
 
 class AccountCreate(AccountBase):
-    pass
+    loan_details: Optional[LoanDetailsCreate] = None
 
 class AccountUpdate(BaseModel):
     name: Optional[str] = None
@@ -55,6 +81,7 @@ class AccountUpdate(BaseModel):
     currency: Optional[str] = None
     color: Optional[str] = None
     is_active: Optional[bool] = None
+    loan_details: Optional[LoanDetailsUpdate] = None
 
 
 # ── AccountBalanceSnapshot ────────────────────────────────────────────────────
@@ -76,6 +103,65 @@ class AccountOut(AccountBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     is_active: bool
+    created_at: datetime
+    loan_details: Optional[LoanDetailsOut] = None
+
+# ── Goals ────────────────────────────────────────────────────────────────────
+
+class GoalBase(BaseModel):
+    name: str
+    target_amount_cents: int
+    deadline: Optional[date] = None
+    color: str = "#6366f1"
+    icon: str = "target"
+    linked_account_id: Optional[int] = None
+
+class GoalCreate(GoalBase):
+    # Optional seed for a manual goal: recorded as an initial contribution.
+    initial_amount_cents: int = 0
+
+class GoalUpdate(BaseModel):
+    name: Optional[str] = None
+    target_amount_cents: Optional[int] = None
+    deadline: Optional[date] = None
+    color: Optional[str] = None
+    icon: Optional[str] = None
+    linked_account_id: Optional[int] = None
+
+class GoalOut(GoalBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    # Computed server-side (linked-account balance, or sum of contributions).
+    current_amount_cents: int = 0
+    progress_pct: float = 0.0
+    is_linked: bool = False
+    linked_account_name: Optional[str] = None
+    monthly_needed_cents: Optional[int] = None  # to reach target by the deadline
+
+
+class GoalContributionCreate(BaseModel):
+    date: date
+    amount_cents: int  # signed: + deposit, - withdrawal
+    note: Optional[str] = None
+
+class GoalContributionOut(GoalContributionCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    goal_id: int
+    created_at: datetime
+
+
+# ── Loans (amortization) ──────────────────────────────────────────────────────
+
+class LoanExtraPaymentCreate(BaseModel):
+    date: date
+    amount_cents: int
+    note: Optional[str] = None
+
+class LoanExtraPaymentOut(LoanExtraPaymentCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    account_id: int
     created_at: datetime
 
 
@@ -218,11 +304,15 @@ class AnalyticsSummary(BaseModel):
     total_income_cents: int
     total_expenses_cents: int
     net_cash_flow_cents: int
-    net_worth_cents: int
+    net_worth_cents: int                      # net worth WITH loan debt subtracted
+    net_worth_excl_loans_cents: int = 0       # net worth if loans are ignored
+    total_loans_cents: int = 0                # outstanding loan debt (positive)
     total_income_display: str
     total_expenses_display: str
     net_cash_flow_display: str
     net_worth_display: str
+    net_worth_excl_loans_display: str = ""
+    total_loans_display: str = ""
     last_transaction_date: Optional[str] = None
 
 class CashFlowMonth(BaseModel):
@@ -328,19 +418,6 @@ class ConfirmResponse(BaseModel):
     imported: int
     skipped: int
     total: int
-
-
-# ── ML ────────────────────────────────────────────────────────────────────────
-
-class MLStatus(BaseModel):
-    trained: bool
-    last_trained: Optional[str]
-    sample_count: Optional[int]
-    accuracy: Optional[float]
-
-class MLTrainResponse(BaseModel):
-    accuracy: float
-    sample_count: int
 
 
 # ── Holdings ─────────────────────────────────────────────────────────────────

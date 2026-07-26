@@ -4,24 +4,33 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
-from models import Account, AccountBalanceSnapshot, Transaction
+from models import Account, AccountBalanceSnapshot, Transaction, LoanDetails
 from schemas import (
     AccountCreate, AccountUpdate, AccountOut,
     AccountBalanceSnapshotCreate, AccountBalanceSnapshotOut,
 )
+from sqlalchemy.orm import selectinload
 
 router = APIRouter()
 
 
 @router.get("", response_model=List[AccountOut])
 async def list_accounts(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
-    result = await db.execute(select(Account).where(Account.is_active == True, Account.profile_id == pid))
+    result = await db.execute(
+        select(Account)
+        .options(selectinload(Account.loan_details))
+        .where(Account.is_active == True, Account.profile_id == pid)
+    )
     return result.scalars().all()
 
 
 @router.get("/{account_id}", response_model=AccountOut)
 async def get_account(account_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
-    result = await db.execute(select(Account).where(Account.id == account_id, Account.profile_id == pid))
+    result = await db.execute(
+        select(Account)
+        .options(selectinload(Account.loan_details))
+        .where(Account.id == account_id, Account.profile_id == pid)
+    )
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -30,24 +39,51 @@ async def get_account(account_id: int, db: AsyncSession = Depends(get_db), pid: 
 
 @router.post("", response_model=AccountOut, status_code=201)
 async def create_account(payload: AccountCreate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
-    account = Account(**payload.model_dump(), profile_id=pid)
+    account_data = payload.model_dump(exclude={"loan_details"})
+    account = Account(**account_data, profile_id=pid)
     db.add(account)
+    await db.flush()
+    if payload.loan_details:
+        loan = LoanDetails(**payload.loan_details.model_dump(exclude_none=True), account_id=account.id)
+        db.add(loan)
     await db.commit()
-    await db.refresh(account)
-    return account
+    result = await db.execute(
+        select(Account)
+        .options(selectinload(Account.loan_details))
+        .where(Account.id == account.id)
+    )
+    return result.scalar_one()
 
 
 @router.put("/{account_id}", response_model=AccountOut)
 async def update_account(account_id: int, payload: AccountUpdate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
-    result = await db.execute(select(Account).where(Account.id == account_id, Account.profile_id == pid))
+    result = await db.execute(
+        select(Account)
+        .options(selectinload(Account.loan_details))
+        .where(Account.id == account_id, Account.profile_id == pid)
+    )
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    for field, value in payload.model_dump(exclude_none=True).items():
+    update_data = payload.model_dump(exclude_none=True, exclude={"loan_details"})
+    for field, value in update_data.items():
         setattr(account, field, value)
+    
+    if payload.loan_details is not None:
+        if account.loan_details:
+            for f, v in payload.loan_details.model_dump(exclude_none=True).items():
+                setattr(account.loan_details, f, v)
+        else:
+            loan = LoanDetails(**payload.loan_details.model_dump(exclude_none=True), account_id=account.id)
+            db.add(loan)
+
     await db.commit()
-    await db.refresh(account)
-    return account
+    result = await db.execute(
+        select(Account)
+        .options(selectinload(Account.loan_details))
+        .where(Account.id == account.id)
+    )
+    return result.scalar_one()
 
 
 @router.delete("/{account_id}", status_code=204)

@@ -13,6 +13,8 @@ class AccountType(str, enum.Enum):
     epargne = "épargne"
     investissement = "investissement"
     credit = "crédit"
+    immobilier = "immobilier"
+    emprunt = "emprunt"
 
 
 class MatchType(str, enum.Enum):
@@ -29,7 +31,9 @@ class Profile(Base):
     name = Column(String, nullable=False)
     color = Column(String, default="#6366f1")
     is_default = Column(Boolean, default=False)
+    enabled_modules = Column(JSON, default=lambda: ["banking", "budgeting", "investments", "goals", "loans"])
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
 
 class Account(Base):
@@ -47,6 +51,68 @@ class Account(Base):
 
     transactions = relationship("Transaction", back_populates="account")
     snapshots = relationship("AccountBalanceSnapshot", back_populates="account", order_by="AccountBalanceSnapshot.date")
+    loan_details = relationship("LoanDetails", back_populates="account", uselist=False)
+
+class LoanDetails(Base):
+    __tablename__ = "loan_details"
+
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False, unique=True)
+    principal_cents = Column(Integer, nullable=True)          # original borrowed amount
+    interest_rate_pct = Column(Float, nullable=True)          # annual nominal rate, e.g. 1.5
+    monthly_payment_cents = Column(Integer, nullable=True)    # optional; computed if absent
+    term_months = Column(Integer, nullable=True)
+    start_date = Column(Date, nullable=True)                  # first-payment / origination date
+
+    account = relationship("Account", back_populates="loan_details")
+
+
+class LoanExtraPayment(Base):
+    """An extra (early) principal payment against a loan account."""
+    __tablename__ = "loan_extra_payments"
+
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    date = Column(Date, nullable=False)
+    amount_cents = Column(Integer, nullable=False)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Goal(Base):
+    __tablename__ = "goals"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    name = Column(String, nullable=False)
+    target_amount_cents = Column(Integer, nullable=False)
+    current_amount_cents = Column(Integer, default=0)  # legacy cache; live value is computed
+    deadline = Column(Date, nullable=True)
+    color = Column(String, default="#6366f1")
+    icon = Column(String, default="target")
+    linked_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+
+    account = relationship("Account")
+    contributions = relationship(
+        "GoalContribution", back_populates="goal",
+        cascade="all, delete-orphan", order_by="GoalContribution.date",
+    )
+
+
+class GoalContribution(Base):
+    """A dated deposit (+) or withdrawal (-) toward a manually-tracked goal."""
+    __tablename__ = "goal_contributions"
+
+    id = Column(Integer, primary_key=True)
+    goal_id = Column(Integer, ForeignKey("goals.id"), nullable=False)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    date = Column(Date, nullable=False)
+    amount_cents = Column(Integer, nullable=False)  # signed: + deposit, - withdrawal
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    goal = relationship("Goal", back_populates="contributions")
 
 
 class ImportBatch(Base):

@@ -104,13 +104,29 @@ async def summary(
     total_expenses = await _convert_by_currency(db, expenses_by_ccy, base_ccy, today)
     net_cash_flow = total_income - total_expenses
 
-    acc_filter = select(Account.id, Account.currency).where(Account.profile_id == pid)
+    from sqlalchemy.orm import selectinload
+    from models import AccountType, LoanExtraPayment
+    from routers.investments import account_holdings_value_cents
+    from services.loans import compute_amortization
+
+    acc_q2 = (
+        select(Account)
+        .options(selectinload(Account.loan_details))
+        .where(Account.profile_id == pid, Account.is_active == True)  # noqa: E712
+    )
     if parsed_ids:
-        acc_filter = acc_filter.where(Account.id.in_(parsed_ids))
-    all_acc = (await db.execute(acc_filter)).all()
+        acc_q2 = acc_q2.where(Account.id.in_(parsed_ids))
+    all_acc = (await db.execute(acc_q2)).scalars().all()
     net_worth = 0
-    for acc_id, acc_currency in all_acc:
-        acc_ccy = acc_currency or "EUR"
+    total_loans = 0  # outstanding loan debt, in base currency (positive)
+    for acc in all_acc:
+        acc_id = acc.id
+        acc_ccy = acc.currency or "EUR"
+        is_loan = (
+            acc.account_type == AccountType.emprunt
+            and acc.loan_details is not None
+            and acc.loan_details.principal_cents
+        )
         snap_q = await db.execute(
             select(AccountBalanceSnapshot)
             .where(AccountBalanceSnapshot.account_id == acc_id)
@@ -137,15 +153,35 @@ async def summary(
                 ))
             )
             balance = t_q.scalar() or 0
-        net_worth += await convert_cents(db, balance, acc_ccy, base_ccy, today)
 
-        # Holdings-priced investment accounts carry their value in positions, not in
-        # transactions/snapshots — add the live holdings value so net worth matches
-        # the Investissements page.
-        from routers.investments import account_holdings_value_cents
-        hv = await account_holdings_value_cents(db, acc_id, acc_ccy)
-        if hv:
-            net_worth += await convert_cents(db, hv, acc_ccy, base_ccy, today)
+        if is_loan:
+            # A loan's contribution to net worth is its outstanding debt (negative),
+            # derived from the amortization schedule — no manual snapshot needed.
+            extras = (await db.execute(
+                select(LoanExtraPayment).where(LoanExtraPayment.account_id == acc_id)
+            )).scalars().all()
+            amort = compute_amortization(
+                principal_cents=acc.loan_details.principal_cents,
+                annual_rate_pct=acc.loan_details.interest_rate_pct,
+                term_months=acc.loan_details.term_months,
+                start_date=acc.loan_details.start_date,
+                monthly_payment_cents=acc.loan_details.monthly_payment_cents,
+                extra_payments=[(e.date, e.amount_cents) for e in extras],
+            )
+            if amort["computable"]:
+                balance = -amort["remaining_cents"]
+        else:
+            # Holdings-priced investment accounts carry their value in positions,
+            # which SUPERSEDES the snapshot/transaction balance (avoids double-count).
+            hv = await account_holdings_value_cents(db, acc_id, acc_ccy)
+            if hv:
+                balance = hv
+        converted = await convert_cents(db, balance, acc_ccy, base_ccy, today)
+        net_worth += converted
+        if is_loan and converted < 0:
+            total_loans += -converted  # positive outstanding debt
+
+    net_worth_excl_loans = net_worth + total_loans
 
     last_date_q = await db.execute(select(func.max(Transaction.date)).where(Transaction.profile_id == pid))
     last_date = last_date_q.scalar()
@@ -156,10 +192,14 @@ async def summary(
         total_expenses_cents=total_expenses,
         net_cash_flow_cents=net_cash_flow,
         net_worth_cents=net_worth,
+        net_worth_excl_loans_cents=net_worth_excl_loans,
+        total_loans_cents=total_loans,
         total_income_display=cents_to_display(total_income, base_ccy),
         total_expenses_display=cents_to_display(total_expenses, base_ccy),
         net_cash_flow_display=cents_to_display(net_cash_flow, base_ccy),
         net_worth_display=cents_to_display(net_worth, base_ccy),
+        net_worth_excl_loans_display=cents_to_display(net_worth_excl_loans, base_ccy),
+        total_loans_display=cents_to_display(total_loans, base_ccy),
         last_transaction_date=last_transaction_date,
     )
 
@@ -417,7 +457,7 @@ async def net_worth_history(
         elif acc_id not in monthly_totals[snap_month]:
             monthly_totals[snap_month][acc_id] = snap.amount_cents
 
-    acc_q = select(Account).where(Account.profile_id == pid)
+    acc_q = select(Account).where(Account.profile_id == pid, Account.is_active == True)  # noqa: E712
     if parsed_ids:
         acc_q = acc_q.where(Account.id.in_(parsed_ids))
     all_accounts = await db.execute(acc_q)

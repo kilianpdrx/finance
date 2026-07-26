@@ -4,9 +4,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from database import init_db, AsyncSessionLocal
-from routers import accounts, transactions, categories, upload, analytics, ml
-from routers import bank_profiles, investments, settings, system, profiles
+from database import init_db, AsyncSessionLocal, sync_schema
+from routers import accounts, transactions, categories, upload, analytics
+from routers import bank_profiles, investments, settings, system, profiles, goals, loans
 
 logger = logging.getLogger(__name__)
 
@@ -14,13 +14,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    
-    # ── Run Alembic migrations programmatically ──────────────────────────────────
-    from alembic.config import Config
-    from alembic import command
-    from pathlib import Path
-    alembic_ini = str(Path(__file__).parent / "alembic.ini")
-    await asyncio.to_thread(command.upgrade, Config(alembic_ini), "head")
+
+    # ── Reconcile Alembic bookkeeping with the create_all-built schema ───────────
+    # (stamps a fresh DB at head, upgrades an existing one; best-effort).
+    await sync_schema()
 
     # ── Seed default data if empty ───────────────────────────────────────────────
     async with AsyncSessionLocal() as db:
@@ -86,35 +83,47 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning("FX startup tasks failed: %s", e)
 
-        # One-shot holdings price refresh
-        async with AsyncSessionLocal() as db:
-            from services.market_data import refresh_all_prices
-            try:
-                n = await refresh_all_prices(db)
-                logger.info("Startup price refresh complete (%d prices)", n)
-            except Exception as e:
-                logger.warning("Startup price refresh failed: %s", e)
-
-        # IBKR Flex positions sync (silent; only profiles with ibkr_auto_sync=true)
+        # Helper to check if any profile has investments enabled
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select as sql_select
             from models import Profile
-            from services.ibkr_flex import sync_ibkr_holdings, get_setting
-            try:
-                profiles_list = (await db.execute(sql_select(Profile))).scalars().all()
-                for prof in profiles_list:
-                    try:
-                        if (await get_setting(db, prof.id, "ibkr_auto_sync")) != "true":
+            prof_rows = (await db.execute(sql_select(Profile))).scalars().all()
+            has_investment_profiles = any(
+                p.enabled_modules is None or "investments" in (p.enabled_modules or [])
+                for p in prof_rows
+            )
+
+        # One-shot holdings price refresh (only if investments module is enabled for at least 1 profile)
+        if has_investment_profiles:
+            async with AsyncSessionLocal() as db:
+                from services.market_data import refresh_all_prices
+                try:
+                    n = await refresh_all_prices(db)
+                    logger.info("Startup price refresh complete (%d prices)", n)
+                except Exception as e:
+                    logger.warning("Startup price refresh failed: %s", e)
+
+        # IBKR Flex positions sync (silent; only profiles with ibkr_auto_sync=true & investments enabled)
+        if has_investment_profiles:
+            async with AsyncSessionLocal() as db:
+                from services.ibkr_flex import sync_ibkr_holdings, get_setting
+                try:
+                    for prof in prof_rows:
+                        if prof.enabled_modules is not None and "investments" not in prof.enabled_modules:
                             continue
-                        res = await sync_ibkr_holdings(db, prof.id, mode="auto")
-                        if res.get("ok"):
-                            logger.info("IBKR startup sync (profile %d): %s", prof.id, res)
-                        elif res.get("reason") != "not_configured":
-                            logger.warning("IBKR startup sync (profile %d): %s", prof.id, res.get("reason"))
-                    except Exception as e:
-                        logger.warning("IBKR startup sync failed (profile %d): %s", prof.id, e)
-            except Exception as e:
-                logger.warning("IBKR startup iteration failed: %s", e)
+                        try:
+                            if (await get_setting(db, prof.id, "ibkr_auto_sync")) != "true":
+                                continue
+                            res = await sync_ibkr_holdings(db, prof.id, mode="auto")
+                            if res.get("ok"):
+                                logger.info("IBKR startup sync (profile %d): %s", prof.id, res)
+                            elif res.get("reason") != "not_configured":
+                                logger.warning("IBKR startup sync (profile %d): %s", prof.id, res.get("reason"))
+                        except Exception as e:
+                            logger.warning("IBKR startup sync failed (profile %d): %s", prof.id, e)
+                except Exception as e:
+                    logger.warning("IBKR startup iteration failed: %s", e)
+
 
     startup_task = asyncio.create_task(_deferred_startup())
 
@@ -162,7 +171,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -173,9 +182,10 @@ app.include_router(transactions.router, prefix="/api/transactions", tags=["trans
 app.include_router(categories.router, prefix="/api/categories", tags=["categories"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
-app.include_router(ml.router, prefix="/api/ml", tags=["ml"])
 app.include_router(bank_profiles.router, prefix="/api/bank-profiles", tags=["bank-profiles"])
 app.include_router(investments.router, prefix="/api/investments", tags=["investments"])
+app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
+app.include_router(loans.router, prefix="/api/loans", tags=["loans"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(profiles.router, prefix="/api/profiles", tags=["profiles"])
