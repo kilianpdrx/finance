@@ -153,6 +153,13 @@ async def restore_backup(
     # 2. Stage to a temp file and run a full integrity check (read-only) before
     #    we touch the live database.
     tmp_path = DB_PATH.with_name(DB_PATH.name + ".restore.tmp")
+
+    def _rm_tmp() -> None:
+        # Opening the temp DB for the integrity check may spawn -wal/-shm sidecars;
+        # remove the temp file and any sidecars so nothing is left behind.
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{tmp_path}{suffix}").unlink(missing_ok=True)
+
     try:
         with open(tmp_path, "wb") as f:
             f.write(content)
@@ -164,10 +171,10 @@ async def restore_backup(
         if not result or result[0] != "ok":
             raise HTTPException(status_code=400, detail="La sauvegarde est corrompue (échec du contrôle d'intégrité).")
     except HTTPException:
-        tmp_path.unlink(missing_ok=True)
+        _rm_tmp()
         raise
     except Exception as e:
-        tmp_path.unlink(missing_ok=True)
+        _rm_tmp()
         logger.error("Restore validation failed: %s", e)
         raise HTTPException(status_code=400, detail=f"Fichier SQLite illisible : {e}")
 
@@ -183,13 +190,16 @@ async def restore_backup(
             prev = DB_PATH.with_name(f"finance.pre-restore-{datetime.now():%Y%m%d-%H%M%S}.db")
             shutil.copy2(DB_PATH, prev)
             logger.info("Saved pre-restore snapshot to %s", prev.name)
+        # Drop the temp file's integrity-check sidecars before swapping it in.
+        for suffix in ("-wal", "-shm"):
+            Path(f"{tmp_path}{suffix}").unlink(missing_ok=True)
         os.replace(tmp_path, DB_PATH)  # atomic on the same filesystem
         for suffix in ("-wal", "-shm"):
             sidecar = Path(f"{DB_PATH}{suffix}")
             if sidecar.exists():
                 sidecar.unlink()
     except Exception as e:
-        tmp_path.unlink(missing_ok=True)
+        _rm_tmp()
         logger.error("Failed to swap in restored database: %s", e)
         raise HTTPException(status_code=500, detail=f"Erreur lors du remplacement : {e}")
 

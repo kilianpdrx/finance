@@ -1,8 +1,6 @@
-# Database (SQLite main + WAL/SHM sidecars, and any stray copy)
-backend/data/finance.db
-backend/data/*.db
-backend/data/*.db-wal
-backend/data/*.db-shm
+# Database & runtime data (SQLite, WAL/SHM sidecars, snapshots, restore temp files).
+# The dir is auto-created on startup (init_db) and by the Docker volume mount.
+backend/data/
 backend/finance.db
 backend/*.db-wal
 backend/*.db-shm
