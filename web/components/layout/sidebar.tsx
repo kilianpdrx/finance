@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { NAV_ITEMS } from "@/lib/nav";
+import { NAV_ITEMS, DEFAULT_MODULES, ROUTE_MODULE } from "@/lib/nav";
 import { ProfileSwitcher } from "@/components/profiles/profile-switcher";
+import { useActiveProfile } from "@/lib/api/hooks";
 import { cn } from "@/lib/utils";
 
 function isActive(pathname: string, href: string) {
@@ -13,9 +14,18 @@ function isActive(pathname: string, href: string) {
 
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const activeProfile = useActiveProfile();
+  const enabledModules = activeProfile?.enabled_modules ?? DEFAULT_MODULES;
+
+  const filteredNavItems = NAV_ITEMS.filter((item) => {
+    const required = ROUTE_MODULE[item.href];
+    return !required || enabledModules.includes(required);
+  });
+
   return (
     <nav className="flex flex-1 flex-col gap-1 px-3">
-      {NAV_ITEMS.map((item) => {
+      {filteredNavItems.map((item) => {
+
         const active = isActive(pathname, item.href);
         const Icon = item.icon;
         return (

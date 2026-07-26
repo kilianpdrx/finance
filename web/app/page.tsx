@@ -13,14 +13,19 @@ import { PatrimoineDonut } from "@/components/charts/patrimoine-donut";
 import { CashflowChart } from "@/components/charts/cashflow-chart";
 import { NetworthArea } from "@/components/charts/networth-area";
 import { TopExpenses } from "@/components/dashboard/top-expenses";
+import { GoalsWidget } from "@/components/dashboard/goals-widget";
+import { LoansWidget } from "@/components/dashboard/loans-widget";
+import { PatrimoineNetWidget } from "@/components/dashboard/patrimoine-net-widget";
 import {
   useAnalyticsContext,
   useSummary,
   useCashFlow,
   useByCategory,
   useNetWorth,
+  useActiveProfile,
 } from "@/lib/api/hooks";
 import { patrimoineByType } from "@/lib/networth";
+import { DEFAULT_MODULES } from "@/lib/nav";
 
 const fade = {
   hidden: { opacity: 0, y: 12 },
@@ -33,6 +38,10 @@ export default function DashboardPage() {
   const cashFlow = useCashFlow(query);
   const byCategory = useByCategory(query);
   const netWorth = useNetWorth(query);
+  const activeProfile = useActiveProfile();
+  const modules = activeProfile?.enabled_modules ?? DEFAULT_MODULES;
+  const showGoals = modules.includes("goals");
+  const showLoans = modules.includes("loans");
 
   const loading = summary.isLoading || cashFlow.isLoading || byCategory.isLoading || netWorth.isLoading;
 
@@ -122,6 +131,31 @@ export default function DashboardPage() {
           </Card>
         </motion.div>
       </div>
+
+      {(showGoals || showLoans) && (
+        <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-3">
+          {showLoans && (
+            <motion.div className="h-full" variants={fade} initial="hidden" animate="show" custom={5.5}>
+              <PatrimoineNetWidget
+                netWorthCents={s?.net_worth_cents ?? 0}
+                exclLoansCents={s?.net_worth_excl_loans_cents ?? 0}
+                totalLoansCents={s?.total_loans_cents ?? 0}
+                currency={currency}
+              />
+            </motion.div>
+          )}
+          {showGoals && (
+            <motion.div className="h-full" variants={fade} initial="hidden" animate="show" custom={5.7}>
+              <GoalsWidget currency={currency} />
+            </motion.div>
+          )}
+          {showLoans && (
+            <motion.div className="h-full" variants={fade} initial="hidden" animate="show" custom={5.9}>
+              <LoansWidget />
+            </motion.div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
         <motion.div className="h-full" variants={fade} initial="hidden" animate="show" custom={6}>
