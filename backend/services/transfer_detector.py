@@ -6,14 +6,16 @@ from models import Transaction, Account
 
 logger = logging.getLogger(__name__)
 
-async def detect_internal_transfers(db: AsyncSession, profile_id: int | None = None):
+async def detect_internal_transfers(db: AsyncSession, profile_id: int | None = None, max_days: int = 3):
     """
     Find internal transfers by matching transaction pairs (within one profile):
     - Same amount_cents
     - One is debit, one is credit
     - Different accounts
-    - Dates within 3 days
-    - Description matches the other account's name OR the word "virement" / "transfer"
+    - Dates within `max_days`
+    - A description signal: the other account's name appears, OR both carry a
+      transfer keyword ("virement"/"transfert"/…). With no such signal, a pair is
+      only accepted when it's the single unambiguous candidate in the window.
     """
     logger.info("Running internal transfer detection...")
 
@@ -54,36 +56,37 @@ async def detect_internal_transfers(db: AsyncSession, profile_id: int | None = N
                 continue
             if d.amount_cents == c.amount_cents and d.account_id != c.account_id:
                 diff_days = abs((d.date - c.date).days)
-                if diff_days <= 3:
+                if diff_days <= max_days:
                     potential_matches.append(c)
-        
+
         if not potential_matches:
             continue
-        
+
         # Priority to those where description contains the other account name
-        acc_c_name = accounts[d.account_id].name.lower()
-        
+        debit_acc_name = accounts[d.account_id].name.lower()
+        keywords = ["virement", "transfert", "transfer", "cpt", "compte"]
+
         best_match = None
         for c in potential_matches:
-            acc_d_name = accounts[c.account_id].name.lower()
+            credit_acc_name = accounts[c.account_id].name.lower()
             desc_d = d.description.lower()
             desc_c = c.description.lower()
-            
-            # Check if name is mentioned
-            if acc_d_name in desc_d or acc_c_name in desc_c:
+
+            # Signal 1: the counterpart account's name appears in a description.
+            if credit_acc_name in desc_d or debit_acc_name in desc_c:
                 best_match = c
                 break
-            
-            # Or generic transfer keywords
-            keywords = ["virement", "transfert", "transfer", "cpt", "compte"]
+            # Signal 2: both descriptions carry a transfer keyword.
             if any(k in desc_d for k in keywords) and any(k in desc_c for k in keywords):
                 best_match = c
                 break
-            
-            # Even if no keywords, if they are exactly on the same day with same exact amount and no other match, we might accept it.
-            # But the prompt says "analyzing descriptions and account names", so let's be slightly lenient if the accounts are named.
-            best_match = c # fallback to first potential match if only one exists or just take first
-            
+
+        # No description signal at all: only accept when there is exactly one
+        # candidate in the window (unambiguous) — avoids marking two unrelated
+        # same-amount transactions as a transfer.
+        if best_match is None and len(potential_matches) == 1:
+            best_match = potential_matches[0]
+
         if best_match:
             # Mark both as internal transfer
             d.is_internal_transfer = True

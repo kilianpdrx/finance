@@ -13,7 +13,7 @@ from database import get_db
 from dependencies import current_profile_id
 from models import Transaction, Account, Category, ImportBatch
 from schemas import TransactionOut, TransactionUpdate, TransactionMeta, TransactionCreateManual
-from utils import generate_import_hash
+from utils import generate_import_hash, csv_safe_cell
 
 
 def strip_accents(text: str) -> str:
@@ -143,60 +143,17 @@ async def list_batches(db: AsyncSession = Depends(get_db), pid: int = Depends(cu
 
 
 @router.post("/detect-transfers", status_code=200)
-async def detect_internal_transfers(
+async def detect_transfers_endpoint(
     max_days: int = Query(default=3, le=7),
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
-    """Detect pairs of transactions that are likely internal transfers between accounts."""
-    # Get all transactions with their accounts (scoped to the active profile)
-    result = await db.execute(
-        select(Transaction).where(Transaction.profile_id == pid).order_by(Transaction.date.desc(), Transaction.id.desc())
-    )
-    txns = result.scalars().all()
+    """Detect pairs of transactions that are likely internal transfers.
 
-    # Group by absolute amount for fast lookup
-    by_amount: dict = {}
-    for t in txns:
-        key = t.amount_cents
-        if key not in by_amount:
-            by_amount[key] = []
-        by_amount[key].append(t)
-
-    detected_pairs = 0
-    processed = set()
-
-    for t in txns:
-        if t.id in processed:
-            continue
-        # Look for the opposite transaction (same amount, opposite sign, different account, within max_days)
-        target_amount = t.amount_cents
-        candidates = by_amount.get(target_amount, [])
-        for candidate in candidates:
-            if candidate.id == t.id:
-                continue
-            if candidate.id in processed:
-                continue
-            if candidate.account_id == t.account_id:
-                continue
-            # One must be debit, other credit
-            if candidate.is_debit == t.is_debit:
-                continue
-            # Check date proximity
-            delta = abs((t.date - candidate.date).days)
-            if delta > max_days:
-                continue
-            # Found a pair!
-            t.is_internal_transfer = True
-            t.transfer_pair_id = candidate.id
-            candidate.is_internal_transfer = True
-            candidate.transfer_pair_id = t.id
-            processed.add(t.id)
-            processed.add(candidate.id)
-            detected_pairs += 1
-            break
-
-    await db.commit()
+    Delegates to the shared transfer-detection service (the same one the import
+    flow runs) so both paths use one, description-aware algorithm."""
+    from services.transfer_detector import detect_internal_transfers
+    detected_pairs = await detect_internal_transfers(db, pid, max_days)
     return {"detected_pairs": detected_pairs}
 
 @router.post("", response_model=TransactionOut, status_code=201)
@@ -212,6 +169,7 @@ async def create_transaction(
         payload.description + " (manuel)",
         payload.amount_cents,
         payload.account_id,
+        payload.is_debit,
     )
 
     # Check if this hash already exists (unlikely but possible if exactly the same manual entry is made twice)
@@ -358,11 +316,11 @@ async def export_transactions(
             amount = -amount
         writer.writerow([
             t.date,
-            strip_accents(t.account.name) if t.account else "",
-            strip_accents(t.description),
+            csv_safe_cell(strip_accents(t.account.name)) if t.account else "",
+            csv_safe_cell(strip_accents(t.description)),
             f"{amount:.2f}",
             strip_accents(t.currency or "EUR"),
-            strip_accents(t.category.name) if t.category else "",
+            csv_safe_cell(strip_accents(t.category.name)) if t.category else "",
         ])
 
     output.seek(0)
