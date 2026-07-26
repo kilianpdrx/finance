@@ -164,10 +164,13 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Detect Internal Transfers
-         * @description Detect pairs of transactions that are likely internal transfers between accounts.
+         * Detect Transfers Endpoint
+         * @description Detect pairs of transactions that are likely internal transfers.
+         *
+         *     Delegates to the shared transfer-detection service (the same one the import
+         *     flow runs) so both paths use one, description-aware algorithm.
          */
-        post: operations["detect_internal_transfers_api_transactions_detect_transfers_post"];
+        post: operations["detect_transfers_endpoint_api_transactions_detect_transfers_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -555,10 +558,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Spending Trends
-         * @description Return monthly spending per category for trend charts.
-         */
+        /** Spending Trends */
         get: operations["spending_trends_api_analytics_spending_trends_get"];
         put?: never;
         post?: never;
@@ -626,15 +626,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Budget Table
-         * @description Return monthly budget table: last N months of actuals + saved forecasts.
-         */
+        /** Budget Table */
         get: operations["budget_table_api_analytics_budget_get"];
-        /**
-         * Upsert Budget Entry
-         * @description Create or update a budget entry for a category+month+account.
-         */
+        /** Upsert Budget Entry */
         put: operations["upsert_budget_entry_api_analytics_budget_put"];
         post?: never;
         delete?: never;
@@ -650,64 +644,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Budget Full
-         * @description Return structured budget table with income, fixed expenses, and variable expenses.
-         */
+        /** Budget Full */
         get: operations["budget_full_api_analytics_budget_full_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ml/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Status */
-        get: operations["status_api_ml_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ml/suggest-rules": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Suggest Rules */
-        get: operations["suggest_rules_api_ml_suggest_rules_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ml/train": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Train */
-        post: operations["train_api_ml_train_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -751,7 +691,132 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/investments/accounts": {
+    "/api/investments/accounts/{account_id}/holdings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Holdings */
+        get: operations["list_holdings_api_investments_accounts__account_id__holdings_get"];
+        put?: never;
+        /** Create Holding */
+        post: operations["create_holding_api_investments_accounts__account_id__holdings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/holdings/{holding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Holding */
+        put: operations["update_holding_api_investments_holdings__holding_id__put"];
+        post?: never;
+        /** Delete Holding */
+        delete: operations["delete_holding_api_investments_holdings__holding_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/refresh-prices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Trigger Price Refresh */
+        post: operations["trigger_price_refresh_api_investments_refresh_prices_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/resolve-tickers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Tickers
+         * @description Re-resolve the Yahoo symbol (via OpenFIGI, then Yahoo search) for the profile's
+         *     holdings that aren't priced live, and backfill any missing ISIN from yfinance.
+         */
+        post: operations["resolve_tickers_api_investments_resolve_tickers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/history/{ticker}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Holding History */
+        get: operations["holding_history_api_investments_history__ticker__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/benchmarks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Benchmark List */
+        get: operations["benchmark_list_api_investments_benchmarks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/benchmark/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Benchmark History */
+        get: operations["benchmark_history_api_investments_benchmark__key__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/accounts/{account_id}/performance": {
         parameters: {
             query?: never;
             header?: never;
@@ -759,9 +824,144 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Investment Accounts
-         * @description Return all investment accounts with their snapshot history and computed metrics.
+         * Account Performance
+         * @description Normalised % performance of an account's current holdings over `period`,
+         *     reconstructed from each holding's historical closes (so it can be plotted
+         *     against the index benchmarks).
          */
+        get: operations["account_performance_api_investments_accounts__account_id__performance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/import/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Preview */
+        post: operations["import_preview_api_investments_import_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/import/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Confirm */
+        post: operations["import_confirm_api_investments_import_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/ibkr/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ibkr Status
+         * @description Drive the Settings UI + sync button. Never returns the token value.
+         */
+        get: operations["ibkr_status_api_investments_ibkr_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/ibkr/sync-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ibkr Sync Preview
+         * @description Fetch IBKR positions and return a preview for the review UI (no writes).
+         */
+        post: operations["ibkr_sync_preview_api_investments_ibkr_sync_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/ibkr/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ibkr Sync Now
+         * @description Silent server-side upsert (no review) — same path the launch sync uses.
+         */
+        post: operations["ibkr_sync_now_api_investments_ibkr_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/ibkr/dividends-probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ibkr Dividends Probe
+         * @description PROTOTYPE / read-only: fetch an IBKR dividend Flex query and compare the
+         *     actual dividends it reports against the current yfinance estimates. Writes
+         *     nothing and does not touch the dividend cache — purely for assessment.
+         */
+        get: operations["ibkr_dividends_probe_api_investments_ibkr_dividends_probe_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Investment Accounts */
         get: operations["investment_accounts_api_investments_accounts_get"];
         put?: never;
         post?: never;
@@ -778,15 +978,329 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Investment Total Series
-         * @description Monthly aggregated series across all investment accounts.
-         *     For each month, sum the latest-known value of each account up to that month.
-         */
+        /** Investment Total Series */
         get: operations["investment_total_series_api_investments_total_series_get"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/dividend-calendar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dividend Calendar
+         * @description Project future dividend income by month, based on frequency + last payment.
+         */
+        get: operations["dividend_calendar_api_investments_dividend_calendar_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/goals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Goals */
+        get: operations["list_goals_api_goals_get"];
+        put?: never;
+        /** Create Goal */
+        post: operations["create_goal_api_goals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/goals/{goal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Goal */
+        put: operations["update_goal_api_goals__goal_id__put"];
+        post?: never;
+        /** Delete Goal */
+        delete: operations["delete_goal_api_goals__goal_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/goals/{goal_id}/contributions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Contributions */
+        get: operations["list_contributions_api_goals__goal_id__contributions_get"];
+        put?: never;
+        /** Add Contribution */
+        post: operations["add_contribution_api_goals__goal_id__contributions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/goals/{goal_id}/contributions/{contribution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Contribution */
+        delete: operations["delete_contribution_api_goals__goal_id__contributions__contribution_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/loans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Loans */
+        get: operations["list_loans_api_loans_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/loans/{account_id}/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Loan Schedule */
+        get: operations["loan_schedule_api_loans__account_id__schedule_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/loans/{account_id}/payments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Extra Payments */
+        get: operations["list_extra_payments_api_loans__account_id__payments_get"];
+        put?: never;
+        /** Add Extra Payment */
+        post: operations["add_extra_payment_api_loans__account_id__payments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/loans/{account_id}/payments/{payment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Extra Payment */
+        delete: operations["delete_extra_payment_api_loans__account_id__payments__payment_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get All Settings */
+        get: operations["get_all_settings_api_settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Setting */
+        get: operations["get_setting_api_settings__key__get"];
+        /** Update Setting */
+        put: operations["update_setting_api_settings__key__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/shutdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Shutdown
+         * @description Stop both servers cleanly and free ports 3000/8000.
+         *
+         *     Spawns a background thread so this request can return before the process
+         *     is killed; the client uses the response to show a "stopped" state.
+         */
+        post: operations["shutdown_api_system_shutdown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Backup
+         * @description Checkpoint SQLite WAL log and stream data/finance.db as a backup file.
+         */
+        get: operations["download_backup_api_system_backup_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore Backup
+         * @description Restore database from an uploaded SQLite backup file.
+         *
+         *     Hardened flow: read with a size cap, validate the magic header AND a full
+         *     ``PRAGMA integrity_check`` on the uploaded file in a temp location, keep a
+         *     timestamped copy of the current DB, then atomically swap the new one in.
+         */
+        post: operations["restore_backup_api_system_restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/export/transactions.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Transactions Csv
+         * @description Export all transactions for the active profile into a clean CSV file.
+         */
+        get: operations["export_transactions_csv_api_system_export_transactions_csv_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Profiles */
+        get: operations["list_profiles_api_profiles_get"];
+        put?: never;
+        /** Create Profile */
+        post: operations["create_profile_api_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Profile */
+        put: operations["update_profile_api_profiles__profile_id__put"];
+        post?: never;
+        /** Delete Profile */
+        delete: operations["delete_profile_api_profiles__profile_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -887,6 +1401,7 @@ export interface components {
              * @default #6366f1
              */
             color: string;
+            loan_details?: components["schemas"]["LoanDetailsCreate"] | null;
         };
         /** AccountOut */
         AccountOut: {
@@ -918,6 +1433,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            loan_details?: components["schemas"]["LoanDetailsOut"] | null;
         };
         /** AccountUpdate */
         AccountUpdate: {
@@ -933,6 +1449,7 @@ export interface components {
             color?: string | null;
             /** Is Active */
             is_active?: boolean | null;
+            loan_details?: components["schemas"]["LoanDetailsUpdate"] | null;
         };
         /** AnalyticsSummary */
         AnalyticsSummary: {
@@ -944,6 +1461,16 @@ export interface components {
             net_cash_flow_cents: number;
             /** Net Worth Cents */
             net_worth_cents: number;
+            /**
+             * Net Worth Excl Loans Cents
+             * @default 0
+             */
+            net_worth_excl_loans_cents: number;
+            /**
+             * Total Loans Cents
+             * @default 0
+             */
+            total_loans_cents: number;
             /** Total Income Display */
             total_income_display: string;
             /** Total Expenses Display */
@@ -952,6 +1479,16 @@ export interface components {
             net_cash_flow_display: string;
             /** Net Worth Display */
             net_worth_display: string;
+            /**
+             * Net Worth Excl Loans Display
+             * @default
+             */
+            net_worth_excl_loans_display: string;
+            /**
+             * Total Loans Display
+             * @default
+             */
+            total_loans_display: string;
             /** Last Transaction Date */
             last_transaction_date?: string | null;
         };
@@ -1058,12 +1595,19 @@ export interface components {
             /** File */
             file: string;
         };
+        /** Body_import_preview_api_investments_import_preview_post */
+        Body_import_preview_api_investments_import_preview_post: {
+            /** File */
+            file: string;
+        };
         /** Body_parse_preview_api_upload_parse_preview_post */
         Body_parse_preview_api_upload_parse_preview_post: {
             /** File */
             file: string;
             /** Profile Id */
             profile_id?: number | null;
+            /** Account Id */
+            account_id?: number | null;
             /** Column Mapping */
             column_mapping?: string | null;
             /** Date Format */
@@ -1072,6 +1616,11 @@ export interface components {
             encoding?: string | null;
             /** Delimiter */
             delimiter?: string | null;
+        };
+        /** Body_restore_backup_api_system_restore_post */
+        Body_restore_backup_api_system_restore_post: {
+            /** File */
+            file: string;
         };
         /** BudgetFullResponse */
         BudgetFullResponse: {
@@ -1353,28 +1902,303 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** GoalContributionCreate */
+        GoalContributionCreate: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Amount Cents */
+            amount_cents: number;
+            /** Note */
+            note?: string | null;
+        };
+        /** GoalContributionOut */
+        GoalContributionOut: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Amount Cents */
+            amount_cents: number;
+            /** Note */
+            note?: string | null;
+            /** Id */
+            id: number;
+            /** Goal Id */
+            goal_id: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** GoalCreate */
+        GoalCreate: {
+            /** Name */
+            name: string;
+            /** Target Amount Cents */
+            target_amount_cents: number;
+            /** Deadline */
+            deadline?: string | null;
+            /**
+             * Color
+             * @default #6366f1
+             */
+            color: string;
+            /**
+             * Icon
+             * @default target
+             */
+            icon: string;
+            /** Linked Account Id */
+            linked_account_id?: number | null;
+            /**
+             * Initial Amount Cents
+             * @default 0
+             */
+            initial_amount_cents: number;
+        };
+        /** GoalOut */
+        GoalOut: {
+            /** Name */
+            name: string;
+            /** Target Amount Cents */
+            target_amount_cents: number;
+            /** Deadline */
+            deadline?: string | null;
+            /**
+             * Color
+             * @default #6366f1
+             */
+            color: string;
+            /**
+             * Icon
+             * @default target
+             */
+            icon: string;
+            /** Linked Account Id */
+            linked_account_id?: number | null;
+            /** Id */
+            id: number;
+            /**
+             * Current Amount Cents
+             * @default 0
+             */
+            current_amount_cents: number;
+            /**
+             * Progress Pct
+             * @default 0
+             */
+            progress_pct: number;
+            /**
+             * Is Linked
+             * @default false
+             */
+            is_linked: boolean;
+            /** Linked Account Name */
+            linked_account_name?: string | null;
+            /** Monthly Needed Cents */
+            monthly_needed_cents?: number | null;
+        };
+        /** GoalUpdate */
+        GoalUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Target Amount Cents */
+            target_amount_cents?: number | null;
+            /** Deadline */
+            deadline?: string | null;
+            /** Color */
+            color?: string | null;
+            /** Icon */
+            icon?: string | null;
+            /** Linked Account Id */
+            linked_account_id?: number | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /** MLStatus */
-        MLStatus: {
-            /** Trained */
-            trained: boolean;
-            /** Last Trained */
-            last_trained: string | null;
-            /** Sample Count */
-            sample_count: number | null;
-            /** Accuracy */
-            accuracy: number | null;
+        /** HoldingCreate */
+        HoldingCreate: {
+            /** Ticker */
+            ticker: string;
+            /** Name */
+            name: string;
+            /** Quantity */
+            quantity: number;
+            /** Cost Basis Cents */
+            cost_basis_cents: number;
+            /**
+             * Currency
+             * @default USD
+             */
+            currency: string;
+            /**
+             * Asset Type
+             * @default stock
+             */
+            asset_type: string;
+            /** Added Date */
+            added_date?: string | null;
+            /** Notes */
+            notes?: string | null;
         };
-        /** MLTrainResponse */
-        MLTrainResponse: {
-            /** Accuracy */
-            accuracy: number;
-            /** Sample Count */
-            sample_count: number;
+        /** HoldingImportItem */
+        HoldingImportItem: {
+            /** Ticker */
+            ticker: string;
+            /** Name */
+            name: string;
+            /** Quantity */
+            quantity: number;
+            /** Cost Basis Cents */
+            cost_basis_cents: number;
+            /** Currency */
+            currency: string;
+            /** Asset Type */
+            asset_type: string;
+            /** Last Price Cents */
+            last_price_cents?: number | null;
+            /** Isin */
+            isin?: string | null;
+            /**
+             * Duplicate Action
+             * @default skip
+             */
+            duplicate_action: string;
+        };
+        /** HoldingUpdate */
+        HoldingUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Ticker */
+            ticker?: string | null;
+            /** Isin */
+            isin?: string | null;
+            /** Quantity */
+            quantity?: number | null;
+            /** Cost Basis Cents */
+            cost_basis_cents?: number | null;
+            /** Currency */
+            currency?: string | null;
+            /** Asset Type */
+            asset_type?: string | null;
+            /** Added Date */
+            added_date?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Price Locked */
+            price_locked?: boolean | null;
+            /** Ref Price Cents */
+            ref_price_cents?: number | null;
+        };
+        /** HoldingsImportConfirmRequest */
+        HoldingsImportConfirmRequest: {
+            /** Account Id */
+            account_id: number;
+            /** Holdings */
+            holdings: components["schemas"]["HoldingImportItem"][];
+        };
+        /** HoldingsImportConfirmResponse */
+        HoldingsImportConfirmResponse: {
+            /** Created */
+            created: number;
+            /** Updated */
+            updated: number;
+            /** Skipped */
+            skipped: number;
+        };
+        /** HoldingsImportPreviewResponse */
+        HoldingsImportPreviewResponse: {
+            /** Format */
+            format: string;
+            /** Holdings */
+            holdings: components["schemas"]["ParsedHoldingPreview"][];
+            /** Total */
+            total: number;
+            /** Duplicates */
+            duplicates: number;
+        };
+        /** LoanDetailsCreate */
+        LoanDetailsCreate: {
+            /** Principal Cents */
+            principal_cents?: number | null;
+            /** Interest Rate Pct */
+            interest_rate_pct?: number | null;
+            /** Monthly Payment Cents */
+            monthly_payment_cents?: number | null;
+            /** Term Months */
+            term_months?: number | null;
+            /** Start Date */
+            start_date?: string | null;
+        };
+        /** LoanDetailsOut */
+        LoanDetailsOut: {
+            /** Principal Cents */
+            principal_cents?: number | null;
+            /** Interest Rate Pct */
+            interest_rate_pct?: number | null;
+            /** Monthly Payment Cents */
+            monthly_payment_cents?: number | null;
+            /** Term Months */
+            term_months?: number | null;
+            /** Start Date */
+            start_date?: string | null;
+            /** Id */
+            id: number;
+            /** Account Id */
+            account_id: number;
+        };
+        /** LoanDetailsUpdate */
+        LoanDetailsUpdate: {
+            /** Principal Cents */
+            principal_cents?: number | null;
+            /** Interest Rate Pct */
+            interest_rate_pct?: number | null;
+            /** Monthly Payment Cents */
+            monthly_payment_cents?: number | null;
+            /** Term Months */
+            term_months?: number | null;
+            /** Start Date */
+            start_date?: string | null;
+        };
+        /** LoanExtraPaymentCreate */
+        LoanExtraPaymentCreate: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Amount Cents */
+            amount_cents: number;
+            /** Note */
+            note?: string | null;
+        };
+        /** LoanExtraPaymentOut */
+        LoanExtraPaymentOut: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Amount Cents */
+            amount_cents: number;
+            /** Note */
+            note?: string | null;
+            /** Id */
+            id: number;
+            /** Account Id */
+            account_id: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** MergeRulesRequest */
         MergeRulesRequest: {
@@ -1385,6 +2209,88 @@ export interface components {
              * @default OR
              */
             logic_operator: string;
+        };
+        /** ParsedHoldingPreview */
+        ParsedHoldingPreview: {
+            /** Ticker */
+            ticker: string;
+            /** Name */
+            name: string;
+            /** Quantity */
+            quantity: number;
+            /** Cost Basis Cents */
+            cost_basis_cents: number;
+            /** Currency */
+            currency: string;
+            /** Asset Type */
+            asset_type: string;
+            /** Last Price Cents */
+            last_price_cents?: number | null;
+            /** Isin */
+            isin?: string | null;
+            /**
+             * Is Duplicate
+             * @default false
+             */
+            is_duplicate: boolean;
+            /** Existing Holding Id */
+            existing_holding_id?: number | null;
+            /** Existing Quantity */
+            existing_quantity?: number | null;
+            /** Existing Cost Basis Cents */
+            existing_cost_basis_cents?: number | null;
+        };
+        /** ProfileCreate */
+        ProfileCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Color
+             * @default #6366f1
+             */
+            color: string;
+            /**
+             * Enabled Modules
+             * @default [
+             *       "banking",
+             *       "budgeting",
+             *       "investments",
+             *       "goals",
+             *       "loans"
+             *     ]
+             */
+            enabled_modules: string[];
+        };
+        /** ProfileOut */
+        ProfileOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Color */
+            color: string;
+            /** Is Default */
+            is_default: boolean;
+            /**
+             * Enabled Modules
+             * @default [
+             *       "banking",
+             *       "budgeting",
+             *       "investments",
+             *       "goals",
+             *       "loans"
+             *     ]
+             */
+            enabled_modules: string[];
+        };
+        /** ProfileUpdate */
+        ProfileUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Color */
+            color?: string | null;
+            /** Enabled Modules */
+            enabled_modules?: string[] | null;
         };
         /** RecurringTransaction */
         RecurringTransaction: {
@@ -1551,7 +2457,9 @@ export interface operations {
     list_accounts_api_accounts_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1566,12 +2474,23 @@ export interface operations {
                     "application/json": components["schemas"]["AccountOut"][];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     create_account_api_accounts_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1604,7 +2523,9 @@ export interface operations {
     get_account_api_accounts__account_id__get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 account_id: number;
             };
@@ -1635,7 +2556,9 @@ export interface operations {
     update_account_api_accounts__account_id__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 account_id: number;
             };
@@ -1670,7 +2593,9 @@ export interface operations {
     delete_account_api_accounts__account_id__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 account_id: number;
             };
@@ -1699,7 +2624,9 @@ export interface operations {
     list_snapshots_api_accounts__account_id__snapshots_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 account_id: number;
             };
@@ -1730,7 +2657,9 @@ export interface operations {
     create_snapshot_api_accounts__account_id__snapshots_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 account_id: number;
             };
@@ -1765,7 +2694,9 @@ export interface operations {
     delete_snapshot_api_accounts__account_id__snapshots__snapshot_id__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 account_id: number;
                 snapshot_id: number;
@@ -1795,7 +2726,9 @@ export interface operations {
     computed_balance_api_accounts__account_id__computed_balance_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 account_id: number;
             };
@@ -1840,7 +2773,9 @@ export interface operations {
                 limit?: number;
                 offset?: number;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1869,7 +2804,9 @@ export interface operations {
     create_transaction_api_transactions_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1902,7 +2839,9 @@ export interface operations {
     transaction_meta_api_transactions_meta_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1917,12 +2856,23 @@ export interface operations {
                     "application/json": components["schemas"]["TransactionMeta"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     list_batches_api_transactions_batches_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1937,14 +2887,25 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
-    detect_internal_transfers_api_transactions_detect_transfers_post: {
+    detect_transfers_endpoint_api_transactions_detect_transfers_post: {
         parameters: {
             query?: {
                 max_days?: number;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1973,7 +2934,9 @@ export interface operations {
     bulk_delete_transactions_api_transactions_bulk_delete_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2004,7 +2967,9 @@ export interface operations {
     bulk_update_transfer_api_transactions_bulk_update_transfer_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2037,7 +3002,9 @@ export interface operations {
     bulk_update_reviewed_api_transactions_bulk_update_reviewed_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2070,7 +3037,9 @@ export interface operations {
     bulk_update_category_api_transactions_bulk_update_category_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2108,7 +3077,9 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2137,7 +3108,9 @@ export interface operations {
     get_transaction_api_transactions__transaction_id__get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 transaction_id: number;
             };
@@ -2168,7 +3141,9 @@ export interface operations {
     update_transaction_api_transactions__transaction_id__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 transaction_id: number;
             };
@@ -2203,7 +3178,9 @@ export interface operations {
     delete_transaction_api_transactions__transaction_id__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 transaction_id: number;
             };
@@ -2232,7 +3209,9 @@ export interface operations {
     list_categories_api_categories_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2247,12 +3226,23 @@ export interface operations {
                     "application/json": components["schemas"]["CategoryOut"][];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     create_category_api_categories_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2285,7 +3275,9 @@ export interface operations {
     get_category_api_categories__category_id__get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 category_id: number;
             };
@@ -2316,7 +3308,9 @@ export interface operations {
     update_category_api_categories__category_id__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 category_id: number;
             };
@@ -2353,7 +3347,9 @@ export interface operations {
             query?: {
                 replace_with_id?: number | null;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 category_id: number;
             };
@@ -2382,7 +3378,9 @@ export interface operations {
     rescan_categories_api_categories_rescan_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2397,6 +3395,15 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     preview_rule_api_categories_rules_preview_post: {
@@ -2404,7 +3411,9 @@ export interface operations {
             query?: {
                 limit?: number;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2437,7 +3446,9 @@ export interface operations {
     list_all_rules_api_categories_rules_all_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2452,12 +3463,23 @@ export interface operations {
                     "application/json": components["schemas"]["CategoryRuleOut"][];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     list_rules_api_categories__category_id__rules_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 category_id: number;
             };
@@ -2488,7 +3510,9 @@ export interface operations {
     create_rule_api_categories__category_id__rules_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 category_id: number;
             };
@@ -2523,7 +3547,9 @@ export interface operations {
     update_rule_api_categories_rules__rule_id__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 rule_id: number;
             };
@@ -2558,7 +3584,9 @@ export interface operations {
     delete_rule_api_categories_rules__rule_id__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 rule_id: number;
             };
@@ -2587,7 +3615,9 @@ export interface operations {
     merge_rules_api_categories_rules_merge_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2620,7 +3650,9 @@ export interface operations {
     detect_api_upload_detect_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2653,7 +3685,9 @@ export interface operations {
     parse_preview_api_upload_parse_preview_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2686,7 +3720,9 @@ export interface operations {
     save_profile_api_upload_save_profile_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2719,7 +3755,9 @@ export interface operations {
     confirm_api_upload_confirm_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2756,7 +3794,9 @@ export interface operations {
                 date_to?: string | null;
                 account_ids?: string | null;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2789,7 +3829,9 @@ export interface operations {
                 date_to?: string | null;
                 account_ids?: string | null;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2822,7 +3864,9 @@ export interface operations {
                 date_to?: string | null;
                 account_ids?: string | null;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2855,7 +3899,9 @@ export interface operations {
                 date_to?: string | null;
                 account_ids?: string | null;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2888,7 +3934,9 @@ export interface operations {
                 date_to?: string | null;
                 account_ids?: string | null;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2919,7 +3967,9 @@ export interface operations {
             query?: {
                 account_ids?: string | null;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2950,7 +4000,9 @@ export interface operations {
             query?: {
                 months?: number;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2984,7 +4036,9 @@ export interface operations {
                 expected_amount_cents: number;
                 account_id?: number | null;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3017,7 +4071,9 @@ export interface operations {
                 account_id?: number | null;
                 account_ids?: string | null;
             };
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3043,81 +4099,12 @@ export interface operations {
             };
         };
     };
-    status_api_ml_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MLStatus"];
-                };
-            };
-        };
-    };
-    suggest_rules_api_ml_suggest_rules_get: {
-        parameters: {
-            query?: {
-                top_n?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    train_api_ml_train_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MLTrainResponse"];
-                };
-            };
-        };
-    };
     list_bank_profiles_api_bank_profiles_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3132,12 +4119,23 @@ export interface operations {
                     "application/json": components["schemas"]["BankProfileOut"][];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     create_bank_profile_api_bank_profiles_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3170,7 +4168,9 @@ export interface operations {
     get_bank_profile_api_bank_profiles__profile_id__get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 profile_id: number;
             };
@@ -3201,7 +4201,9 @@ export interface operations {
     update_bank_profile_api_bank_profiles__profile_id__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 profile_id: number;
             };
@@ -3236,7 +4238,9 @@ export interface operations {
     delete_bank_profile_api_bank_profiles__profile_id__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
             path: {
                 profile_id: number;
             };
@@ -3262,7 +4266,147 @@ export interface operations {
             };
         };
     };
-    investment_accounts_api_investments_accounts_get: {
+    list_holdings_api_investments_accounts__account_id__holdings_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                account_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_holding_api_investments_accounts__account_id__holdings_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                account_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HoldingCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_holding_api_investments_holdings__holding_id__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                holding_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HoldingUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_holding_api_investments_holdings__holding_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                holding_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trigger_price_refresh_api_investments_refresh_prices_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -3282,7 +4426,72 @@ export interface operations {
             };
         };
     };
-    investment_total_series_api_investments_total_series_get: {
+    resolve_tickers_api_investments_resolve_tickers_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    holding_history_api_investments_history__ticker__get: {
+        parameters: {
+            query?: {
+                period?: string;
+                asset_type?: string;
+            };
+            header?: never;
+            path: {
+                ticker: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    benchmark_list_api_investments_benchmarks_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -3298,6 +4507,1095 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    benchmark_history_api_investments_benchmark__key__get: {
+        parameters: {
+            query?: {
+                period?: string;
+            };
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    account_performance_api_investments_accounts__account_id__performance_get: {
+        parameters: {
+            query?: {
+                period?: string;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                account_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_preview_api_investments_import_preview_post: {
+        parameters: {
+            query: {
+                account_id: number;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_preview_api_investments_import_preview_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HoldingsImportPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_confirm_api_investments_import_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HoldingsImportConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HoldingsImportConfirmResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ibkr_status_api_investments_ibkr_status_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ibkr_sync_preview_api_investments_ibkr_sync_preview_post: {
+        parameters: {
+            query?: {
+                account_id?: number | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HoldingsImportPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ibkr_sync_now_api_investments_ibkr_sync_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HoldingsImportConfirmResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ibkr_dividends_probe_api_investments_ibkr_dividends_probe_get: {
+        parameters: {
+            query?: {
+                query_id?: string;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    investment_accounts_api_investments_accounts_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    investment_total_series_api_investments_total_series_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dividend_calendar_api_investments_dividend_calendar_get: {
+        parameters: {
+            query?: {
+                months?: number;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_goals_api_goals_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_goal_api_goals_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_goal_api_goals__goal_id__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                goal_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_goal_api_goals__goal_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                goal_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_contributions_api_goals__goal_id__contributions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                goal_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalContributionOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_contribution_api_goals__goal_id__contributions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                goal_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalContributionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalContributionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_contribution_api_goals__goal_id__contributions__contribution_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                goal_id: number;
+                contribution_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_loans_api_loans_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    loan_schedule_api_loans__account_id__schedule_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                account_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_extra_payments_api_loans__account_id__payments_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                account_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanExtraPaymentOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_extra_payment_api_loans__account_id__payments_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                account_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoanExtraPaymentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanExtraPaymentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_extra_payment_api_loans__account_id__payments__payment_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                account_id: number;
+                payment_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_all_settings_api_settings_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_setting_api_settings__key__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_setting_api_settings__key__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    shutdown_api_system_shutdown_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    download_backup_api_system_backup_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    restore_backup_api_system_restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_restore_backup_api_system_restore_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_transactions_csv_api_system_export_transactions_csv_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_profiles_api_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileOut"][];
+                };
+            };
+        };
+    };
+    create_profile_api_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_profile_api_profiles__profile_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_profile_api_profiles__profile_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

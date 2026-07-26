@@ -25,7 +25,6 @@ export type CategoryBreakdown = components["schemas"]["CategoryBreakdown"];
 export type RecurringTransaction = components["schemas"]["RecurringTransaction"];
 export type BudgetFullResponse = components["schemas"]["BudgetFullResponse"];
 export type BudgetTableRow = components["schemas"]["BudgetTableRow"];
-export type MLStatus = components["schemas"]["MLStatus"];
 export type BankProfile = components["schemas"]["BankProfileOut"];
 export type Snapshot = components["schemas"]["AccountBalanceSnapshotOut"];
 export interface ImportBatch {
@@ -285,7 +284,7 @@ function useInvalidate() {
 
 export function useAccountMutations() {
   const invalidate = useInvalidate();
-  const onSuccess = () => invalidate("accounts", "analytics", "investments", "snapshots");
+  const onSuccess = () => invalidate("accounts", "analytics", "investments", "snapshots", "loans");
   return {
     create: useMutation({ mutationFn: (body: AccountCreate) => unwrap(api.POST("/api/accounts", { body })), onSuccess }),
     update: useMutation({ mutationFn: ({ id, body }: { id: number; body: AccountUpdate }) => unwrap(api.PUT("/api/accounts/{account_id}", { params: { path: { account_id: id } }, body })), onSuccess }),
@@ -591,6 +590,7 @@ export interface Profile {
   name: string;
   color: string;
   is_default: boolean;
+  enabled_modules?: string[];
 }
 
 export function useProfiles() {
@@ -605,12 +605,30 @@ export function useProfiles() {
   });
 }
 
+export function useActiveProfile() {
+  const { data: profiles = [] } = useProfiles();
+  if (typeof window === "undefined") return null;
+  const storeStr = localStorage.getItem("finance-active-profile");
+  let activeId: number | null = null;
+  if (storeStr) {
+    try {
+      const parsed = JSON.parse(storeStr);
+      activeId = parsed?.state?.activeProfileId ?? null;
+    } catch {}
+  }
+  if (activeId != null) {
+    const found = profiles.find((p) => p.id === activeId);
+    if (found) return found;
+  }
+  return profiles.find((p) => p.is_default) ?? profiles[0] ?? null;
+}
+
 export function useProfileMutations() {
   const qc = useQueryClient();
   const onSuccess = () => qc.invalidateQueries({ queryKey: ["profiles"] });
   return {
     create: useMutation({
-      mutationFn: async (body: { name: string; color?: string }) => {
+      mutationFn: async (body: { name: string; color?: string; enabled_modules?: string[] }) => {
         const res = await fetch("/api/profiles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         if (!res.ok) throw new Error("Failed to create profile");
         return res.json() as Promise<Profile>;
@@ -618,7 +636,7 @@ export function useProfileMutations() {
       onSuccess,
     }),
     update: useMutation({
-      mutationFn: async ({ id, body }: { id: number; body: { name?: string; color?: string } }) => {
+      mutationFn: async ({ id, body }: { id: number; body: { name?: string; color?: string; enabled_modules?: string[] } }) => {
         const res = await fetch(`/api/profiles/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         if (!res.ok) throw new Error("Failed to update profile");
         return res.json() as Promise<Profile>;
@@ -697,4 +715,190 @@ export function useSettingMutation() {
     },
     onSuccess: () => invalidate("settings", "analytics", "budget-full", "investments"),
   });
+}
+
+// ── Shared JSON fetch helper (throws backend `detail` on error) ───────────────
+async function mutateJson(url: string, method: string, body?: unknown) {
+  const res = await fetch(url, {
+    method,
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail ?? "Requête échouée");
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+// ── Goals ───────────────────────────────────────────────────────────────────
+export interface Goal {
+  id: number;
+  name: string;
+  target_amount_cents: number;
+  current_amount_cents: number;
+  progress_pct: number;
+  deadline: string | null;
+  color: string;
+  icon: string;
+  linked_account_id: number | null;
+  is_linked: boolean;
+  linked_account_name: string | null;
+  monthly_needed_cents: number | null;
+}
+export interface GoalContribution {
+  id: number;
+  goal_id: number;
+  date: string;
+  amount_cents: number;
+  note: string | null;
+  created_at: string;
+}
+export interface GoalCreate {
+  name: string;
+  target_amount_cents: number;
+  deadline?: string | null;
+  color?: string;
+  icon?: string;
+  linked_account_id?: number | null;
+  initial_amount_cents?: number;
+}
+export interface GoalUpdate {
+  name?: string;
+  target_amount_cents?: number;
+  deadline?: string | null;
+  color?: string;
+  icon?: string;
+  linked_account_id?: number | null;
+}
+
+export function useGoals() {
+  return useQuery({
+    queryKey: ["goals"],
+    queryFn: async () => {
+      const res = await fetch("/api/goals");
+      if (!res.ok) throw new Error("Failed to fetch goals");
+      return res.json() as Promise<Goal[]>;
+    },
+  });
+}
+
+export function useGoalMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["goals"] });
+    qc.invalidateQueries({ queryKey: ["analytics"] });
+  };
+  return {
+    create: useMutation({ mutationFn: (body: GoalCreate) => mutateJson("/api/goals", "POST", body), onSuccess: invalidate }),
+    update: useMutation({ mutationFn: ({ id, body }: { id: number; body: GoalUpdate }) => mutateJson(`/api/goals/${id}`, "PUT", body), onSuccess: invalidate }),
+    delete: useMutation({ mutationFn: (id: number) => mutateJson(`/api/goals/${id}`, "DELETE"), onSuccess: invalidate }),
+  };
+}
+
+export function useGoalContributions(goalId: number | null) {
+  return useQuery({
+    queryKey: ["goal-contributions", goalId],
+    enabled: goalId != null,
+    queryFn: async () => {
+      const res = await fetch(`/api/goals/${goalId}/contributions`);
+      if (!res.ok) throw new Error("Failed to fetch contributions");
+      return res.json() as Promise<GoalContribution[]>;
+    },
+  });
+}
+
+export function useGoalContributionMutations(goalId: number) {
+  const qc = useQueryClient();
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["goal-contributions", goalId] });
+    qc.invalidateQueries({ queryKey: ["goals"] });
+    qc.invalidateQueries({ queryKey: ["analytics"] });
+  };
+  return {
+    add: useMutation({ mutationFn: (body: { date: string; amount_cents: number; note?: string | null }) => mutateJson(`/api/goals/${goalId}/contributions`, "POST", body), onSuccess: invalidate }),
+    remove: useMutation({ mutationFn: (cid: number) => mutateJson(`/api/goals/${goalId}/contributions/${cid}`, "DELETE"), onSuccess: invalidate }),
+  };
+}
+
+// ── Loans (amortization) ──────────────────────────────────────────────────────
+export interface LoanExtraPayment {
+  id: number;
+  account_id: number;
+  date: string;
+  amount_cents: number;
+  note: string | null;
+  created_at: string;
+}
+export interface Loan {
+  id: number;
+  name: string;
+  bank_name: string;
+  currency: string;
+  color: string;
+  principal_cents: number | null;
+  interest_rate_pct: number | null;
+  monthly_payment_cents: number;
+  term_months: number | null;
+  start_date: string | null;
+  remaining_cents: number;
+  paid_principal_cents: number;
+  progress_pct: number;
+  months_elapsed: number;
+  months_remaining: number;
+  actual_term_months: number;
+  payoff_date: string | null;
+  interest_total_cents: number;
+  interest_paid_cents: number;
+  interest_remaining_cents: number;
+  extra_paid_cents: number;
+  computable: boolean;
+  insufficient_payment: boolean;
+  extra_payments: LoanExtraPayment[];
+}
+export interface LoanScheduleRow {
+  date: string;
+  payment_cents: number;
+  interest_cents: number;
+  principal_cents: number;
+  balance_cents: number;
+}
+export interface LoanSchedule extends Loan {
+  account_id: number;
+  schedule: LoanScheduleRow[];
+}
+
+export function useLoans() {
+  return useQuery({
+    queryKey: ["loans"],
+    queryFn: async () => {
+      const res = await fetch("/api/loans");
+      if (!res.ok) throw new Error("Failed to fetch loans");
+      return res.json() as Promise<Loan[]>;
+    },
+  });
+}
+
+export function useLoanSchedule(accountId: number | null) {
+  return useQuery({
+    queryKey: ["loan-schedule", accountId],
+    enabled: accountId != null,
+    queryFn: async () => {
+      const res = await fetch(`/api/loans/${accountId}/schedule`);
+      if (!res.ok) throw new Error("Failed to fetch schedule");
+      return res.json() as Promise<LoanSchedule>;
+    },
+  });
+}
+
+export function useLoanPaymentMutations(accountId: number) {
+  const qc = useQueryClient();
+  const invalidate = () => {
+    ["loans", "analytics", "accounts"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    qc.invalidateQueries({ queryKey: ["loan-schedule", accountId] });
+  };
+  return {
+    add: useMutation({ mutationFn: (body: { date: string; amount_cents: number; note?: string | null }) => mutateJson(`/api/loans/${accountId}/payments`, "POST", body), onSuccess: invalidate }),
+    remove: useMutation({ mutationFn: (pid: number) => mutateJson(`/api/loans/${accountId}/payments/${pid}`, "DELETE"), onSuccess: invalidate }),
+  };
 }
