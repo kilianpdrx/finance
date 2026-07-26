@@ -37,8 +37,9 @@ async def _find_existing_hashes(db: AsyncSession, all_hashes: list, pid: int) ->
 
 def _acct_hashes(transactions: list, account_id: int) -> list[str]:
     """Recompute account-scoped import hashes (so identical txns in different
-    accounts/profiles don't collide on the global import_hash UNIQUE)."""
-    return [generate_import_hash(str(t.date), t.description, t.amount_cents, account_id) for t in transactions]
+    accounts/profiles don't collide on the global import_hash UNIQUE), including
+    the debit/credit direction so opposite-sign same-amount rows stay distinct."""
+    return [generate_import_hash(str(t.date), t.description, t.amount_cents, account_id, t.is_debit) for t in transactions]
 
 
 def _build_profile_from_mapping(column_mapping: dict, date_format: str, encoding: str, delimiter: str):

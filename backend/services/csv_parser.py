@@ -1,5 +1,6 @@
 """Parse a CSV file according to a BankProfile column mapping."""
 import io
+import re
 import hashlib
 import logging
 from datetime import date, datetime
@@ -31,21 +32,48 @@ def _decode(file_bytes: bytes, encoding: str) -> str:
 
 
 def _parse_amount(value) -> int:
-    """Convert a string/float amount to integer cents."""
+    """Convert a string/float amount to integer cents.
+
+    Handles locale grouping robustly: Swiss apostrophes (1'234.56 / 1’234.56),
+    German dots (1.234,56), US commas (1,234.56) and spaces (1 234,56). The
+    right-most '.' or ',' is treated as the decimal separator; every other '.'/','
+    is a thousands separator and is dropped. Returns 0 for blank/unparseable
+    input (callers treat 0 as "no amount").
+    """
     if pd.isna(value):
         return 0
-    s = str(value).strip().replace("\xa0", "").replace("\u202f", "").replace(" ", "").replace(",", ".")
-    # Remove currency symbols
-    for sym in ["€", "EUR", "CHF", "USD", "GBP", "Fr.", "Fr"]:
+    s = str(value).strip()
+    # Strip currency symbols.
+    for sym in ["€", "EUR", "CHF", "USD", "GBP", "Fr.", "Fr", "$", "£"]:
         s = s.replace(sym, "")
+    # Remove whitespace (incl. NBSP / narrow NBSP) and apostrophe thousands marks.
+    for ch in ("\xa0", "\u202f", " ", "'", "’"):
+        s = s.replace(ch, "")
     s = s.strip()
-    if not s or s == "-":
-        return 0
-    try:
-        return int(round(float(s) * 100))
-    except ValueError:
+    if not s:
         return 0
 
+    negative = s[0] == "-"
+    s = s.lstrip("+-")
+
+    # The right-most separator is the decimal point; anything before it is grouping.
+    dec_pos = max(s.rfind("."), s.rfind(","))
+    if dec_pos == -1:
+        int_part, frac_part = s, ""
+    else:
+        int_part, frac_part = s[:dec_pos], s[dec_pos + 1:]
+
+    int_part = re.sub(r"\D", "", int_part)
+    frac_part = re.sub(r"\D", "", frac_part)
+    if not int_part and not frac_part:
+        return 0
+
+    try:
+        amount = float(f"{int_part or '0'}.{frac_part or '0'}")
+    except ValueError:
+        return 0
+    cents = int(round(amount * 100))
+    return -cents if negative else cents
 
 def _compute_hash(date_str: str, description: str, amount_cents: int, is_debit: bool = True) -> str:
     sign = "D" if is_debit else "C"
@@ -176,10 +204,12 @@ def parse_csv(file_bytes: bytes, profile: BankProfile) -> list[TransactionCreate
             skipped_amounts += 1
             continue
 
-        # Balance after
+        # Balance after — keep a real 0 balance (only treat blank/NaN as unknown).
         balance_after: Optional[int] = None
         if balance_col and balance_col in df.columns:
-            balance_after = _parse_amount(row[balance_col]) or None
+            raw_balance = str(row[balance_col]).strip()
+            if raw_balance and raw_balance.lower() != "nan":
+                balance_after = _parse_amount(row[balance_col])
 
         import_hash = _compute_hash(str(parsed_date), description, amount_cents, is_debit)
 
