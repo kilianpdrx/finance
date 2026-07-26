@@ -1,4 +1,4 @@
-"""Categorize a transaction description using rules then ML fallback."""
+"""Categorize a transaction description using user-defined rules."""
 import re
 from typing import Optional, List
 from sqlalchemy import select
@@ -89,7 +89,10 @@ async def categorize_batch(
     db: AsyncSession,
     profile_id: Optional[int] = None,
 ) -> List[tuple[Optional[int], Optional[str]]]:
-    """Categorize a list of transactions efficiently by querying active rules once."""
+    """Categorize a list of transactions efficiently by querying active rules once.
+
+    Returns one (category_id, source) tuple per input transaction, in order.
+    `source` is "rule" on a match, else None."""
     if not txns_data:
         return []
 
@@ -118,16 +121,6 @@ async def categorize_batch(
                 matched_category = rule.category_id
                 matched_source = "rule"
                 break
-
-        if matched_category is None:
-            try:
-                from services.ml_trainer import predict
-                cat_id = predict(str(txn_data.get('description', '')), profile_id)
-                if cat_id is not None:
-                    matched_category = cat_id
-                    matched_source = "ml"
-            except Exception:
-                pass
 
         out.append((matched_category, matched_source))
 
