@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "sonner";
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [client] = useState(
@@ -23,7 +24,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
       <QueryClientProvider client={client}>
-        {children}
+        <ConfirmProvider>{children}</ConfirmProvider>
         <Toaster
           position="bottom-right"
           toastOptions={{ className: "!bg-surface !text-foreground !border-border" }}
