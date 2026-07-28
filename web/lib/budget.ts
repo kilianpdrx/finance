@@ -4,6 +4,26 @@ export interface MergedCell {
   month: string;
   actual_cents: number;
   expected_cents: number;
+  planned_cents: number;
+  planned_matched: boolean;
+  planned_id: number | null;
+}
+
+/** Cell classification for styling (three types + a confirm state):
+ *  - "regular"  : plain actual value
+ *  - "manual"   : a manual adjustment that adds on top of the actual (unchanged)
+ *  - "planned"  : a forecast expense, no real transaction seen yet
+ *  - "confirm"  : a transaction appeared but with a different amount than the plan
+ *                 → invite the user to confirm it matches the planned expense */
+export type CellType = "regular" | "manual" | "planned" | "confirm";
+
+export function cellType(cell: MergedCell): CellType {
+  const hasPlan = cell.planned_cents !== 0 && !cell.planned_matched;
+  if (hasPlan && cell.actual_cents === 0) return "planned";
+  // Exact-amount transaction auto-matches (no confirm needed); a different amount asks.
+  if (hasPlan && cell.actual_cents !== 0 && cell.actual_cents !== cell.planned_cents) return "confirm";
+  if (cell.expected_cents !== 0) return "manual";
+  return "regular";
 }
 export interface MergedRow {
   category_id: number | null;
@@ -40,10 +60,16 @@ export function buildMonths(startOffset: number, endOffset: number): string[] {
   return months;
 }
 
-/** Displayed cell value: future = expected only; past/current = actual + expected. */
-export function cellDisplayValue(cell: MergedCell, currentMonth: string): number {
-  if (cell.month > currentMonth) return cell.expected_cents;
-  return cell.actual_cents + cell.expected_cents;
+/** Displayed cell value = realized spend (actual) + any manual adjustment, plus a
+ *  planned forecast ONLY while it's unrealized (no transaction yet).
+ *
+ *  The actual ALWAYS counts — including in future months once a matching
+ *  transaction appears — so a realized/confirmed planned expense shows the real
+ *  transaction amount instead of going blank. When there's no transaction yet the
+ *  actual is 0, so a future cell still shows just its expected/planned forecast. */
+export function cellDisplayValue(cell: MergedCell, _currentMonth?: string): number {
+  const plannedActive = cell.planned_cents !== 0 && !cell.planned_matched && cell.actual_cents === 0;
+  return cell.actual_cents + cell.expected_cents + (plannedActive ? cell.planned_cents : 0);
 }
 
 /** Merge per-year budget-full responses into one continuous 24-month table. */
@@ -53,12 +79,22 @@ export function mergeYears(responses: BudgetFullResponse[], targetMonths: string
     if (r.months.length > 0) byYear.set(yearOf(r.months[0]), r);
   }
 
+  const empty = (month: string): MergedCell => ({
+    month, actual_cents: 0, expected_cents: 0, planned_cents: 0, planned_matched: false, planned_id: null,
+  });
   const findCell = (row: BudgetTableRow | undefined, resp: BudgetFullResponse | undefined, month: string): MergedCell => {
-    if (!resp || !row) return { month, actual_cents: 0, expected_cents: 0 };
+    if (!resp || !row) return empty(month);
     const idx = resp.months.indexOf(month);
-    if (idx === -1 || idx >= row.cells.length) return { month, actual_cents: 0, expected_cents: 0 };
+    if (idx === -1 || idx >= row.cells.length) return empty(month);
     const c = row.cells[idx];
-    return { month, actual_cents: c.actual_cents, expected_cents: c.expected_cents };
+    return {
+      month,
+      actual_cents: c.actual_cents,
+      expected_cents: c.expected_cents,
+      planned_cents: c.planned_cents ?? 0,
+      planned_matched: c.planned_matched ?? false,
+      planned_id: c.planned_id ?? null,
+    };
   };
 
   const mergeRow = (getRow: (r: BudgetFullResponse) => BudgetTableRow | undefined, fallbackName: string, fallbackColor: string): MergedRow => {

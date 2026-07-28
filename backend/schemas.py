@@ -360,6 +360,10 @@ class BudgetTableCell(BaseModel):
     month: str
     actual_cents: int
     expected_cents: int
+    # Planned-expense layer (forecast, separate from the manual expected adjustment).
+    planned_cents: int = 0
+    planned_matched: bool = False
+    planned_id: Optional[int] = None
 
 class BudgetTableRow(BaseModel):
     category_id: Optional[int]
@@ -369,6 +373,36 @@ class BudgetTableRow(BaseModel):
     cells: List[BudgetTableCell]
     total_actual_cents: int
     total_expected_cents: int
+
+class PlannedExpenseCreate(BaseModel):
+    category_id: int
+    month: str  # "YYYY-MM"
+    amount_cents: int
+    account_id: Optional[int] = None
+
+class PlannedExpenseRecurring(BaseModel):
+    category_id: int
+    start_month: str  # "YYYY-MM"
+    amount_cents: int
+    account_id: Optional[int] = None
+    every_n_months: int = 1
+    end_mode: str = "year"          # "year" | "count" | "until"
+    count: Optional[int] = None     # for end_mode="count"
+    end_month: Optional[str] = None  # for end_mode="until"
+
+class PlannedExpenseUpdate(BaseModel):
+    amount_cents: Optional[int] = None
+    matched: Optional[bool] = None
+
+class PlannedExpenseOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    category_id: int
+    account_id: Optional[int] = None
+    month: str
+    amount_cents: int
+    matched: bool = False
+
 
 class BudgetTableResponse(BaseModel):
     months: List[str]

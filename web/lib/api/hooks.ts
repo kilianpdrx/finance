@@ -348,6 +348,42 @@ export function useBudgetMutation() {
   });
 }
 
+// ── Planned expenses (budget forecast layer) ──────────────────────────────────
+export interface RecurringPlan {
+  category_id: number;
+  start_month: string;
+  amount_cents: number;
+  account_id?: number | null;
+  every_n_months: number;
+  end_mode: "year" | "count" | "until";
+  count?: number | null;
+  end_month?: string | null;
+}
+
+export function usePlannedExpenseMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["budget-full"] });
+  return {
+    create: useMutation({
+      mutationFn: (body: { category_id: number; month: string; amount_cents: number; account_id?: number | null }) =>
+        mutateJson("/api/planned-expenses", "POST", body),
+      onSuccess: invalidate,
+    }),
+    createRecurring: useMutation({
+      mutationFn: (body: RecurringPlan) => mutateJson("/api/planned-expenses/recurring", "POST", body),
+      onSuccess: invalidate,
+    }),
+    confirm: useMutation({
+      mutationFn: (id: number) => mutateJson(`/api/planned-expenses/${id}`, "PATCH", { matched: true }),
+      onSuccess: invalidate,
+    }),
+    remove: useMutation({
+      mutationFn: (id: number) => mutateJson(`/api/planned-expenses/${id}`, "DELETE"),
+      onSuccess: invalidate,
+    }),
+  };
+}
+
 export function useBankProfileMutations() {
   const invalidate = useInvalidate();
   const onSuccess = () => invalidate("bank-profiles");

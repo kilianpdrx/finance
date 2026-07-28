@@ -246,6 +246,30 @@ class BudgetEntry(Base):
     __table_args__ = (UniqueConstraint("category_id", "month", "account_id", name="uq_budget_entry"),)
 
 
+class PlannedExpense(Base):
+    """A forecast expense for a future (cat, month). Distinct from BudgetEntry
+    (manual adjustments that add to actuals): a planned amount is shown until a
+    real transaction appears for that category/month, then it's superseded.
+    `matched` records a user-confirmed match when the transaction amount differs.
+    """
+    __tablename__ = "planned_expenses"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)  # null = all accounts
+    month = Column(String, nullable=False)  # "YYYY-MM"
+    amount_cents = Column(Integer, nullable=False)
+    matched = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    category = relationship("Category")
+
+    __table_args__ = (
+        UniqueConstraint("profile_id", "category_id", "account_id", "month", name="uq_planned_expense"),
+    )
+
+
 class ExchangeRate(Base):
     __tablename__ = "exchange_rates"
 

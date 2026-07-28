@@ -2,12 +2,14 @@
 
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { Pencil } from "lucide-react";
+import { Pencil, CalendarPlus, Check, X } from "lucide-react";
 import { api, unwrap } from "@/lib/api/client";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CourantTabs, type CourantSelection } from "@/components/analytics/courant-tabs";
-import { useAccounts, useBudgetMutation, type BudgetFullResponse } from "@/lib/api/hooks";
-import { buildMonths, cellDisplayValue, mergeYears, yearOf, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
+import { useAccounts, useBudgetMutation, usePlannedExpenseMutations, type BudgetFullResponse } from "@/lib/api/hooks";
+import { PlanExpenseDialog } from "@/components/budget/plan-expense-dialog";
+import { buildMonths, cellDisplayValue, cellType, mergeYears, yearOf, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
 import { formatCents, formatMonthLabel, deriveCurrency } from "@/lib/format";
 
 // Column geometry (must match the Tailwind widths used in the table).
@@ -30,6 +32,10 @@ export default function BudgetPage() {
   const [accountSel, setAccountSel] = useState<CourantSelection>("all");
   const accountId = accountSel === "all" ? undefined : accountSel;
   const budgetMut = useBudgetMutation();
+  const plannedMut = usePlannedExpenseMutations();
+  const [planOpen, setPlanOpen] = useState(false);
+  const [planPrefill, setPlanPrefill] = useState<{ categoryId?: number; month?: string } | null>(null);
+  const openPlan = (prefill?: { categoryId?: number; month?: string }) => { setPlanPrefill(prefill ?? null); setPlanOpen(true); };
 
   const today = new Date();
   const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
@@ -167,10 +173,17 @@ export default function BudgetPage() {
           const value = cellDisplayValue(cell, currentMonth);
           const isCurrent = cell.month === currentMonth;
           const isFuture = cell.month > currentMonth;
+          const type = cellType(cell);
+          const bg =
+            type === "planned"
+              ? "bg-info/15 text-info"
+              : type === "confirm"
+                ? "bg-warning/20 text-warning ring-1 ring-inset ring-warning/40"
+                : `hover:bg-muted ${isCurrent ? "bg-brand/8" : ""} ${isFuture ? "bg-muted/30" : ""}`;
           return (
             <td
               onDoubleClick={() => { setEditing(key); setEditValue(cell.expected_cents ? String(cell.expected_cents / 100) : ""); }}
-              className={`w-24 cursor-pointer px-2 py-2 text-right text-sm hover:bg-muted ${isCurrent ? "bg-brand/8" : ""} ${isFuture ? "bg-muted/30" : ""}`}
+              className={`group/cell relative w-24 cursor-pointer px-2 py-2 text-right text-sm ${bg}`}
             >
               {isEditing ? (
                 <input
@@ -182,10 +195,45 @@ export default function BudgetPage() {
                   className="w-20 rounded border border-brand bg-background px-1.5 py-0.5 text-right text-sm focus:outline-none"
                 />
               ) : (
-                <span className="inline-flex items-center justify-end gap-1">
-                  {fmt(value)}
-                  {cell.expected_cents !== 0 && <Pencil className="size-3 text-warning" />}
-                </span>
+                <>
+                  {/* Value (always visible, right-aligned) */}
+                  <span className="flex items-center justify-end gap-1">
+                    {type === "confirm" && <span className="text-[10px] font-normal opacity-70">réel</span>}
+                    {fmt(value)}
+                    {type === "manual" && <Pencil className="size-3 text-warning" />}
+                  </span>
+                  {/* Action overlay on the left — absolutely positioned so it never
+                      pushes the value out of the narrow cell. */}
+                  <span className="absolute inset-y-0 left-1 flex items-center gap-0.5">
+                    {type === "confirm" && cell.planned_id != null && (
+                      <button
+                        title={`Confirmer : cette transaction correspond à la dépense planifiée de ${formatCents(cell.planned_cents, currency)} ?`}
+                        onClick={(e) => { e.stopPropagation(); plannedMut.confirm.mutate(cell.planned_id!); }}
+                        className="rounded bg-warning/25 p-0.5 text-warning hover:bg-warning/40"
+                      >
+                        <Check className="size-3.5" />
+                      </button>
+                    )}
+                    {(type === "planned" || type === "confirm") && cell.planned_id != null && (
+                      <button
+                        title={type === "confirm" ? "Ce n'est pas cette dépense (supprimer la planification)" : "Supprimer la dépense planifiée"}
+                        onClick={(e) => { e.stopPropagation(); plannedMut.remove.mutate(cell.planned_id!); }}
+                        className="hidden rounded p-0.5 opacity-70 hover:bg-black/10 hover:opacity-100 group-hover/cell:inline-flex"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    )}
+                    {type === "regular" && value === 0 && (
+                      <button
+                        title="Planifier une dépense ici"
+                        onClick={(e) => { e.stopPropagation(); openPlan({ categoryId: row.category_id ?? undefined, month: cell.month }); }}
+                        className="hidden rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground group-hover/cell:inline-flex"
+                      >
+                        <CalendarPlus className="size-3" />
+                      </button>
+                    )}
+                  </span>
+                </>
               )}
             </td>
           );
@@ -200,7 +248,7 @@ export default function BudgetPage() {
         <td className={`sticky left-0 z-10 w-52 border-r border-border px-4 py-2.5 text-sm ${cls}`}>{label}</td>
         {renderCells(row.cells, (cell) => (
           <td className="w-24 px-2 py-2.5 text-right text-sm">
-            <span className="inline-flex items-center justify-end gap-1">{fmt(cellDisplayValue(cell, currentMonth), true)}{cell.expected_cents !== 0 && <Pencil className="size-3 text-warning" />}</span>
+            <span className="inline-flex items-center justify-end gap-1">{fmt(cellDisplayValue(cell, currentMonth), true)}</span>
           </td>
         ), cls)}
       </tr>
@@ -210,12 +258,15 @@ export default function BudgetPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">Double-cliquez sur une cellule pour saisir un ajustement manuel. Faites défiler horizontalement, année après année.</p>
-        <div className="flex items-center gap-3">
+        <p className="text-sm text-muted-foreground">Double-cliquez pour un ajustement manuel. Utilisez « Planifier » (ou le bouton sur une cellule vide) pour anticiper une dépense future.</p>
+        <div className="flex flex-wrap items-center gap-3">
           <CourantTabs accounts={accounts} value={accountSel} onChange={setAccountSel} />
-          <span className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground">
-            <Pencil className="size-3 text-warning" /> = ajustement manuel
-          </span>
+          <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5"><Pencil className="size-3 text-warning" /> ajustement manuel</span>
+            <span className="flex items-center gap-1.5"><span className="inline-block size-3 rounded-sm bg-info/60" /> planifiée</span>
+            <span className="flex items-center gap-1.5"><Check className="size-3 text-warning" /> à confirmer</span>
+          </div>
+          <Button size="sm" onClick={() => openPlan()}><CalendarPlus className="mr-1.5 size-4" /> Planifier</Button>
         </div>
       </div>
 
@@ -268,7 +319,16 @@ export default function BudgetPage() {
                         cls="bg-muted text-brand"
                         row={{
                           category_id: null, category_name: "", category_color: "", is_investment: false,
-                          cells: data.months.map((m, i) => ({ month: m, actual_cents: nonInvest.reduce((s, r) => s + r.cells[i].actual_cents, 0), expected_cents: nonInvest.reduce((s, r) => s + r.cells[i].expected_cents, 0) })),
+                          cells: data.months.map((m, i) => {
+                            const actual = nonInvest.reduce((s, r) => s + r.cells[i].actual_cents, 0);
+                            const expected = nonInvest.reduce((s, r) => s + r.cells[i].expected_cents, 0);
+                            // Include active planned forecasts (mirrors the backend totals).
+                            const planned = nonInvest.reduce((s, r) => {
+                              const c = r.cells[i];
+                              return s + (c.planned_cents !== 0 && !c.planned_matched && c.actual_cents === 0 ? c.planned_cents : 0);
+                            }, 0);
+                            return { month: m, actual_cents: actual, expected_cents: expected + planned, planned_cents: 0, planned_matched: false, planned_id: null };
+                          }),
                         }}
                       />
                     )}
@@ -281,6 +341,8 @@ export default function BudgetPage() {
           </table>
         </div>
       )}
+
+      <PlanExpenseDialog open={planOpen} onOpenChange={setPlanOpen} accountId={accountId ?? null} prefill={planPrefill} />
     </div>
   );
 }

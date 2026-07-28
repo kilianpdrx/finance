@@ -1148,6 +1148,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/planned-expenses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Planned */
+        get: operations["list_planned_api_planned_expenses_get"];
+        put?: never;
+        /** Create Planned */
+        post: operations["create_planned_api_planned_expenses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/planned-expenses/recurring": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Recurring */
+        post: operations["create_recurring_api_planned_expenses_recurring_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/planned-expenses/{planned_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Planned */
+        delete: operations["delete_planned_api_planned_expenses__planned_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Planned */
+        patch: operations["update_planned_api_planned_expenses__planned_id__patch"];
+        trace?: never;
+    };
     "/api/settings": {
         parameters: {
             query?: never;
@@ -1651,6 +1704,18 @@ export interface components {
             actual_cents: number;
             /** Expected Cents */
             expected_cents: number;
+            /**
+             * Planned Cents
+             * @default 0
+             */
+            planned_cents: number;
+            /**
+             * Planned Matched
+             * @default false
+             */
+            planned_matched: boolean;
+            /** Planned Id */
+            planned_id?: number | null;
         };
         /** BudgetTableResponse */
         BudgetTableResponse: {
@@ -2239,6 +2304,67 @@ export interface components {
             existing_quantity?: number | null;
             /** Existing Cost Basis Cents */
             existing_cost_basis_cents?: number | null;
+        };
+        /** PlannedExpenseCreate */
+        PlannedExpenseCreate: {
+            /** Category Id */
+            category_id: number;
+            /** Month */
+            month: string;
+            /** Amount Cents */
+            amount_cents: number;
+            /** Account Id */
+            account_id?: number | null;
+        };
+        /** PlannedExpenseOut */
+        PlannedExpenseOut: {
+            /** Id */
+            id: number;
+            /** Category Id */
+            category_id: number;
+            /** Account Id */
+            account_id?: number | null;
+            /** Month */
+            month: string;
+            /** Amount Cents */
+            amount_cents: number;
+            /**
+             * Matched
+             * @default false
+             */
+            matched: boolean;
+        };
+        /** PlannedExpenseRecurring */
+        PlannedExpenseRecurring: {
+            /** Category Id */
+            category_id: number;
+            /** Start Month */
+            start_month: string;
+            /** Amount Cents */
+            amount_cents: number;
+            /** Account Id */
+            account_id?: number | null;
+            /**
+             * Every N Months
+             * @default 1
+             */
+            every_n_months: number;
+            /**
+             * End Mode
+             * @default year
+             */
+            end_mode: string;
+            /** Count */
+            count?: number | null;
+            /** End Month */
+            end_month?: string | null;
+        };
+        /** PlannedExpenseUpdate */
+        PlannedExpenseUpdate: {
+            /** Amount Cents */
+            amount_cents?: number | null;
+            /** Matched */
+            matched?: boolean | null;
         };
         /** ProfileCreate */
         ProfileCreate: {
@@ -5264,6 +5390,175 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_planned_api_planned_expenses_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlannedExpenseOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_planned_api_planned_expenses_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlannedExpenseCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlannedExpenseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_recurring_api_planned_expenses_recurring_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlannedExpenseRecurring"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_planned_api_planned_expenses__planned_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                planned_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_planned_api_planned_expenses__planned_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                planned_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlannedExpenseUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlannedExpenseOut"];
+                };
             };
             /** @description Validation Error */
             422: {

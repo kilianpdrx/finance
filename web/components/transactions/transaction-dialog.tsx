@@ -13,7 +13,10 @@ import { parseAmountToCents } from "@/lib/format";
 import { useAccounts, useCategories, useTransactionMutations } from "@/lib/api/hooks";
 
 export function TransactionDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-  const { data: accounts = [] } = useAccounts();
+  const { data: allAccounts = [] } = useAccounts();
+  // Manual transactions only make sense on current ("courant") accounts, not
+  // investment/loan/savings ones.
+  const accounts = allAccounts.filter((a) => a.account_type === "courant");
   const { data: categories = [] } = useCategories();
   const { create } = useTransactionMutations();
 

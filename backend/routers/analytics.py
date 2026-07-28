@@ -670,31 +670,37 @@ async def upsert_budget_entry(
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
-    filters = [
+    base = [
         BudgetEntry.category_id == category_id,
         BudgetEntry.month == month,
         BudgetEntry.profile_id == pid,
     ]
-    if account_id is not None:
-        filters.append(BudgetEntry.account_id == account_id)
-    else:
-        filters.append(BudgetEntry.account_id == None)
+    scope = base + [
+        BudgetEntry.account_id == account_id if account_id is not None else BudgetEntry.account_id.is_(None)
+    ]
+    # Use .all() (not scalar_one_or_none) so legacy duplicate rows don't 500.
+    entries = (await db.execute(select(BudgetEntry).where(and_(*scope)))).scalars().all()
 
-    result = await db.execute(
-        select(BudgetEntry).where(and_(*filters))
-    )
-    entry = result.scalar_one_or_none()
-    if entry:
-        entry.expected_amount_cents = expected_amount_cents
+    if expected_amount_cents == 0:
+        # Clearing the adjustment. From the aggregate ("Tous") view also remove any
+        # account-specific adjustments for this cat/month, so an adjustment made in
+        # a per-account view can always be cleared here.
+        to_delete = list(entries)
+        if account_id is None:
+            to_delete += (await db.execute(
+                select(BudgetEntry).where(and_(*base, BudgetEntry.account_id.isnot(None)))
+            )).scalars().all()
+        for e in to_delete:
+            await db.delete(e)
+    elif entries:
+        entries[0].expected_amount_cents = expected_amount_cents
+        for extra in entries[1:]:  # collapse any legacy duplicates
+            await db.delete(extra)
     else:
-        entry = BudgetEntry(
-            category_id=category_id,
-            month=month,
-            expected_amount_cents=expected_amount_cents,
-            account_id=account_id,
-            profile_id=pid,
-        )
-        db.add(entry)
+        db.add(BudgetEntry(
+            category_id=category_id, month=month,
+            expected_amount_cents=expected_amount_cents, account_id=account_id, profile_id=pid,
+        ))
     await db.commit()
     return {"ok": True}
 
@@ -759,6 +765,20 @@ async def budget_full(
     for b in budget_rows.scalars():
         budgets[b.category_id][b.month] = b.expected_amount_cents
 
+    # Planned expenses (forecast layer) — same account scoping as budgets.
+    from models import PlannedExpense
+    planned_filters = [PlannedExpense.month.in_(month_list), PlannedExpense.profile_id == pid]
+    if account_id is not None:
+        planned_filters.append(PlannedExpense.account_id == account_id)
+    elif parsed_acc_ids:
+        planned_filters.append(PlannedExpense.account_id.in_(parsed_acc_ids) | (PlannedExpense.account_id == None))
+    else:
+        planned_filters.append(PlannedExpense.account_id == None)
+    planned_rows = await db.execute(select(PlannedExpense).where(and_(*planned_filters)))
+    planned: dict = defaultdict(dict)
+    for p in planned_rows.scalars():
+        planned[p.category_id][p.month] = p
+
     cats_result = await db.execute(select(Category).where(Category.profile_id == pid))
     all_cats = list(cats_result.scalars())
 
@@ -783,6 +803,9 @@ async def budget_full(
         rows_out = []
         section_totals_actual = {m: 0 for m in month_list}
         section_totals_expected = {m: 0 for m in month_list}
+        # Sum of planned expenses that are still "active" (no transaction yet), so
+        # totals/RESTE/SOLDE NET reflect the forecast — mirrors cellDisplayValue.
+        section_totals_planned = {m: 0 for m in month_list}
         total_actual_all = 0
         total_expected_all = 0
 
@@ -793,9 +816,17 @@ async def budget_full(
             for month in month_list:
                 actual = actuals[cat.id].get(month, 0)
                 expected = budgets[cat.id].get(month, 0)
-                cells.append(BudgetTableCell(month=month, actual_cents=actual, expected_cents=expected))
+                p = planned[cat.id].get(month)
+                cells.append(BudgetTableCell(
+                    month=month, actual_cents=actual, expected_cents=expected,
+                    planned_cents=(p.amount_cents if p else 0),
+                    planned_matched=(bool(p.matched) if p else False),
+                    planned_id=(p.id if p else None),
+                ))
                 section_totals_actual[month] += actual
                 section_totals_expected[month] += expected
+                if p and not p.matched and actual == 0:
+                    section_totals_planned[month] += p.amount_cents
                 row_total_actual += actual
                 row_total_expected += expected
             rows_out.append(BudgetTableRow(
@@ -810,8 +841,13 @@ async def budget_full(
             total_actual_all += row_total_actual
             total_expected_all += row_total_expected
 
+        # Fold active planned into expected so cellDisplayValue includes it in totals.
         totals_cells = [
-            BudgetTableCell(month=m, actual_cents=section_totals_actual[m], expected_cents=section_totals_expected[m])
+            BudgetTableCell(
+                month=m,
+                actual_cents=section_totals_actual[m],
+                expected_cents=section_totals_expected[m] + section_totals_planned[m],
+            )
             for m in month_list
         ]
         totals_row = BudgetTableRow(
@@ -828,17 +864,17 @@ async def budget_full(
             section_label=section_label,
             rows=rows_out,
             section_totals=totals_row,
-        ), section_totals_actual, section_totals_expected, total_actual_all, total_expected_all
+        ), section_totals_actual, section_totals_expected, section_totals_planned, total_actual_all, total_expected_all
 
-    sec_revenus, rev_actual, rev_expected, rev_tot_a, rev_tot_e = build_section(income_cats, "revenus", "REVENUS")
-    sec_fixes, fix_actual, fix_expected, fix_tot_a, fix_tot_e = build_section(fixed_cats, "depenses_fixes", "DÉPENSES FIXES")
-    sec_var, var_actual, var_expected, var_tot_a, var_tot_e = build_section(variable_cats, "depenses_variables", "DÉPENSES VARIABLES")
+    sec_revenus, rev_actual, rev_expected, rev_planned, rev_tot_a, rev_tot_e = build_section(income_cats, "revenus", "REVENUS")
+    sec_fixes, fix_actual, fix_expected, fix_planned, fix_tot_a, fix_tot_e = build_section(fixed_cats, "depenses_fixes", "DÉPENSES FIXES")
+    sec_var, var_actual, var_expected, var_planned, var_tot_a, var_tot_e = build_section(variable_cats, "depenses_variables", "DÉPENSES VARIABLES")
 
     reste_cells = [
         BudgetTableCell(
             month=m,
             actual_cents=rev_actual[m] - fix_actual[m],
-            expected_cents=rev_expected[m] - fix_expected[m],
+            expected_cents=(rev_expected[m] - fix_expected[m]) + (rev_planned[m] - fix_planned[m]),
         )
         for m in month_list
     ]
@@ -855,7 +891,8 @@ async def budget_full(
         BudgetTableCell(
             month=m,
             actual_cents=rev_actual[m] - fix_actual[m] - var_actual[m],
-            expected_cents=rev_expected[m] - fix_expected[m] - var_expected[m],
+            expected_cents=(rev_expected[m] - fix_expected[m] - var_expected[m])
+            + (rev_planned[m] - fix_planned[m] - var_planned[m]),
         )
         for m in month_list
     ]
