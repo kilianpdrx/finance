@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAccounts, useCategories, useCategoryMutations, type Category } from "@/lib/api/hooks";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { groupByAccount } from "@/lib/group";
 
 type TypeKey = "income" | "fixed" | "variable";
@@ -26,6 +27,7 @@ export function CategoriesTab() {
   const { data: categories = [] } = useCategories();
   const { data: accounts = [] } = useAccounts();
   const { create, update, remove, rescan } = useCategoryMutations();
+  const confirm = useConfirm();
   const groups = useMemo(() => groupByAccount(categories, accounts), [categories, accounts]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
@@ -59,8 +61,14 @@ export function CategoriesTab() {
     } catch (e) { toast.error(e instanceof Error ? e.message : "Erreur"); }
   };
 
-  const onDelete = (c: Category) => {
-    if (confirm(`Supprimer « ${c.name} » ? Les transactions seront reclassées.`)) remove.mutate({ id: c.id });
+  const onDelete = async (c: Category) => {
+    const ok = await confirm({
+      title: `Supprimer « ${c.name} » ?`,
+      description: "Les transactions de cette catégorie seront reclassées comme « Sans catégorie ».",
+      confirmLabel: "Supprimer",
+      destructive: true,
+    });
+    if (ok) remove.mutate({ id: c.id });
   };
 
   return (

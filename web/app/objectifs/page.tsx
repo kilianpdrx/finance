@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Plus, Target, Check, Pencil, Trash2, Link2, CalendarClock } from "lucide-react";
 import { useGoals, useGoalMutations, type Goal } from "@/lib/api/hooks";
+import { deleteWithUndo } from "@/lib/undo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GoalDialog } from "@/components/goals/goal-dialog";
@@ -22,6 +24,7 @@ function ProgressBar({ value, color }: { value: number; color?: string }) {
 export default function GoalsPage() {
   const { data: goals = [], isLoading } = useGoals();
   const { delete: delGoal } = useGoalMutations();
+  const qc = useQueryClient();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
@@ -29,6 +32,15 @@ export default function GoalsPage() {
 
   const openNew = () => { setEditingGoal(null); setDialogOpen(true); };
   const openEdit = (g: Goal) => { setEditingGoal(g); setDialogOpen(true); };
+
+  const removeGoal = (goal: Goal) =>
+    deleteWithUndo({
+      queryClient: qc,
+      queryKeys: [["goals"]],
+      message: `Objectif « ${goal.name} » supprimé`,
+      optimisticRemove: () => qc.setQueryData<Goal[]>(["goals"], (o) => o?.filter((g) => g.id !== goal.id)),
+      apiDelete: () => delGoal.mutateAsync(goal.id),
+    });
 
   return (
     <div className="flex flex-1 flex-col p-6 space-y-6 max-w-5xl mx-auto w-full">
@@ -71,7 +83,7 @@ export default function GoalsPage() {
                     <Pencil className="size-4" />
                   </Button>
                   <Button variant="ghost" size="icon" className="size-8"
-                    onClick={(e) => { e.stopPropagation(); if (confirm("Supprimer cet objectif ?")) delGoal.mutate(goal.id); }}>
+                    onClick={(e) => { e.stopPropagation(); removeGoal(goal); }}>
                     <Trash2 className="size-4 text-destructive" />
                   </Button>
                 </div>

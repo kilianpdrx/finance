@@ -16,6 +16,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CategorySelect } from "@/components/transactions/category-select";
 import { TransactionDialog } from "@/components/transactions/transaction-dialog";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   useAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionMutations,
   type TransactionFilters,
@@ -31,6 +32,7 @@ export default function TransactionsPage() {
   const { data: categories = [] } = useCategories();
   const { data: meta } = useTransactionMeta();
   const mut = useTransactionMutations();
+  const confirm = useConfirm();
 
   // The account filter only lists current accounts (no savings/credit/investment).
   const txAccounts = useMemo(() => accounts.filter((a) => a.account_type === "courant"), [accounts]);
@@ -148,7 +150,16 @@ export default function TransactionsPage() {
           <Button variant="outline" size="sm" onClick={() => runBulk(() => mut.bulkTransfer.mutateAsync({ ids, value: true }), "Marquées virement")}>
             <ArrowLeftRight className="size-4" /> Virement
           </Button>
-          <Button variant="destructive" size="sm" onClick={() => runBulk(() => mut.bulkDelete.mutateAsync(ids), "Supprimées")}>
+          <Button variant="destructive" size="sm"
+            onClick={async () => {
+              const ok = await confirm({
+                title: `Supprimer ${selected.size} transaction(s) ?`,
+                description: "Cette action est définitive.",
+                confirmLabel: "Supprimer",
+                destructive: true,
+              });
+              if (ok) runBulk(() => mut.bulkDelete.mutateAsync(ids), "Supprimées");
+            }}>
             <Trash2 className="size-4" /> Supprimer
           </Button>
           <Button variant="ghost" size="sm" onClick={clearSelection}><X className="size-4" /> Annuler</Button>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, Wallet } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,12 +14,14 @@ import { AccountDialog, ACCOUNT_TYPE_LABELS } from "@/components/accounts/accoun
 import { SnapshotDialog } from "@/components/accounts/snapshot-dialog";
 import { useAccounts, useNetWorth, useAccountMutations, type Account } from "@/lib/api/hooks";
 import { balancesFromNetWorth } from "@/lib/networth";
+import { deleteWithUndo } from "@/lib/undo";
 import { formatCents } from "@/lib/format";
 
 export default function ComptesPage() {
   const { data: accounts = [], isLoading } = useAccounts();
   const { data: netWorth = [] } = useNetWorth({});
   const { remove } = useAccountMutations();
+  const qc = useQueryClient();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
@@ -38,9 +41,14 @@ export default function ComptesPage() {
 
   const openCreate = () => { setEditing(null); setDialogOpen(true); };
   const openEdit = (a: Account) => { setEditing(a); setDialogOpen(true); };
-  const onDelete = (a: Account) => {
-    if (confirm(`Désactiver le compte « ${a.name} » ?`)) remove.mutate(a.id);
-  };
+  const onDelete = (a: Account) =>
+    deleteWithUndo({
+      queryClient: qc,
+      queryKeys: [["accounts"]],
+      message: `Compte « ${a.name} » désactivé`,
+      optimisticRemove: () => qc.setQueryData<Account[]>(["accounts"], (o) => o?.filter((x) => x.id !== a.id)),
+      apiDelete: () => remove.mutateAsync(a.id),
+    });
 
   const AccountCard = (acc: Account) => (
     <Card key={acc.id} className="p-5">

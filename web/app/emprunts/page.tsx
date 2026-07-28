@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, type ElementType } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { BadgeMinus, Home, Pencil, Trash2, CalendarClock, Percent, Coins, TableProperties, AlertTriangle } from "lucide-react";
 import { useLoans, useAccounts, useAccountMutations, type Loan, type Account } from "@/lib/api/hooks";
+import { deleteWithUndo } from "@/lib/undo";
 import { formatCents } from "@/lib/format";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,16 @@ export default function LoansPage() {
   const { data: loans = [], isLoading } = useLoans();
   const { data: accounts = [] } = useAccounts();
   const { remove } = useAccountMutations();
+  const qc = useQueryClient();
+
+  const removeLoan = (loan: Loan) =>
+    deleteWithUndo({
+      queryClient: qc,
+      queryKeys: [["loans"]],
+      message: `Emprunt « ${loan.name} » supprimé`,
+      optimisticRemove: () => qc.setQueryData<Loan[]>(["loans"], (o) => o?.filter((l) => l.id !== loan.id)),
+      apiDelete: () => remove.mutateAsync(loan.id),
+    });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editAccount, setEditAccount] = useState<Account | null>(null);
@@ -162,7 +174,7 @@ export default function LoansPage() {
                       </Button>
                     )}
                     <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative"
-                      onClick={() => { if (confirm(`Supprimer l'emprunt « ${loan.name} » ?`)) remove.mutate(loan.id); }}>
+                      onClick={() => removeLoan(loan)}>
                       <Trash2 className="size-4" />
                     </Button>
                   </div>

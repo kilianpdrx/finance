@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useBankProfiles, useBankProfileMutations, useInvestmentAccounts, type BankProfile } from "@/lib/api/hooks";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { EditBankProfileDialog } from "./edit-bank-profile-dialog";
 
 // Read-only reference of the columns each investment format consumes.
@@ -25,8 +26,19 @@ export function ProfilesTab() {
   const { data: profiles = [] } = useBankProfiles();
   const { data: investAccounts = [] } = useInvestmentAccounts();
   const { remove } = useBankProfileMutations();
+  const confirm = useConfirm();
   const [editing, setEditing] = useState<any | null>(null);
   const [isInvestment, setIsInvestment] = useState(false);
+
+  const askDelete = async (p: { id: number; name: string }) => {
+    const ok = await confirm({
+      title: `Supprimer le profil « ${p.name} » ?`,
+      description: "Ce profil d'import sera supprimé. Vos transactions déjà importées ne sont pas affectées.",
+      confirmLabel: "Supprimer",
+      destructive: true,
+    });
+    if (ok) remove.mutate(p.id, { onSuccess: () => toast.success("Profil supprimé") });
+  };
 
   const inferFormat = (bank: string, name: string) => {
     const s = `${bank} ${name}`;
@@ -132,7 +144,7 @@ export function ProfilesTab() {
                   <Pencil className="size-4" />
                 </Button>
                 <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative"
-                  onClick={() => { if (confirm(`Supprimer le profil « ${p.name} » ?`)) remove.mutate(p.id, { onSuccess: () => toast.success("Profil supprimé") }); }}>
+                  onClick={() => askDelete(p)}>
                   <Trash2 className="size-4" />
                 </Button>
               </div>
@@ -169,7 +181,7 @@ export function ProfilesTab() {
                   <Pencil className="size-4" />
                 </Button>
                 <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative"
-                  onClick={() => { if (confirm(`Supprimer le profil « ${p.name} » ?`)) remove.mutate(p.id, { onSuccess: () => toast.success("Profil supprimé") }); }}>
+                  onClick={() => askDelete(p)}>
                   <Trash2 className="size-4" />
                 </Button>
               </div>
