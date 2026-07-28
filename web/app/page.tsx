@@ -1,6 +1,6 @@
 "use client";
 
-import { Landmark, TrendingUp, TrendingDown, Scale, PieChart as PieIcon, Inbox } from "lucide-react";
+import { Landmark, TrendingUp, TrendingDown, Scale, PieChart as PieIcon, Inbox, Upload, Wallet, Table2, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -48,20 +48,7 @@ export default function DashboardPage() {
   if (loading) return <DashboardSkeleton />;
 
   if (accounts.length === 0) {
-    return (
-      <Card>
-        <EmptyState
-          icon={Inbox}
-          title="Aucun compte pour le moment"
-          description="Importez un relevé bancaire CSV pour commencer à suivre vos finances."
-          action={
-            <Button asChild>
-              <Link href="/importer">Importer un relevé</Link>
-            </Button>
-          }
-        />
-      </Card>
-    );
+    return <GettingStarted showBudget={modules.includes("budgeting")} />;
   }
 
   const s = summary.data;
@@ -203,6 +190,67 @@ export default function DashboardPage() {
         </Card>
       </motion.div>
     </div>
+  );
+}
+
+function GettingStarted({ showBudget }: { showBudget: boolean }) {
+  const steps = [
+    {
+      icon: Upload,
+      title: "Importez un relevé bancaire",
+      description: "Glissez un fichier CSV de votre banque — les colonnes sont détectées automatiquement.",
+      href: "/importer",
+      cta: "Importer un relevé",
+      primary: true,
+    },
+    {
+      icon: Wallet,
+      title: "Vérifiez vos comptes",
+      description: "Ajustez le type, la devise et le solde de chaque compte après l'import.",
+      href: "/comptes",
+      cta: "Voir les comptes",
+      primary: false,
+    },
+    ...(showBudget
+      ? [{
+          icon: Table2,
+          title: "Définissez votre budget",
+          description: "Planifiez vos dépenses et suivez-les mois par mois.",
+          href: "/budget",
+          cta: "Ouvrir le budget",
+          primary: false,
+        }]
+      : []),
+  ];
+
+  return (
+    <Card className="mx-auto max-w-2xl p-8">
+      <div className="space-y-1 text-center">
+        <h1 className="text-xl font-bold tracking-tight">Bienvenue 👋</h1>
+        <p className="text-sm text-muted-foreground">
+          Trois étapes pour commencer à suivre vos finances. Vos données restent sur votre machine.
+        </p>
+      </div>
+      <ol className="mt-6 space-y-3">
+        {steps.map((step, i) => (
+          <li key={step.href}
+            className="flex items-center gap-4 rounded-xl border border-border bg-surface p-4 transition-colors hover:bg-muted/40">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand/10 text-sm font-semibold text-brand">
+              {i + 1}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-2 text-sm font-semibold">
+                <step.icon className="size-4 text-muted-foreground" /> {step.title}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{step.description}</p>
+            </div>
+            <Button asChild variant={step.primary ? "default" : "outline"} size="sm" className="shrink-0">
+              <Link href={step.href}>{step.cta} <ArrowRight className="ml-1 size-3.5" /></Link>
+            </Button>
+          </li>
+        ))}
+      </ol>
+    </Card>
   );
 }
 
