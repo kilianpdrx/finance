@@ -1,6 +1,7 @@
 """Detect bank profile from CSV file bytes and filename."""
 import io
 import logging
+import unicodedata
 import chardet
 import pandas as pd
 from sqlalchemy import select
@@ -8,6 +9,54 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import BankProfile
 
 logger = logging.getLogger(__name__)
+
+
+def _norm(s: str) -> str:
+    """Lowercase, strip accents and surrounding whitespace for keyword matching."""
+    s = unicodedata.normalize("NFKD", str(s))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.lower().strip()
+
+
+# Keyword hints per mapping role (FR + EN + DE), accent-insensitive.
+_ROLE_KEYWORDS = {
+    "date": ["date", "jour", "datum", "buchung"],
+    "debit": ["debit", "retrait", "withdrawal", "depense", "sortie"],
+    "credit": ["credit", "versement", "deposit", "recette", "entree"],
+    "amount": ["montant", "amount", "betrag", "valeur", "value"],
+    "balance": ["solde", "balance", "saldo"],
+    "description": ["description", "libelle", "label", "wording", "nature", "motif",
+                    "detail", "communication", "name", "payee", "memo", "narrative", "objet"],
+}
+# More specific roles first so e.g. a "Débit" column isn't stolen by "amount".
+_ROLE_PRIORITY = ["date", "debit", "credit", "amount", "balance", "description"]
+
+
+def guess_columns(headers: list[str]) -> dict[str, str]:
+    """Best-effort guess of {header_name: role} from CSV headers, so the mapping
+    UI can pre-select the likely field for each column. Each role is assigned to
+    at most one header; unmatched headers are simply omitted."""
+    norm = {h: _norm(h) for h in headers}
+    assigned: set[str] = set()
+    result: dict[str, str] = {}
+    for role in _ROLE_PRIORITY:
+        for h in headers:
+            if h in assigned:
+                continue
+            if any(kw in norm[h] for kw in _ROLE_KEYWORDS[role]):
+                assigned.add(h)
+                result[h] = role
+                break
+    return result
+
+
+def guess_confidence(guesses: dict[str, str]) -> float:
+    """0..1 confidence that the guesses are usable: fraction of the essential
+    roles (date, description, and an amount source) that were found."""
+    roles = set(guesses.values())
+    has_amount = "amount" in roles or {"debit", "credit"} <= roles
+    essential = ["date" in roles, "description" in roles, has_amount]
+    return round(sum(essential) / len(essential), 2)
 
 
 def _decode_safe(file_bytes: bytes, encoding: str) -> str:

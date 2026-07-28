@@ -8,7 +8,7 @@ from database import get_db
 from dependencies import current_profile_id
 from models import Transaction, BankProfile, Account, ImportBatch
 from schemas import DetectResponse, ConfirmResponse, BankProfileOut, BankProfileCreate
-from services.bank_detector import detect_bank
+from services.bank_detector import detect_bank, guess_columns, guess_confidence
 from services.csv_parser import parse_csv
 from services.categorizer import categorize, categorize_batch
 from services.transfer_detector import detect_internal_transfers
@@ -129,6 +129,10 @@ async def detect(
         preview = []
         profile_out = None
 
+    # When no saved profile matched, offer a best-effort column mapping so the
+    # manual-mapping UI can pre-select the likely field for each column.
+    column_guesses = guess_columns(raw_headers) if (profile is None and raw_headers) else {}
+
     return {
         "profile": profile_out,
         "preview": preview,
@@ -136,6 +140,8 @@ async def detect(
         "raw_headers": raw_headers,
         "raw_preview": raw_preview,
         "detected": profile is not None,
+        "column_guesses": column_guesses,
+        "confidence": guess_confidence(column_guesses),
     }
 
 
@@ -345,6 +351,7 @@ async def confirm(
 
     imported = 0
     skipped = 0
+    categorized = 0
 
     import hashlib as _hl
     import time as _time
@@ -396,6 +403,8 @@ async def confirm(
         db.add(txn)
         existing_hashes.add(final_hash)
         imported += 1
+        if cat_id is not None:
+            categorized += 1
 
     batch.transaction_count = imported
     if imported == 0:
@@ -406,4 +415,4 @@ async def confirm(
     # Detect internal transfers after importing (scoped to the profile)
     await detect_internal_transfers(db, pid)
 
-    return ConfirmResponse(imported=imported, skipped=skipped, total=imported + skipped)
+    return ConfirmResponse(imported=imported, skipped=skipped, total=imported + skipped, categorized=categorized)

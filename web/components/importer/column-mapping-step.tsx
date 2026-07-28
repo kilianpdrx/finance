@@ -36,11 +36,13 @@ function buildLocalPreview(rawPreview: string[][], mapping: Record<number, strin
 }
 
 export function ColumnMappingStep({
-  rawHeaders, rawPreview, fileName, accounts, selectedAccount, onSelectAccount, onConfirm, onBack, loading, error,
+  rawHeaders, rawPreview, fileName, columnGuesses = {}, confidence = 0, accounts, selectedAccount, onSelectAccount, onConfirm, onBack, loading, error,
 }: {
   rawHeaders: string[];
   rawPreview: string[][];
   fileName: string;
+  columnGuesses?: Record<string, string>;
+  confidence?: number;
   accounts: Account[];
   selectedAccount: string;
   onSelectAccount: (v: string) => void;
@@ -49,7 +51,12 @@ export function ColumnMappingStep({
   loading: boolean;
   error: string;
 }) {
-  const [mapping, setMapping] = useState<Record<number, string>>({});
+  // Pre-fill the mapping from the backend's best-effort column guesses.
+  const [mapping, setMapping] = useState<Record<number, string>>(() => {
+    const m: Record<number, string> = {};
+    rawHeaders.forEach((h, idx) => { if (columnGuesses[h]) m[idx] = columnGuesses[h]; });
+    return m;
+  });
   const [dateFormat, setDateFormat] = useState("%d/%m/%Y");
   const [encoding, setEncoding] = useState("utf-8");
   const [delimiter, setDelimiter] = useState(";");
@@ -107,6 +114,15 @@ export function ColumnMappingStep({
         </div>
       </Card>
 
+      {Object.keys(columnGuesses).length > 0 && (
+        <div className="flex items-center gap-2 rounded-lg border border-info/30 bg-info/10 px-3 py-2 text-sm text-info">
+          <span className="inline-flex items-center rounded bg-info/20 px-1.5 py-0.5 text-[11px] font-semibold uppercase">auto</span>
+          {confidence >= 1
+            ? "Correspondance pré-remplie automatiquement — vérifiez-la avant de continuer."
+            : "Correspondance partiellement devinée — complétez les champs manquants ci-dessous."}
+        </div>
+      )}
+
       <Card className="overflow-hidden p-0">
         <div className="border-b border-border px-4 py-3 text-sm font-medium">Colonnes détectées ({rawHeaders.length})</div>
         <div className="overflow-x-auto">
@@ -123,9 +139,14 @@ export function ColumnMappingStep({
                 <tr key={colIdx} className="border-t border-border">
                   <td className="px-4 py-2 font-mono text-xs">{header}</td>
                   <td className="px-4 py-2">
-                    <select value={mapping[colIdx] || ""} onChange={(e) => setMapping((p) => ({ ...p, [colIdx]: e.target.value }))} className={`${SELECT_CLS} w-full text-xs`}>
-                      {FIELD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
+                    <div className="flex items-center gap-1.5">
+                      <select value={mapping[colIdx] || ""} onChange={(e) => setMapping((p) => ({ ...p, [colIdx]: e.target.value }))} className={`${SELECT_CLS} w-full text-xs`}>
+                        {FIELD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                      {columnGuesses[header] && mapping[colIdx] === columnGuesses[header] && (
+                        <span className="shrink-0 rounded bg-info/15 px-1 py-0.5 text-[10px] font-semibold uppercase text-info" title="Deviné automatiquement">auto</span>
+                      )}
+                    </div>
                   </td>
                   {rawPreview.slice(0, 3).map((row, i) => <td key={i} className="max-w-xs truncate px-4 py-2 text-xs text-muted-foreground">{row[colIdx] ?? ""}</td>)}
                 </tr>

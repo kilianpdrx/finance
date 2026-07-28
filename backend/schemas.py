@@ -452,6 +452,7 @@ class ConfirmResponse(BaseModel):
     imported: int
     skipped: int
     total: int
+    categorized: int = 0
 
 
 # ── Holdings ─────────────────────────────────────────────────────────────────

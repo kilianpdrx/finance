@@ -7,6 +7,10 @@ export interface DetectResponse {
   raw_headers: string[];
   raw_preview: string[][];
   detected: boolean;
+  /** Best-effort {header_name: role} guesses for the manual-mapping UI. */
+  column_guesses: Record<string, string>;
+  /** 0..1 confidence that the guesses cover the essential fields. */
+  confidence: number;
 }
 
 export interface ParsePreviewTransaction {
@@ -32,6 +36,7 @@ export interface ConfirmResponse {
   imported: number;
   skipped: number;
   total: number;
+  categorized: number;
 }
 
 async function post<T>(url: string, form: FormData): Promise<T> {

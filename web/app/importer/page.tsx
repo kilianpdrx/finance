@@ -172,7 +172,12 @@ export default function ImporterPage() {
         <CheckCircle2 className="mx-auto size-14 text-positive" />
         <h2 className="mt-4 text-2xl font-semibold">Import terminé</h2>
         <p className="mt-2 text-muted-foreground">{result.imported} transaction(s) importée(s)</p>
-        <p className="text-sm text-muted-foreground">{result.skipped} doublon(s) ignoré(s)</p>
+        <div className="mt-1 space-y-0.5 text-sm text-muted-foreground">
+          {result.imported > 0 && (
+            <p>{result.categorized ?? 0} catégorisée(s) automatiquement · {result.imported - (result.categorized ?? 0)} sans catégorie</p>
+          )}
+          <p>{result.skipped} doublon(s) ignoré(s)</p>
+        </div>
         <Button className="mt-8" onClick={reset}>Importer un autre fichier</Button>
       </div>
     );
@@ -203,6 +208,7 @@ export default function ImporterPage() {
     return (
       <ColumnMappingStep
         rawHeaders={detected.raw_headers} rawPreview={detected.raw_preview} fileName={file.name}
+        columnGuesses={detected.column_guesses ?? {}} confidence={detected.confidence ?? 0}
         accounts={accounts} selectedAccount={selectedAccount} onSelectAccount={setSelectedAccount}
         onConfirm={handleMappingConfirm} onBack={reset} loading={loading} error={error}
       />
