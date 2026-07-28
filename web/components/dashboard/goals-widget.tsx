@@ -35,6 +35,9 @@ export function GoalsWidget({ currency }: { currency: string }) {
                 <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
                   <div className="h-full transition-all" style={{ width: `${pct}%`, backgroundColor: g.color }} />
                 </div>
+                {pct < 100 && g.projected_months != null && (
+                  <p className="text-right text-[11px] text-muted-foreground">à ce rythme : ~{g.projected_months} mois</p>
+                )}
               </div>
             );
           })

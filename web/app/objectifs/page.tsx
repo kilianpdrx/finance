@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Target, Check, Pencil, Trash2, Link2, CalendarClock } from "lucide-react";
+import { Plus, Target, Check, Pencil, Trash2, Link2, CalendarClock, TrendingUp } from "lucide-react";
 import { useGoals, useGoalMutations, type Goal } from "@/lib/api/hooks";
 import { deleteWithUndo } from "@/lib/undo";
 import { Button } from "@/components/ui/button";
@@ -118,6 +118,13 @@ export default function GoalsPage() {
                   ) : <span />}
                   <span className="text-xs font-medium" style={{ color: goal.color }}>{Math.round(progress)}%</span>
                 </div>
+                {progress < 100 && goal.projected_months != null && (
+                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <TrendingUp className="size-3 shrink-0" />
+                    À ce rythme : atteint en ~{goal.projected_months} mois
+                    {goal.projected_date && ` (${new Date(goal.projected_date).toLocaleDateString("fr-FR", { month: "short", year: "numeric" })})`}
+                  </p>
+                )}
                 {!goal.is_linked && (
                   <Button variant="outline" size="sm" className="w-full"
                     onClick={(e) => { e.stopPropagation(); setContribGoal(goal); }}>

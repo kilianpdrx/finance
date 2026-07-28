@@ -2091,6 +2091,10 @@ export interface components {
             linked_account_name?: string | null;
             /** Monthly Needed Cents */
             monthly_needed_cents?: number | null;
+            /** Projected Months */
+            projected_months?: number | null;
+            /** Projected Date */
+            projected_date?: string | null;
         };
         /** GoalUpdate */
         GoalUpdate: {

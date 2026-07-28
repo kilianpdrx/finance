@@ -137,6 +137,8 @@ class GoalOut(GoalBase):
     is_linked: bool = False
     linked_account_name: Optional[str] = None
     monthly_needed_cents: Optional[int] = None  # to reach target by the deadline
+    projected_months: Optional[int] = None      # at the observed pace, months to target
+    projected_date: Optional[date] = None       # calendar month the target is reached
 
 
 class GoalContributionCreate(BaseModel):

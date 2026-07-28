@@ -1,14 +1,14 @@
 import math
-from datetime import date
+from datetime import date, timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies import current_profile_id
-from models import Goal, GoalContribution, Account
+from models import Goal, GoalContribution, Account, Transaction
 from schemas import (
     GoalCreate, GoalUpdate, GoalOut,
     GoalContributionCreate, GoalContributionOut,
@@ -16,6 +16,9 @@ from schemas import (
 from services.balances import account_computed_balance_cents
 
 router = APIRouter()
+
+# Beyond this horizon a projection is not meaningful ("in 80 years"); hide it.
+_MAX_PROJECTED_MONTHS = 600
 
 
 async def _current_cents(db: AsyncSession, goal: Goal) -> int:
@@ -34,13 +37,59 @@ def _months_until(deadline: date) -> int:
     return (deadline.year - today.year) * 12 + (deadline.month - today.month)
 
 
-def _to_out(goal: Goal, current: int, linked_name: str | None) -> GoalOut:
+def _add_months(d: date, n: int) -> date:
+    m = d.month - 1 + n
+    return date(d.year + m // 12, m % 12 + 1, 1)
+
+
+async def _observed_monthly_rate(db: AsyncSession, goal: Goal, current: int) -> int:
+    """Best-effort estimate of how much this goal grows per month, from history.
+
+    - Linked goal: the linked account's average net inflow over the last 6 months.
+    - Manual goal: current amount spread over the months since the first
+      contribution (needs at least one month of history, else 0).
+    Returns cents/month (>= 0)."""
+    if goal.linked_account_id:
+        cutoff = date.today() - timedelta(days=182)
+        net = (await db.execute(
+            select(func.sum(Transaction.amount_cents * func.iif(Transaction.is_debit == False, 1, -1)))  # noqa: E712
+            .where(and_(
+                Transaction.account_id == goal.linked_account_id,
+                Transaction.date >= cutoff,
+                Transaction.is_internal_transfer == False,  # noqa: E712
+            ))
+        )).scalar() or 0
+        return max(0, round(net / 6))
+
+    first = (await db.execute(
+        select(func.min(GoalContribution.date)).where(GoalContribution.goal_id == goal.id)
+    )).scalar()
+    if not first or current <= 0:
+        return 0
+    span = (date.today().year - first.year) * 12 + (date.today().month - first.month)
+    if span < 1:
+        return 0
+    return max(0, round(current / span))
+
+
+def _to_out(goal: Goal, current: int, linked_name: str | None, monthly_rate: int = 0) -> GoalOut:
     target = goal.target_amount_cents or 0
     progress = round(current / target * 100, 1) if target > 0 else 0.0
     monthly_needed = None
     if goal.deadline and current < target and goal.deadline > date.today():
         months = max(1, _months_until(goal.deadline))
         monthly_needed = math.ceil((target - current) / months)
+
+    # "At your current pace, reached in N months" — the inverse of monthly_needed.
+    projected_months = None
+    projected_date = None
+    remaining = target - current
+    if monthly_rate > 0 and remaining > 0:
+        m = math.ceil(remaining / monthly_rate)
+        if m <= _MAX_PROJECTED_MONTHS:
+            projected_months = m
+            projected_date = _add_months(date.today(), m)
+
     return GoalOut(
         id=goal.id,
         name=goal.name,
@@ -54,6 +103,8 @@ def _to_out(goal: Goal, current: int, linked_name: str | None) -> GoalOut:
         is_linked=goal.linked_account_id is not None,
         linked_account_name=linked_name,
         monthly_needed_cents=monthly_needed,
+        projected_months=projected_months,
+        projected_date=projected_date,
     )
 
 
@@ -70,7 +121,8 @@ async def list_goals(db: AsyncSession = Depends(get_db), pid: int = Depends(curr
     out = []
     for g in goals:
         current = await _current_cents(db, g)
-        out.append(_to_out(g, current, names.get(g.linked_account_id) if g.linked_account_id else None))
+        rate = await _observed_monthly_rate(db, g, current)
+        out.append(_to_out(g, current, names.get(g.linked_account_id) if g.linked_account_id else None, rate))
     return out
 
 
@@ -103,10 +155,11 @@ async def create_goal(payload: GoalCreate, db: AsyncSession = Depends(get_db), p
     await db.refresh(goal)
 
     current = await _current_cents(db, goal)
+    rate = await _observed_monthly_rate(db, goal, current)
     linked_name = None
     if goal.linked_account_id:
         linked_name = (await db.execute(select(Account.name).where(Account.id == goal.linked_account_id))).scalar()
-    return _to_out(goal, current, linked_name)
+    return _to_out(goal, current, linked_name, rate)
 
 
 @router.put("/{goal_id}", response_model=GoalOut)
@@ -121,10 +174,11 @@ async def update_goal(goal_id: int, payload: GoalUpdate, db: AsyncSession = Depe
     await db.refresh(goal)
 
     current = await _current_cents(db, goal)
+    rate = await _observed_monthly_rate(db, goal, current)
     linked_name = None
     if goal.linked_account_id:
         linked_name = (await db.execute(select(Account.name).where(Account.id == goal.linked_account_id))).scalar()
-    return _to_out(goal, current, linked_name)
+    return _to_out(goal, current, linked_name, rate)
 
 
 @router.delete("/{goal_id}", status_code=204)

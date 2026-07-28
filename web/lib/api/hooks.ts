@@ -781,6 +781,8 @@ export interface Goal {
   is_linked: boolean;
   linked_account_name: string | null;
   monthly_needed_cents: number | null;
+  projected_months: number | null;
+  projected_date: string | null;
 }
 export interface GoalContribution {
   id: number;
