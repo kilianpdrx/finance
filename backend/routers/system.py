@@ -282,3 +282,41 @@ async def export_transactions_csv(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
+
+@router.get("/export/report.xlsx")
+async def export_report_xlsx(
+    year: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Excel workbook: a financial summary sheet plus the 12-month budget table."""
+    from services.report import gather_report_data, build_xlsx
+    y = year or datetime.now().year
+    summ, budget = await gather_report_data(db, pid, y)
+    content = build_xlsx(summ, budget, summ.base_currency)
+    filename = f"rapport-{datetime.now().strftime('%Y-%m-%d')}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/export/report.pdf")
+async def export_report_pdf(
+    year: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Print-ready PDF report: financial summary followed by the budget table."""
+    from services.report import gather_report_data, build_pdf
+    y = year or datetime.now().year
+    summ, budget = await gather_report_data(db, pid, y)
+    content = build_pdf(summ, budget, summ.base_currency, y)
+    filename = f"rapport-{datetime.now().strftime('%Y-%m-%d')}.pdf"
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+

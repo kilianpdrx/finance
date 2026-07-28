@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Upload, FileSpreadsheet, Database, AlertTriangle } from "lucide-react";
+import { Download, Upload, FileSpreadsheet, FileText, Database, AlertTriangle } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useSystemMutations } from "@/lib/api/hooks";
@@ -10,7 +10,30 @@ import { toast } from "sonner";
 export function BackupTab() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [exporting, setExporting] = useState<null | "xlsx" | "pdf">(null);
   const systemMutations = useSystemMutations();
+
+  // Download via fetch (not a plain <a>) so the active-profile header is sent.
+  const downloadReport = async (fmt: "xlsx" | "pdf") => {
+    setExporting(fmt);
+    try {
+      const res = await fetch(`/api/system/export/report.${fmt}`);
+      if (!res.ok) throw new Error(`Erreur ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `rapport-${new Date().toISOString().slice(0, 10)}.${fmt}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Échec de l'export");
+    } finally {
+      setExporting(null);
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -136,6 +159,38 @@ export function BackupTab() {
               Exporter les transactions (.csv)
             </a>
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── Section 4: Rapport financier (Excel / PDF) ───────────────────── */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-info/10 text-info">
+              <FileText className="size-5" />
+            </div>
+            <div>
+              <CardTitle>Rapport financier (Excel / PDF)</CardTitle>
+              <CardDescription>
+                Génère un rapport du profil actif : résumé (patrimoine, flux) et tableau de budget sur 12 mois.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-xs text-muted-foreground">
+            Le classeur Excel contient une feuille Résumé et une feuille Budget ; le PDF est prêt à imprimer.
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="outline" className="gap-2" disabled={exporting !== null} onClick={() => downloadReport("xlsx")}>
+              <FileSpreadsheet className="size-4" />
+              {exporting === "xlsx" ? "Export…" : "Excel (.xlsx)"}
+            </Button>
+            <Button variant="outline" className="gap-2" disabled={exporting !== null} onClick={() => downloadReport("pdf")}>
+              <FileText className="size-4" />
+              {exporting === "pdf" ? "Export…" : "PDF (.pdf)"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
