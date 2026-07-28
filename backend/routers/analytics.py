@@ -8,7 +8,7 @@ from database import get_db
 from dependencies import current_profile_id
 from models import Transaction, Account, Category, BudgetEntry, AccountBalanceSnapshot, Setting
 from schemas import (
-    AnalyticsSummary, CashFlowMonth, CategoryBreakdown,
+    AnalyticsSummary, CashFlowMonth, CategoryBreakdown, CurrencyBalance,
     RecurringTransaction, BudgetTableResponse, BudgetTableRow, BudgetTableCell,
     BudgetSectionRow, BudgetFullResponse,
     cents_to_display,
@@ -119,6 +119,7 @@ async def summary(
     all_acc = (await db.execute(acc_q2)).scalars().all()
     net_worth = 0
     total_loans = 0  # outstanding loan debt, in base currency (positive)
+    by_ccy: dict[str, dict] = {}  # per native currency: {native_cents, converted_cents}
     for acc in all_acc:
         acc_id = acc.id
         acc_ccy = acc.currency or "EUR"
@@ -180,8 +181,15 @@ async def summary(
         net_worth += converted
         if is_loan and converted < 0:
             total_loans += -converted  # positive outstanding debt
+        bucket = by_ccy.setdefault(acc_ccy, {"native_cents": 0, "converted_cents": 0})
+        bucket["native_cents"] += balance
+        bucket["converted_cents"] += converted
 
     net_worth_excl_loans = net_worth + total_loans
+    net_worth_by_currency = [
+        CurrencyBalance(currency=ccy, native_cents=v["native_cents"], converted_cents=v["converted_cents"])
+        for ccy, v in sorted(by_ccy.items(), key=lambda kv: kv[1]["converted_cents"], reverse=True)
+    ]
 
     last_date_q = await db.execute(select(func.max(Transaction.date)).where(Transaction.profile_id == pid))
     last_date = last_date_q.scalar()
@@ -201,6 +209,8 @@ async def summary(
         net_worth_excl_loans_display=cents_to_display(net_worth_excl_loans, base_ccy),
         total_loans_display=cents_to_display(total_loans, base_ccy),
         last_transaction_date=last_transaction_date,
+        base_currency=base_ccy,
+        net_worth_by_currency=net_worth_by_currency,
     )
 
 

@@ -16,6 +16,7 @@ import { TopExpenses } from "@/components/dashboard/top-expenses";
 import { GoalsWidget } from "@/components/dashboard/goals-widget";
 import { LoansWidget } from "@/components/dashboard/loans-widget";
 import { PatrimoineNetWidget } from "@/components/dashboard/patrimoine-net-widget";
+import { CurrencyBreakdownWidget } from "@/components/dashboard/currency-breakdown-widget";
 import {
   useAnalyticsContext,
   useSummary,
@@ -118,6 +119,12 @@ export default function DashboardPage() {
           </Card>
         </motion.div>
       </div>
+
+      {(s?.net_worth_by_currency?.length ?? 0) > 1 && (
+        <motion.div variants={fade} initial="hidden" animate="show" custom={5.2}>
+          <CurrencyBreakdownWidget summary={s} />
+        </motion.div>
+      )}
 
       {(showGoals || showLoans) && (
         <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-3">

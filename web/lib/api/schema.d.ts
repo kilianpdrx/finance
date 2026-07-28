@@ -1544,6 +1544,16 @@ export interface components {
             total_loans_display: string;
             /** Last Transaction Date */
             last_transaction_date?: string | null;
+            /**
+             * Base Currency
+             * @default EUR
+             */
+            base_currency: string;
+            /**
+             * Net Worth By Currency
+             * @default []
+             */
+            net_worth_by_currency: components["schemas"]["CurrencyBalance"][];
         };
         /** BankProfileCreate */
         BankProfileCreate: {
@@ -1966,6 +1976,20 @@ export interface components {
             skipped: number;
             /** Total */
             total: number;
+            /**
+             * Categorized
+             * @default 0
+             */
+            categorized: number;
+        };
+        /** CurrencyBalance */
+        CurrencyBalance: {
+            /** Currency */
+            currency: string;
+            /** Native Cents */
+            native_cents: number;
+            /** Converted Cents */
+            converted_cents: number;
         };
         /** GoalContributionCreate */
         GoalContributionCreate: {

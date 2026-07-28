@@ -300,6 +300,11 @@ class BankProfileOut(BankProfileBase):
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
+class CurrencyBalance(BaseModel):
+    currency: str
+    native_cents: int      # summed balance in the account's own currency
+    converted_cents: int   # the same, converted to the profile's base currency
+
 class AnalyticsSummary(BaseModel):
     total_income_cents: int
     total_expenses_cents: int
@@ -314,6 +319,8 @@ class AnalyticsSummary(BaseModel):
     net_worth_excl_loans_display: str = ""
     total_loans_display: str = ""
     last_transaction_date: Optional[str] = None
+    base_currency: str = "EUR"                # the profile's reporting currency
+    net_worth_by_currency: List[CurrencyBalance] = []
 
 class CashFlowMonth(BaseModel):
     month: str
