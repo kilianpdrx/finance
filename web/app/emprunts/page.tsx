@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { AccountDialog } from "@/components/accounts/account-dialog";
 import { LoanPaymentDialog } from "@/components/loans/loan-payment-dialog";
 import { LoanScheduleDialog } from "@/components/loans/loan-schedule-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const fmtMonth = (iso: string) => new Date(iso).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
 
@@ -25,7 +26,7 @@ function Stat({ icon: Icon, label, value, sub }: { icon: ElementType; label: str
 }
 
 export default function LoansPage() {
-  const { data: loans = [] } = useLoans();
+  const { data: loans = [], isLoading } = useLoans();
   const { data: accounts = [] } = useAccounts();
   const { remove } = useAccountMutations();
 
@@ -54,7 +55,33 @@ export default function LoansPage() {
       </div>
 
       <div className="grid gap-6">
-        {loans.map((loan) => {
+        {isLoading &&
+          Array.from({ length: 2 }).map((_, i) => (
+            <Card key={i} className="overflow-hidden">
+              <CardHeader className="border-b bg-muted/30 pb-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Skeleton className="size-9 rounded-md" />
+                    <div className="space-y-1.5">
+                      <Skeleton className="h-5 w-40" />
+                      <Skeleton className="h-3.5 w-24" />
+                    </div>
+                  </div>
+                  <Skeleton className="h-8 w-28" />
+                </div>
+              </CardHeader>
+              <CardContent className="p-6 space-y-4">
+                <Skeleton className="h-2.5 w-full rounded-full" />
+                <div className="grid gap-6 sm:grid-cols-3">
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+
+        {!isLoading && loans.map((loan) => {
           const progress = Math.min(100, Math.max(0, loan.progress_pct));
           const account = accountsById.get(loan.id) ?? null;
 
@@ -145,7 +172,7 @@ export default function LoansPage() {
           );
         })}
 
-        {loans.length === 0 && (
+        {!isLoading && loans.length === 0 && (
           <div className="rounded-xl border border-dashed border-border bg-muted/20 py-12 text-center">
             <BadgeMinus className="mx-auto mb-3 size-12 text-muted-foreground/50" />
             <h3 className="text-lg font-medium">Aucun emprunt</h3>

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GoalDialog } from "@/components/goals/goal-dialog";
 import { GoalContributionsDialog } from "@/components/goals/goal-contributions-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatCents } from "@/lib/format";
 
 function ProgressBar({ value, color }: { value: number; color?: string }) {
@@ -19,7 +20,7 @@ function ProgressBar({ value, color }: { value: number; color?: string }) {
 }
 
 export default function GoalsPage() {
-  const { data: goals = [] } = useGoals();
+  const { data: goals = [], isLoading } = useGoals();
   const { delete: delGoal } = useGoalMutations();
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -40,7 +41,17 @@ export default function GoalsPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {goals.map((goal) => {
+        {isLoading &&
+          Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="flex flex-col gap-4 rounded-xl border bg-card p-5 shadow-sm">
+              <Skeleton className="size-10 rounded-full" />
+              <Skeleton className="h-5 w-2/3" />
+              <Skeleton className="h-2.5 w-full rounded-full" />
+              <Skeleton className="h-8 w-full" />
+            </div>
+          ))}
+
+        {!isLoading && goals.map((goal) => {
           const progress = goal.progress_pct;
           const isCompleted = progress >= 100;
           const primary = () => (goal.is_linked ? openEdit(goal) : setContribGoal(goal));
@@ -106,7 +117,7 @@ export default function GoalsPage() {
           );
         })}
 
-        {goals.length === 0 && (
+        {!isLoading && goals.length === 0 && (
           <div className="col-span-full rounded-xl border border-dashed border-border bg-muted/20 py-12 text-center">
             <Target className="mx-auto mb-3 size-12 text-muted-foreground/50" />
             <h3 className="text-lg font-medium">Aucun objectif</h3>
