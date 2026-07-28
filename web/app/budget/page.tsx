@@ -2,9 +2,10 @@
 
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { Pencil, CalendarPlus, Check, X } from "lucide-react";
+import { Pencil, CalendarPlus, Check, X, HelpCircle } from "lucide-react";
 import { api, unwrap } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CourantTabs, type CourantSelection } from "@/components/analytics/courant-tabs";
 import { useAccounts, useBudgetMutation, usePlannedExpenseMutations, type BudgetFullResponse } from "@/lib/api/hooks";
@@ -265,6 +266,35 @@ export default function BudgetPage() {
             <span className="flex items-center gap-1.5"><Pencil className="size-3 text-warning" /> ajustement manuel</span>
             <span className="flex items-center gap-1.5"><span className="inline-block size-3 rounded-sm bg-info/60" /> planifiée</span>
             <span className="flex items-center gap-1.5"><Check className="size-3 text-warning" /> à confirmer</span>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button type="button" aria-label="Aide sur les types de cellules"
+                  className="text-muted-foreground transition-colors hover:text-foreground">
+                  <HelpCircle className="size-3.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-80 space-y-3">
+                <p className="text-sm font-semibold text-foreground">Types de cellules</p>
+                <ul className="space-y-2.5 text-xs text-muted-foreground">
+                  <li className="flex gap-2.5">
+                    <span className="mt-0.5 inline-block size-3 shrink-0 rounded-sm border border-border bg-surface" />
+                    <span><span className="font-medium text-foreground">Normale</span> — le montant réellement dépensé ou reçu ce mois-ci, calculé depuis vos transactions.</span>
+                  </li>
+                  <li className="flex gap-2.5">
+                    <Pencil className="mt-0.5 size-3 shrink-0 text-warning" />
+                    <span><span className="font-medium text-foreground">Ajustement manuel</span> — un montant que vous ajoutez par-dessus le réel (double-cliquez une cellule). Il s&apos;additionne au réel.</span>
+                  </li>
+                  <li className="flex gap-2.5">
+                    <span className="mt-0.5 inline-block size-3 shrink-0 rounded-sm bg-info/60" />
+                    <span><span className="font-medium text-foreground">Planifiée</span> — une dépense ou un revenu anticipé. Disparaît automatiquement dès que la transaction réelle apparaît.</span>
+                  </li>
+                  <li className="flex gap-2.5">
+                    <Check className="mt-0.5 size-3 shrink-0 text-warning" />
+                    <span><span className="font-medium text-foreground">À confirmer</span> — une transaction est apparue mais son montant diffère du plan. Validez (✓) ou retirez (✗) la prévision.</span>
+                  </li>
+                </ul>
+              </PopoverContent>
+            </Popover>
           </div>
           <Button size="sm" onClick={() => openPlan()}><CalendarPlus className="mr-1.5 size-4" /> Planifier</Button>
         </div>
