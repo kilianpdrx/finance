@@ -83,7 +83,7 @@ async def shutdown():
 import io
 import csv
 import asyncio
-from datetime import datetime
+from datetime import datetime, date as _date
 from pathlib import Path
 from fastapi import Depends, HTTPException, File, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -284,17 +284,26 @@ async def export_transactions_csv(
     )
 
 
+def _report_range(date_from, date_to):
+    """Default to a trailing 12-month window when no range is given."""
+    dt = date_to or _date.today()
+    df = date_from or _date(dt.year - 1, dt.month, 1)
+    return df, dt
+
+
 @router.get("/export/report.xlsx")
 async def export_report_xlsx(
-    year: int | None = None,
+    date_from: _date | None = None,
+    date_to: _date | None = None,
+    include_investments: bool = True,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
-    """Excel workbook: a financial summary sheet plus the 12-month budget table."""
+    """Comprehensive multi-sheet Excel report over the chosen period."""
     from services.report import gather_report_data, build_xlsx
-    y = year or datetime.now().year
-    summ, budget = await gather_report_data(db, pid, y)
-    content = build_xlsx(summ, budget, summ.base_currency)
+    df, dt = _report_range(date_from, date_to)
+    data = await gather_report_data(db, pid, date_from=df, date_to=dt, include_investments=include_investments)
+    content = build_xlsx(data, data["base_ccy"])
     filename = f"rapport-{datetime.now().strftime('%Y-%m-%d')}.xlsx"
     return Response(
         content=content,
@@ -305,15 +314,17 @@ async def export_report_xlsx(
 
 @router.get("/export/report.pdf")
 async def export_report_pdf(
-    year: int | None = None,
+    date_from: _date | None = None,
+    date_to: _date | None = None,
+    include_investments: bool = True,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
-    """Print-ready PDF report: financial summary followed by the budget table."""
+    """Comprehensive PDF report (KPIs, charts, spending, budget, investments) over the chosen period."""
     from services.report import gather_report_data, build_pdf
-    y = year or datetime.now().year
-    summ, budget = await gather_report_data(db, pid, y)
-    content = build_pdf(summ, budget, summ.base_currency, y)
+    df, dt = _report_range(date_from, date_to)
+    data = await gather_report_data(db, pid, date_from=df, date_to=dt, include_investments=include_investments)
+    content = build_pdf(data, data["base_ccy"])
     filename = f"rapport-{datetime.now().strftime('%Y-%m-%d')}.pdf"
     return Response(
         content=content,
