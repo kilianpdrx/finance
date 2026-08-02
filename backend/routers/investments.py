@@ -156,7 +156,6 @@ async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], accou
         if lookup_div:
             div = div_map.get(lookup_div)
             if div:
-                out["dividend_yield"] = div.yield_pct
                 out["payout_ratio"] = round(div.payout_ratio * 100, 1) if div.payout_ratio else None
                 out["dividend_growth_rate"] = div.growth_rate_5y
                 out["frequency"] = div.frequency
@@ -174,6 +173,16 @@ async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], accou
                     if h.cost_basis_cents and h.cost_basis_cents > 0:
                         yoc = (est_income / (h.cost_basis_cents / 100)) * 100
                         out["yield_on_cost"] = round(yoc, 2)
+
+                # Current yield derived from the actual annual income and current
+                # value — consistent with the displayed figures and immune to any
+                # stale/miscaled cached yield_pct. Falls back to the cached value,
+                # guarding against the old ×100 bug (no real yield exceeds ~50%).
+                if out.get("est_annual_income_cents") and value > 0:
+                    out["dividend_yield"] = round(out["est_annual_income_cents"] / value * 100, 2)
+                elif div.yield_pct is not None:
+                    yp = div.yield_pct
+                    out["dividend_yield"] = round(yp / 100 if yp > 50 else yp, 2)
 
         out_list.append(out)
 

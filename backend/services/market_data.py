@@ -142,14 +142,25 @@ async def _fetch_dividend_details(tickers: list[str]) -> dict[str, dict]:
             try:
                 t = yf.Ticker(ticker)
                 info = t.info or {}
-                div_yield = info.get("dividendYield")  # decimal, e.g. 0.025
-                div_rate = info.get("dividendRate")     # annual $/share
+                div_yield = info.get("dividendYield")   # scale varies by yfinance version
+                div_rate = info.get("dividendRate")     # annual per-share dividend
+                price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")
                 ex_date_ts = info.get("exDividendDate")  # unix timestamp or None
                 currency = (info.get("currency") or "USD").upper()
 
                 # Skip if no dividend data at all
                 if div_yield is None and div_rate is None:
                     continue
+
+                # Yield %: prefer annual_rate / price (exact, version-proof). yfinance's
+                # dividendYield has flip-flopped between a fraction (0.0197) and a
+                # percentage (1.97) across versions, so normalise it only as a fallback.
+                if div_rate and price:
+                    yield_pct = round(div_rate / price * 100, 4)
+                elif div_yield is not None:
+                    yield_pct = round(div_yield if div_yield >= 1 else div_yield * 100, 4)
+                else:
+                    yield_pct = None
 
                 ex_date = None
                 if ex_date_ts:
@@ -198,7 +209,7 @@ async def _fetch_dividend_details(tickers: list[str]) -> dict[str, dict]:
                 five_yr = info.get("fiveYearAvgDividendYield")  # already in %
 
                 result[ticker] = {
-                    "yield_pct": round(div_yield * 100, 4) if div_yield else None,
+                    "yield_pct": yield_pct,
                     "annual_rate": round(div_rate, 6) if div_rate else None,
                     "currency": currency,
                     "ex_date": ex_date,
