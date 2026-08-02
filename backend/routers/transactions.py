@@ -1,6 +1,5 @@
 import csv
 import io
-import unicodedata
 from typing import List, Optional
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,12 +13,6 @@ from dependencies import current_profile_id
 from models import Transaction, Account, Category, ImportBatch
 from schemas import TransactionOut, TransactionUpdate, TransactionMeta, TransactionCreateManual
 from utils import generate_import_hash, csv_safe_cell
-
-
-def strip_accents(text: str) -> str:
-    """Remove accents/diacritics from a string."""
-    nfkd = unicodedata.normalize('NFKD', text)
-    return ''.join(c for c in nfkd if not unicodedata.combining(c))
 
 router = APIRouter()
 
@@ -319,25 +312,26 @@ async def export_transactions(
     rows = result.scalars().all()
 
     output = io.StringIO()
+    output.write("﻿")  # UTF-8 BOM so Excel detects UTF-8 and renders accents (é, à…)
     writer = csv.writer(output, delimiter=";")
-    writer.writerow(["Date", "Compte", "Description", "Montant", "Devise", "Categorie"])
+    writer.writerow(["Date", "Compte", "Description", "Montant", "Devise", "Catégorie"])
     for t in rows:
         amount = t.amount_cents / 100
         if t.is_debit:
             amount = -amount
         writer.writerow([
             t.date,
-            csv_safe_cell(strip_accents(t.account.name)) if t.account else "",
-            csv_safe_cell(strip_accents(t.description)),
+            csv_safe_cell(t.account.name) if t.account else "",
+            csv_safe_cell(t.description),
             f"{amount:.2f}",
-            strip_accents(t.currency or "EUR"),
-            csv_safe_cell(strip_accents(t.category.name)) if t.category else "",
+            t.currency or "EUR",
+            csv_safe_cell(t.category.name) if t.category else "",
         ])
 
     output.seek(0)
     return StreamingResponse(
         iter([output.getvalue()]),
-        media_type="text/csv",
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=transactions.csv"},
     )
 

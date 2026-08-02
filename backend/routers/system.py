@@ -273,7 +273,8 @@ async def export_transactions_csv(
             csv_safe_cell(t.notes or ""),
         ])
 
-    csv_content = output.getvalue()
+    # UTF-8 BOM so Excel detects the encoding and renders accents correctly.
+    csv_content = "﻿" + output.getvalue()
     filename = f"export-transactions-{datetime.now().strftime('%Y-%m-%d')}.csv"
 
     return Response(
