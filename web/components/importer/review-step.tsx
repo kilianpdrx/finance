@@ -9,14 +9,16 @@ import { cn } from "@/lib/utils";
 import { Wallet } from "lucide-react";
 import { AccountSelect } from "@/components/accounts/account-select";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
+import { formatCents } from "@/lib/format";
 import type { Account, Category } from "@/lib/api/hooks";
 import type { ParsePreviewTransaction } from "@/lib/api/upload";
 
 const SELECT_CLS = "rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
-function money(cents: number, isDebit: boolean) {
-  const sign = isDebit ? "−" : "+";
-  return `${sign}${(Math.abs(cents) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2 })} €`;
+// Same formatting as the transactions table: 2 decimals, in the destination
+// account's currency. amount_cents is a positive magnitude; is_debit gives the sign.
+function money(cents: number, isDebit: boolean, currency: string) {
+  return `${isDebit ? "−" : "+"}${formatCents(cents, currency, { decimals: 2 })}`;
 }
 
 export function ReviewStep({
@@ -37,6 +39,7 @@ export function ReviewStep({
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [force, setForce] = useState<Set<string>>(new Set());
 
+  const destCurrency = accounts.find((a) => String(a.id) === selectedAccount)?.currency ?? "EUR";
   const catId = (t: ParsePreviewTransaction) => (t.import_hash in overrides ? overrides[t.import_hash] : t.category_id);
   const duplicateTxns = useMemo(() => transactions.filter((t) => t.is_duplicate), [transactions]);
   const duplicates = duplicateTxns.length;
@@ -93,7 +96,7 @@ export function ReviewStep({
                     <td className="w-8 px-4 py-1.5"><Checkbox checked={force.has(t.import_hash)} onCheckedChange={() => toggleForce(t.import_hash)} /></td>
                     <td className="nums px-2 py-1.5 text-xs text-muted-foreground">{t.date}</td>
                     <td className="max-w-xs truncate px-2 py-1.5 text-xs">{t.description}</td>
-                    <td className={cn("nums whitespace-nowrap px-2 py-1.5 text-right text-xs font-medium", t.is_debit ? "text-negative" : "text-positive")}>{money(t.amount_cents, t.is_debit)}</td>
+                    <td className={cn("nums whitespace-nowrap px-2 py-1.5 text-right text-xs font-medium", t.is_debit ? "text-negative" : "text-positive")}>{money(t.amount_cents, t.is_debit, destCurrency)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -135,7 +138,7 @@ export function ReviewStep({
                         {t.category_conflict && <ConflictBadge className="shrink-0 text-[10px]" />}
                       </span>
                     </td>
-                    <td className={cn("nums whitespace-nowrap px-4 py-2 text-right text-xs font-medium", t.is_debit ? "text-negative" : "text-positive")}>{money(t.amount_cents, t.is_debit)}</td>
+                    <td className={cn("nums whitespace-nowrap px-4 py-2 text-right text-xs font-medium", t.is_debit ? "text-negative" : "text-positive")}>{money(t.amount_cents, t.is_debit, destCurrency)}</td>
                     <td className="px-4 py-2">
                       <select value={cid ?? ""} onChange={(e) => setOverrides((p) => ({ ...p, [t.import_hash]: e.target.value ? Number(e.target.value) : null }))} className={cn(SELECT_CLS, "w-full text-xs", uncat && "border-warning/50")}>
                         <option value="">Non catégorisé</option>
