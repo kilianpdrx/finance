@@ -6,9 +6,22 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { Wallet } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
+import { ACCOUNT_TYPE_LABELS } from "@/components/accounts/account-dialog";
 import type { Account, Category } from "@/lib/api/hooks";
 import type { ParsePreviewTransaction } from "@/lib/api/upload";
+
+/** A coloured tile with the account's initial, matching the Comptes page. */
+function AccountTile({ account }: { account: Account }) {
+  return (
+    <span className="flex size-6 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold text-white"
+      style={{ backgroundColor: account.color }}>
+      {account.name[0]?.toUpperCase()}
+    </span>
+  );
+}
 
 const SELECT_CLS = "rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
@@ -35,6 +48,7 @@ export function ReviewStep({
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [force, setForce] = useState<Set<string>>(new Set());
 
+  const selectedAccObj = accounts.find((a) => String(a.id) === selectedAccount);
   const catId = (t: ParsePreviewTransaction) => (t.import_hash in overrides ? overrides[t.import_hash] : t.category_id);
   const duplicateTxns = useMemo(() => transactions.filter((t) => t.is_duplicate), [transactions]);
   const duplicates = duplicateTxns.length;
@@ -56,11 +70,38 @@ export function ReviewStep({
         <Button variant="ghost" size="sm" onClick={onBack}>← Retour</Button>
       </div>
 
-      <Card className="flex items-center gap-3 p-3">
-        <Label className="whitespace-nowrap">Compte destination</Label>
-        <select value={selectedAccount} onChange={(e) => onSelectAccount(e.target.value)} className={`${SELECT_CLS} flex-1`}>
-          {accounts.length === 0 ? <option value="">Aucun compte</option> : accounts.map((a) => <option key={a.id} value={String(a.id)}>{a.name} ({a.bank_name})</option>)}
-        </select>
+      <Card className="flex flex-col gap-2.5 p-4 sm:flex-row sm:items-center sm:gap-4">
+        <Label className="flex shrink-0 items-center gap-2 whitespace-nowrap text-muted-foreground">
+          <Wallet className="size-4" /> Compte destination
+        </Label>
+        <Select value={selectedAccount} onValueChange={onSelectAccount} disabled={accounts.length === 0}>
+          <SelectTrigger className="h-11 flex-1">
+            {selectedAccObj ? (
+              <span className="flex min-w-0 flex-1 items-center gap-2.5">
+                <AccountTile account={selectedAccObj} />
+                <span className="shrink-0 font-medium text-foreground">{selectedAccObj.name}</span>
+                <span className="truncate text-xs text-muted-foreground">· {selectedAccObj.bank_name}</span>
+              </span>
+            ) : (
+              <span className="text-muted-foreground">{accounts.length === 0 ? "Aucun compte disponible" : "Sélectionner un compte…"}</span>
+            )}
+          </SelectTrigger>
+          <SelectContent>
+            {accounts.map((a) => (
+              <SelectItem key={a.id} value={String(a.id)} className="py-2">
+                <span className="flex items-center gap-2.5">
+                  <AccountTile account={a} />
+                  <span className="flex flex-col items-start leading-tight">
+                    <span className="font-medium">{a.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {a.bank_name}{a.account_type ? ` · ${ACCOUNT_TYPE_LABELS[a.account_type] ?? a.account_type}` : ""}
+                    </span>
+                  </span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </Card>
 
       <div className="grid grid-cols-3 gap-3">
