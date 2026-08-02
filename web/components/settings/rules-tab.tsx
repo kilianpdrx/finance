@@ -13,8 +13,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api, unwrap } from "@/lib/api/client";
-import { useAllRules, useCategories, useRuleMutations, type CategoryRule, type Account } from "@/lib/api/hooks";
+import { useAllRules, useCategories, useRuleMutations, type CategoryRule, type Account, type Transaction } from "@/lib/api/hooks";
 import { groupByAccount } from "@/lib/group";
+import { formatCents } from "@/lib/format";
+import { format } from "date-fns";
+import { fr } from "date-fns/locale";
 
 const FIELDS = [
   { value: "description", label: "Libellé" },
@@ -47,7 +50,7 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
   const [categoryId, setCategoryId] = useState<number>(0);
   const [order, setOrder] = useState("standard");
   const [accountId, setAccountId] = useState<number | null>(null);
-  const [preview, setPreview] = useState<number | null>(null);
+  const [preview, setPreview] = useState<Transaction[] | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
   const catName = (id: number) => categories.find((c) => c.id === id)?.name ?? `#${id}`;
@@ -65,8 +68,8 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
 
   const runPreview = async () => {
     try {
-      const res = await unwrap(api.POST("/api/categories/rules/preview", { body: { conditions, account_id: accountId, logic_operator: logic } })) as unknown[];
-      setPreview(res.length);
+      const res = await unwrap(api.POST("/api/categories/rules/preview", { body: { conditions, account_id: accountId, logic_operator: logic } })) as Transaction[];
+      setPreview(res);
     } catch (e) { toast.error(e instanceof Error ? e.message : "Erreur"); }
   };
 
@@ -173,7 +176,27 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
               <Button variant="ghost" size="sm" onClick={() => setConditions((cs) => [...cs, { field: "description", operator: "contains", value: "" }])}><Plus className="size-4" /> Condition</Button>
             </div>
 
-            {preview != null && <p className="rounded-lg bg-brand/10 px-3 py-2 text-sm text-brand">{preview} transaction(s) correspond(ent) à ces conditions.</p>}
+            {preview != null && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-brand">
+                  {preview.length} transaction(s) correspond(ent) à ces conditions.
+                </p>
+                {preview.length > 0 && (
+                  <div className="max-h-56 divide-y divide-border overflow-y-auto rounded-lg border border-border">
+                    {preview.map((t) => (
+                      <div key={t.id} className="flex items-center gap-3 px-3 py-1.5 text-xs">
+                        <span className="nums w-16 shrink-0 text-muted-foreground">{format(new Date(t.date), "dd MMM yy", { locale: fr })}</span>
+                        <span className="flex-1 truncate">{t.description}</span>
+                        <span className="shrink-0 truncate text-muted-foreground">{t.account_name}</span>
+                        <span className={`nums w-24 shrink-0 text-right font-semibold ${t.is_debit ? "text-negative" : "text-positive"}`}>
+                          {t.is_debit ? "−" : "+"}{formatCents(t.amount_cents, t.currency)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={runPreview}><FlaskConical className="size-4" /> Tester</Button>
