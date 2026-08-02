@@ -4,30 +4,52 @@ import { useState } from "react";
 import { Download, Upload, FileSpreadsheet, FileText, Database, AlertTriangle } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useSystemMutations } from "@/lib/api/hooks";
 import { toast } from "sonner";
+
+const fmtDate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 export function BackupTab() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [exporting, setExporting] = useState<null | "xlsx" | "pdf">(null);
+  const [exporting, setExporting] = useState<null | "csv" | "xlsx" | "pdf">(null);
+  const [dateFrom, setDateFrom] = useState(() => fmtDate(new Date(new Date().getFullYear() - 1, new Date().getMonth(), 1)));
+  const [dateTo, setDateTo] = useState(() => fmtDate(new Date()));
+  const [includeInv, setIncludeInv] = useState(true);
   const systemMutations = useSystemMutations();
 
   // Download via fetch (not a plain <a>) so the active-profile header is sent.
-  const downloadReport = async (fmt: "xlsx" | "pdf") => {
+  const download = async (fmt: "csv" | "xlsx" | "pdf") => {
     setExporting(fmt);
     try {
-      const res = await fetch(`/api/system/export/report.${fmt}`);
+      const params = new URLSearchParams();
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (dateTo) params.set("date_to", dateTo);
+      let url: string;
+      let filename: string;
+      if (fmt === "csv") {
+        url = `/api/transactions/export?${params}`;
+        filename = `transactions-${dateTo}.csv`;
+      } else {
+        params.set("include_investments", String(includeInv));
+        url = `/api/system/export/report.${fmt}?${params}`;
+        filename = `rapport-${dateTo}.${fmt}`;
+      }
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`Erreur ${res.status}`);
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const objUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
-      a.download = `rapport-${new Date().toISOString().slice(0, 10)}.${fmt}`;
+      a.href = objUrl;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(objUrl);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Échec de l'export");
     } finally {
@@ -134,35 +156,7 @@ export function BackupTab() {
         </CardContent>
       </Card>
 
-      {/* ── Section 3: Export CSV ────────────────────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-positive/10 text-positive">
-              <FileSpreadsheet className="size-5" />
-            </div>
-            <div>
-              <CardTitle>Exportation des transactions (CSV / Excel)</CardTitle>
-              <CardDescription>
-                Exporte l'ensemble des transactions du profil actif dans un fichier CSV compatible Excel et Google Sheets.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-xs text-muted-foreground">
-            Le fichier CSV inclut la date, le compte, la catégorie, la description, le montant et le type de transaction.
-          </div>
-          <Button variant="outline" asChild className="shrink-0 gap-2">
-            <a href="/api/system/export/transactions.csv" download>
-              <FileSpreadsheet className="size-4" />
-              Exporter les transactions (.csv)
-            </a>
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* ── Section 4: Rapport financier (Excel / PDF) ───────────────────── */}
+      {/* ── Section 3: Export des données & rapports ─────────────────────── */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">
@@ -170,25 +164,44 @@ export function BackupTab() {
               <FileText className="size-5" />
             </div>
             <div>
-              <CardTitle>Rapport financier (Excel / PDF)</CardTitle>
+              <CardTitle>Exporter vos données</CardTitle>
               <CardDescription>
-                Génère un rapport du profil actif : résumé (patrimoine, flux) et tableau de budget sur 12 mois.
+                Transactions au format CSV, ou un rapport complet (Excel / PDF) reprenant les analyses de l&apos;app, sur la période choisie.
               </CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-xs text-muted-foreground">
-            Le classeur Excel contient une feuille Résumé et une feuille Budget ; le PDF est prêt à imprimer.
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1">
+              <Label>Du</Label>
+              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-40" />
+            </div>
+            <div className="space-y-1">
+              <Label>Au</Label>
+              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-40" />
+            </div>
+            <label className="flex cursor-pointer items-center gap-2 pb-2 text-sm">
+              <Checkbox checked={includeInv} onCheckedChange={(v) => setIncludeInv(!!v)} />
+              Inclure les investissements
+            </label>
           </div>
-          <div className="flex shrink-0 gap-2">
-            <Button variant="outline" className="gap-2" disabled={exporting !== null} onClick={() => downloadReport("xlsx")}>
+          <p className="text-xs text-muted-foreground">
+            Le CSV liste les transactions de la période (accents corrigés). Le rapport Excel/PDF reprend le patrimoine,
+            les flux, les dépenses, le budget{includeInv ? " et les investissements" : ""} — avec graphiques dans le PDF.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" className="gap-2" disabled={exporting !== null} onClick={() => download("csv")}>
               <FileSpreadsheet className="size-4" />
-              {exporting === "xlsx" ? "Export…" : "Excel (.xlsx)"}
+              {exporting === "csv" ? "Export…" : "Transactions (.csv)"}
             </Button>
-            <Button variant="outline" className="gap-2" disabled={exporting !== null} onClick={() => downloadReport("pdf")}>
+            <Button variant="outline" className="gap-2" disabled={exporting !== null} onClick={() => download("xlsx")}>
+              <FileSpreadsheet className="size-4" />
+              {exporting === "xlsx" ? "Export…" : "Rapport Excel (.xlsx)"}
+            </Button>
+            <Button variant="outline" className="gap-2" disabled={exporting !== null} onClick={() => download("pdf")}>
               <FileText className="size-4" />
-              {exporting === "pdf" ? "Export…" : "PDF (.pdf)"}
+              {exporting === "pdf" ? "Génération…" : "Rapport PDF (.pdf)"}
             </Button>
           </div>
         </CardContent>
