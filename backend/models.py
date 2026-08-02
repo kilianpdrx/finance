@@ -145,6 +145,7 @@ class Transaction(Base):
     balance_after_cents = Column(Integer, nullable=True)
     notes = Column(String, nullable=True)
     is_manually_reviewed = Column(Boolean, default=False)
+    is_manually_edited = Column(Boolean, default=False)  # a core field was hand-corrected
     is_internal_transfer = Column(Boolean, default=False)
     transfer_pair_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
     import_batch_id = Column(Integer, ForeignKey("import_batches.id"), nullable=True)

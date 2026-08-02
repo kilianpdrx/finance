@@ -112,3 +112,40 @@ async def test_bulk_update_category(client: AsyncClient, seed_data: dict, transa
     res2 = await client.get(f"/api/transactions?category_id={cat_salaire.id}", headers={"X-Profile-Id": str(profile.id)})
     data = res2.json()
     assert len(data) == 2
+
+
+async def test_editing_core_field_sets_manually_edited(client: AsyncClient, seed_data: dict, transactions_data: dict):
+    profile = seed_data["profile"]
+    t1_id = transactions_data["t1"].id
+    h = {"X-Profile-Id": str(profile.id)}
+
+    res = await client.put(f"/api/transactions/{t1_id}", headers=h, json={"description": "Supermarket A (corrected)"})
+    assert res.status_code == 200
+    assert res.json()["is_manually_edited"] is True
+
+
+async def test_recategorizing_does_not_set_manually_edited(client: AsyncClient, seed_data: dict, transactions_data: dict):
+    profile = seed_data["profile"]
+    t1_id = transactions_data["t1"].id
+    cat_salaire = seed_data["cat_salaire"]
+    h = {"X-Profile-Id": str(profile.id)}
+
+    # Changing only the category (the everyday inline action) must NOT flag it.
+    res = await client.put(f"/api/transactions/{t1_id}", headers=h, json={"category_id": cat_salaire.id})
+    assert res.status_code == 200
+    assert res.json()["is_manually_edited"] is False
+
+
+async def test_editing_date_amount_persists(client: AsyncClient, seed_data: dict, transactions_data: dict):
+    profile = seed_data["profile"]
+    t2_id = transactions_data["t2"].id
+    h = {"X-Profile-Id": str(profile.id)}
+
+    res = await client.put(f"/api/transactions/{t2_id}", headers=h,
+                           json={"date": "2026-07-20", "amount_cents": 7777, "is_debit": False})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["date"] == "2026-07-20"
+    assert body["amount_cents"] == 7777
+    assert body["is_debit"] is False
+    assert body["is_manually_edited"] is True

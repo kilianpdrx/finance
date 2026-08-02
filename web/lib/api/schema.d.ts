@@ -2595,6 +2595,11 @@ export interface components {
              */
             is_manually_reviewed: boolean;
             /**
+             * Is Manually Edited
+             * @default false
+             */
+            is_manually_edited: boolean;
+            /**
              * Is Internal Transfer
              * @default false
              */
@@ -2615,6 +2620,18 @@ export interface components {
         };
         /** TransactionUpdate */
         TransactionUpdate: {
+            /** Account Id */
+            account_id?: number | null;
+            /** Date */
+            date?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Amount Cents */
+            amount_cents?: number | null;
+            /** Currency */
+            currency?: string | null;
+            /** Is Debit */
+            is_debit?: boolean | null;
             /** Category Id */
             category_id?: number | null;
             /** Subcategory */

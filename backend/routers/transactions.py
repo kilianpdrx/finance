@@ -351,7 +351,12 @@ async def update_transaction(
     txn = result.scalar_one_or_none()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    # Editing one of these core fields (vs. just recategorizing) marks the row edited.
+    CORE_FIELDS = {"account_id", "date", "description", "amount_cents", "currency", "is_debit"}
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        if field in CORE_FIELDS and getattr(txn, field) != value:
+            txn.is_manually_edited = True
         setattr(txn, field, value)
     await db.commit()
     await db.refresh(txn)

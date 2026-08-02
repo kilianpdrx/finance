@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { toast } from "sonner";
-import { Search, Plus, Download, Shuffle, Trash2, CheckCheck, ArrowLeftRight, X, Inbox, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Plus, Download, Shuffle, Trash2, CheckCheck, ArrowLeftRight, X, Inbox, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,7 @@ import { TransactionDialog } from "@/components/transactions/transaction-dialog"
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   useAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionMutations,
-  type TransactionFilters,
+  type TransactionFilters, type Transaction,
 } from "@/lib/api/hooks";
 import { formatCents } from "@/lib/format";
 
@@ -49,6 +49,9 @@ export default function TransactionsPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<Transaction | null>(null);
+  const openCreate = () => { setEditing(null); setDialogOpen(true); };
+  const openEdit = (t: Transaction) => { setEditing(t); setDialogOpen(true); };
 
   // Debounce search
   useEffect(() => {
@@ -132,7 +135,7 @@ export default function TransactionsPage() {
           <Button variant="outline" size="sm" asChild>
             <a href={exportHref} download><Download className="size-4" /> Exporter</a>
           </Button>
-          <Button size="sm" onClick={() => setDialogOpen(true)}><Plus className="size-4" /> Nouvelle</Button>
+          <Button size="sm" onClick={openCreate}><Plus className="size-4" /> Nouvelle</Button>
         </div>
       </div>
 
@@ -181,11 +184,12 @@ export default function TransactionsPage() {
                 <TableHead>Description</TableHead>
                 <TableHead className="w-52">Catégorie</TableHead>
                 <TableHead className="w-32 text-right">Montant</TableHead>
+                <TableHead className="w-10"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((t) => (
-                <TableRow key={t.id} data-selected={selected.has(t.id)}>
+                <TableRow key={t.id} data-selected={selected.has(t.id)} className="group">
                   <TableCell><Checkbox checked={selected.has(t.id)} onCheckedChange={() => toggleRow(t.id)} /></TableCell>
                   <TableCell className="nums whitespace-nowrap text-xs text-muted-foreground">
                     {format(new Date(t.date), "dd MMM yy", { locale: fr })}
@@ -196,6 +200,7 @@ export default function TransactionsPage() {
                       {t.account_name}
                       {t.is_internal_transfer && <span className="rounded bg-info/12 px-1 text-info">virement</span>}
                       {t.is_manually_reviewed && <span className="rounded bg-positive/12 px-1 text-positive">vérifié</span>}
+                      {t.is_manually_edited && <span className="rounded bg-warning/15 px-1 text-warning" title="Transaction modifiée manuellement">modifié</span>}
                     </p>
                   </TableCell>
                   <TableCell>
@@ -210,6 +215,12 @@ export default function TransactionsPage() {
                   </TableCell>
                   <TableCell className={`nums blurable text-right font-semibold ${t.is_debit ? "text-negative" : "text-positive"}`}>
                     {t.is_debit ? "−" : "+"}{formatCents(t.amount_cents, t.currency)}
+                  </TableCell>
+                  <TableCell className="pr-2">
+                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                      title="Modifier la transaction" onClick={() => openEdit(t)}>
+                      <Pencil className="size-4" />
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -228,7 +239,7 @@ export default function TransactionsPage() {
         </div>
       </div>
 
-      <TransactionDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      <TransactionDialog open={dialogOpen} onOpenChange={(v) => { setDialogOpen(v); if (!v) setEditing(null); }} transaction={editing} />
     </div>
   );
 }

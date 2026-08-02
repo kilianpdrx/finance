@@ -1,4 +1,5 @@
 from __future__ import annotations
+import datetime as _dt
 from datetime import date, datetime
 from typing import Optional, List
 from pydantic import BaseModel, ConfigDict
@@ -188,6 +189,17 @@ class TransactionCreateManual(TransactionBase):
     pass
 
 class TransactionUpdate(BaseModel):
+    # Core fields — editing any of these flags the transaction as manually edited.
+    account_id: Optional[int] = None
+    # NB: use the aliased type — a field literally named `date` would otherwise
+    # shadow the `date` type via its `= None` default (with `from __future__
+    # import annotations`), making pydantic emit a null-only schema.
+    date: Optional[_dt.date] = None
+    description: Optional[str] = None
+    amount_cents: Optional[int] = None
+    currency: Optional[str] = None
+    is_debit: Optional[bool] = None
+    # Classification / metadata — editing these does NOT set the edited badge.
     category_id: Optional[int] = None
     subcategory: Optional[str] = None
     notes: Optional[str] = None
@@ -198,6 +210,7 @@ class TransactionOut(TransactionBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     is_manually_reviewed: bool = False
+    is_manually_edited: bool = False
     is_internal_transfer: bool = False
     import_hash: str
     import_batch_id: Optional[int] = None
