@@ -1,10 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Wallet } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AccountSelect } from "@/components/accounts/account-select";
 import type { Account } from "@/lib/api/hooks";
 
 const FIELD_OPTIONS = [
@@ -17,9 +20,6 @@ const FIELD_OPTIONS = [
   { value: "balance", label: "Solde" },
   { value: "_ignore", label: "Ignorer" },
 ];
-
-const SELECT_CLS =
-  "rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
 function buildLocalPreview(rawPreview: string[][], mapping: Record<number, string>) {
   const colOf: Record<string, number> = {};
@@ -86,30 +86,48 @@ export function ColumnMappingStep({
         <Button variant="ghost" size="sm" onClick={onBack}>← Recommencer</Button>
       </div>
 
-      <Card className="space-y-3 p-4">
-        <div className="flex items-center gap-3">
-          <Label className="whitespace-nowrap">Compte destination</Label>
-          <select value={selectedAccount} onChange={(e) => onSelectAccount(e.target.value)} className={`${SELECT_CLS} flex-1`}>
-            {accounts.length === 0 ? <option value="">Aucun compte — créez-en un d&apos;abord</option>
-              : accounts.map((a) => <option key={a.id} value={a.id}>{a.name} ({a.bank_name})</option>)}
-          </select>
+      <Card className="space-y-4 p-4">
+        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-4">
+          <Label className="flex shrink-0 items-center gap-2 whitespace-nowrap text-muted-foreground">
+            <Wallet className="size-4" /> Compte destination
+          </Label>
+          <AccountSelect accounts={accounts} value={selectedAccount} onChange={onSelectAccount} className="flex-1"
+            placeholder="Créez d'abord un compte" />
         </div>
-        <div className="grid grid-cols-3 gap-3">
-          <div className="space-y-1"><Label>Séparateur</Label>
-            <select value={delimiter} onChange={(e) => setDelimiter(e.target.value)} className={`${SELECT_CLS} w-full`}>
-              <option value=";">Point-virgule (;)</option><option value=",">Virgule (,)</option><option value={"\t"}>Tabulation</option>
-            </select>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="space-y-1.5">
+            <Label>Séparateur</Label>
+            <Select value={delimiter} onValueChange={setDelimiter}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value=";">Point-virgule (;)</SelectItem>
+                <SelectItem value=",">Virgule (,)</SelectItem>
+                <SelectItem value={"\t"}>Tabulation</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <div className="space-y-1"><Label>Encodage</Label>
-            <select value={encoding} onChange={(e) => setEncoding(e.target.value)} className={`${SELECT_CLS} w-full`}>
-              <option value="utf-8">UTF-8 (+ BOM)</option><option value="latin-1">Latin-1 / ISO-8859-1</option>
-            </select>
+          <div className="space-y-1.5">
+            <Label>Encodage</Label>
+            <Select value={encoding} onValueChange={setEncoding}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="utf-8">UTF-8 (+ BOM)</SelectItem>
+                <SelectItem value="latin-1">Latin-1 / ISO-8859-1</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <div className="space-y-1"><Label>Format date</Label>
-            <select value={dateFormat} onChange={(e) => setDateFormat(e.target.value)} className={`${SELECT_CLS} w-full`}>
-              <option value="%d/%m/%Y">JJ/MM/AAAA</option><option value="%Y-%m-%d">AAAA-MM-JJ</option>
-              <option value="%m/%d/%Y">MM/JJ/AAAA</option><option value="%d-%m-%Y">JJ-MM-AAAA</option><option value="%d.%m.%Y">JJ.MM.AAAA</option>
-            </select>
+          <div className="space-y-1.5">
+            <Label>Format date</Label>
+            <Select value={dateFormat} onValueChange={setDateFormat}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="%d/%m/%Y">JJ/MM/AAAA</SelectItem>
+                <SelectItem value="%Y-%m-%d">AAAA-MM-JJ</SelectItem>
+                <SelectItem value="%m/%d/%Y">MM/JJ/AAAA</SelectItem>
+                <SelectItem value="%d-%m-%Y">JJ-MM-AAAA</SelectItem>
+                <SelectItem value="%d.%m.%Y">JJ.MM.AAAA</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
       </Card>
@@ -140,9 +158,15 @@ export function ColumnMappingStep({
                   <td className="px-4 py-2 font-mono text-xs">{header}</td>
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-1.5">
-                      <select value={mapping[colIdx] || ""} onChange={(e) => setMapping((p) => ({ ...p, [colIdx]: e.target.value }))} className={`${SELECT_CLS} w-full text-xs`}>
-                        {FIELD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
+                      <Select value={mapping[colIdx] || "__none__"}
+                        onValueChange={(v) => setMapping((p) => ({ ...p, [colIdx]: v === "__none__" ? "" : v }))}>
+                        <SelectTrigger className="h-8 flex-1 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {FIELD_OPTIONS.map((o) => (
+                            <SelectItem key={o.value || "__none__"} value={o.value || "__none__"} className="text-xs">{o.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       {columnGuesses[header] && mapping[colIdx] === columnGuesses[header] && (
                         <span className="shrink-0 rounded bg-info/15 px-1 py-0.5 text-[10px] font-semibold uppercase text-info" title="Deviné automatiquement">auto</span>
                       )}

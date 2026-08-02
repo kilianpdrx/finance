@@ -7,21 +7,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { Wallet } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
+import { AccountSelect } from "@/components/accounts/account-select";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
-import { ACCOUNT_TYPE_LABELS } from "@/components/accounts/account-dialog";
 import type { Account, Category } from "@/lib/api/hooks";
 import type { ParsePreviewTransaction } from "@/lib/api/upload";
-
-/** A coloured tile with the account's initial, matching the Comptes page. */
-function AccountTile({ account }: { account: Account }) {
-  return (
-    <span className="flex size-6 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold text-white"
-      style={{ backgroundColor: account.color }}>
-      {account.name[0]?.toUpperCase()}
-    </span>
-  );
-}
 
 const SELECT_CLS = "rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
@@ -48,7 +37,6 @@ export function ReviewStep({
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [force, setForce] = useState<Set<string>>(new Set());
 
-  const selectedAccObj = accounts.find((a) => String(a.id) === selectedAccount);
   const catId = (t: ParsePreviewTransaction) => (t.import_hash in overrides ? overrides[t.import_hash] : t.category_id);
   const duplicateTxns = useMemo(() => transactions.filter((t) => t.is_duplicate), [transactions]);
   const duplicates = duplicateTxns.length;
@@ -74,34 +62,7 @@ export function ReviewStep({
         <Label className="flex shrink-0 items-center gap-2 whitespace-nowrap text-muted-foreground">
           <Wallet className="size-4" /> Compte destination
         </Label>
-        <Select value={selectedAccount} onValueChange={onSelectAccount} disabled={accounts.length === 0}>
-          <SelectTrigger className="h-11 flex-1">
-            {selectedAccObj ? (
-              <span className="flex min-w-0 flex-1 items-center gap-2.5">
-                <AccountTile account={selectedAccObj} />
-                <span className="shrink-0 font-medium text-foreground">{selectedAccObj.name}</span>
-                <span className="truncate text-xs text-muted-foreground">· {selectedAccObj.bank_name}</span>
-              </span>
-            ) : (
-              <span className="text-muted-foreground">{accounts.length === 0 ? "Aucun compte disponible" : "Sélectionner un compte…"}</span>
-            )}
-          </SelectTrigger>
-          <SelectContent>
-            {accounts.map((a) => (
-              <SelectItem key={a.id} value={String(a.id)} className="py-2">
-                <span className="flex items-center gap-2.5">
-                  <AccountTile account={a} />
-                  <span className="flex flex-col items-start leading-tight">
-                    <span className="font-medium">{a.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {a.bank_name}{a.account_type ? ` · ${ACCOUNT_TYPE_LABELS[a.account_type] ?? a.account_type}` : ""}
-                    </span>
-                  </span>
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <AccountSelect accounts={accounts} value={selectedAccount} onChange={onSelectAccount} className="flex-1" />
       </Card>
 
       <div className="grid grid-cols-3 gap-3">
@@ -127,8 +88,8 @@ export function ReviewStep({
           <div className="max-h-48 overflow-y-auto">
             <table className="w-full text-sm">
               <tbody>
-                {duplicateTxns.map((t) => (
-                  <tr key={t.import_hash} className={cn("border-t border-border", force.has(t.import_hash) && "bg-positive/8")}>
+                {duplicateTxns.map((t, i) => (
+                  <tr key={`${t.import_hash}-${i}`} className={cn("border-t border-border", force.has(t.import_hash) && "bg-positive/8")}>
                     <td className="w-8 px-4 py-1.5"><Checkbox checked={force.has(t.import_hash)} onCheckedChange={() => toggleForce(t.import_hash)} /></td>
                     <td className="nums px-2 py-1.5 text-xs text-muted-foreground">{t.date}</td>
                     <td className="max-w-xs truncate px-2 py-1.5 text-xs">{t.description}</td>
@@ -161,11 +122,11 @@ export function ReviewStep({
               {displayed.length === 0 && (
                 <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">{filterUncat ? "Toutes catégorisées !" : "Aucune transaction à importer."}</td></tr>
               )}
-              {displayed.map((t) => {
+              {displayed.map((t, i) => {
                 const cid = catId(t);
                 const uncat = cid === null;
                 return (
-                  <tr key={t.import_hash} className={cn("border-t border-border", uncat ? "bg-warning/8" : t.categorization_source === "rule" ? "bg-positive/6" : "")}>
+                  <tr key={`${t.import_hash}-${i}`} className={cn("border-t border-border", uncat ? "bg-warning/8" : t.categorization_source === "rule" ? "bg-positive/6" : "")}>
 
                     <td className="nums whitespace-nowrap px-4 py-2 text-xs text-muted-foreground">{t.date}</td>
                     <td className="max-w-xs px-4 py-2 text-xs">
