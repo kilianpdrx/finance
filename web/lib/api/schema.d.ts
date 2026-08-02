@@ -2604,6 +2604,11 @@ export interface components {
              * @default false
              */
             is_internal_transfer: boolean;
+            /**
+             * Category Conflict
+             * @default false
+             */
+            category_conflict: boolean;
             /** Import Hash */
             import_hash: string;
             /** Import Batch Id */

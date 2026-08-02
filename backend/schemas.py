@@ -212,6 +212,7 @@ class TransactionOut(TransactionBase):
     is_manually_reviewed: bool = False
     is_manually_edited: bool = False
     is_internal_transfer: bool = False
+    category_conflict: bool = False  # >= 2 distinct categories match via rules
     import_hash: str
     import_batch_id: Optional[int] = None
     created_at: datetime

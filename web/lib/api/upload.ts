@@ -24,6 +24,7 @@ export interface ParsePreviewTransaction {
   category_name: string | null;
   is_duplicate: boolean;
   categorization_source: "rule" | "ml" | null;
+  category_conflict: boolean;
 }
 
 export interface ParsePreviewResponse {

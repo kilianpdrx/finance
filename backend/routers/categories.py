@@ -156,6 +156,7 @@ async def preview_rule(
     txns = result.scalars().all()
 
     matched = []
+    matched_txns = []
     for txn in txns:
         txn_data = {
             "description": txn.description,
@@ -170,8 +171,19 @@ async def preview_rule(
             if txn.account:
                 out.account_name = txn.account.name
             matched.append(out)
+            matched_txns.append(txn)
             if len(matched) >= limit:
                 break
+
+    # Flag matched rows where several distinct categories apply via the full ruleset.
+    from services.categorizer import conflict_flags_batch
+    flags = await conflict_flags_batch(
+        [{"description": t.description, "amount_cents": t.amount_cents, "date": str(t.date),
+          "is_debit": t.is_debit, "currency": t.currency, "account_id": t.account_id} for t in matched_txns],
+        db, pid,
+    )
+    for out, flag in zip(matched, flags):
+        out.category_conflict = flag
 
     return matched
 

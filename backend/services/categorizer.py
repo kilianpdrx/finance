@@ -84,19 +84,21 @@ def evaluate_conditions(txn_data: dict, conditions: List[dict], logic_operator: 
     return all(results) if logic_operator != "OR" else any(results)
 
 
-async def categorize_batch(
+async def evaluate_rules_batch(
     txns_data: List[dict],
     db: AsyncSession,
     profile_id: Optional[int] = None,
-) -> List[tuple[Optional[int], Optional[str]]]:
-    """Categorize a list of transactions efficiently by querying active rules once.
+) -> List[tuple[Optional[int], Optional[str], set]]:
+    """Evaluate all active rules against each transaction, querying rules once.
 
-    Returns one (category_id, source) tuple per input transaction, in order.
-    `source` is "rule" on a match, else None."""
+    Returns one (category_id, source, matched_category_ids) tuple per transaction:
+      - category_id / source: the winning rule's category (highest priority), or None.
+      - matched_category_ids: the set of ALL distinct categories whose rules match —
+        len >= 2 means several categories apply (a conflict worth flagging)."""
     if not txns_data:
         return []
 
-    conds = [CategoryRule.is_active == True]
+    conds = [CategoryRule.is_active == True]  # noqa: E712
     if profile_id is not None:
         conds.append(CategoryRule.profile_id == profile_id)
     result = await db.execute(
@@ -110,6 +112,7 @@ async def categorize_batch(
     for txn_data in txns_data:
         matched_category = None
         matched_source = None
+        all_matches: set = set()
         for rule in rules:
             if not rule.conditions:
                 continue
@@ -118,13 +121,35 @@ async def categorize_batch(
 
             logic_op = getattr(rule, 'logic_operator', 'AND') or 'AND'
             if evaluate_conditions(txn_data, rule.conditions, logic_op):
-                matched_category = rule.category_id
-                matched_source = "rule"
-                break
+                all_matches.add(rule.category_id)
+                if matched_category is None:
+                    matched_category = rule.category_id
+                    matched_source = "rule"
 
-        out.append((matched_category, matched_source))
+        out.append((matched_category, matched_source, all_matches))
 
     return out
+
+
+async def categorize_batch(
+    txns_data: List[dict],
+    db: AsyncSession,
+    profile_id: Optional[int] = None,
+) -> List[tuple[Optional[int], Optional[str]]]:
+    """Categorize a list of transactions efficiently by querying active rules once.
+
+    Returns one (category_id, source) tuple per input transaction, in order.
+    `source` is "rule" on a match, else None."""
+    return [(c, s) for c, s, _ in await evaluate_rules_batch(txns_data, db, profile_id)]
+
+
+async def conflict_flags_batch(
+    txns_data: List[dict],
+    db: AsyncSession,
+    profile_id: Optional[int] = None,
+) -> List[bool]:
+    """True per transaction when >= 2 DISTINCT categories match (several apply)."""
+    return [len(m) >= 2 for _, _, m in await evaluate_rules_batch(txns_data, db, profile_id)]
 
 
 async def categorize(txn_data: dict, db: AsyncSession, profile_id: Optional[int] = None) -> tuple[Optional[int], Optional[str]]:

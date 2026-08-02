@@ -10,7 +10,7 @@ from models import Transaction, BankProfile, Account, ImportBatch
 from schemas import DetectResponse, ConfirmResponse, BankProfileOut, BankProfileCreate
 from services.bank_detector import detect_bank, guess_columns, guess_confidence
 from services.csv_parser import parse_csv
-from services.categorizer import categorize, categorize_batch
+from services.categorizer import categorize, categorize_batch, evaluate_rules_batch
 from services.transfer_detector import detect_internal_transfers
 from utils import generate_import_hash
 
@@ -205,33 +205,33 @@ async def parse_preview(
     cats_result = await db.execute(select(CatModel).where(CatModel.profile_id == pid))
     cat_map = {c.id: {"name": c.name, "color": c.color} for c in cats_result.scalars()}
 
-    # Flag duplicates (existing + intra-file) up front, then categorize exactly the
-    # rows that will actually be imported. Categorize against the DESTINATION account
-    # (parse_csv leaves account_id=0) so account-scoped rules fire here just like they
-    # will on confirm. Results are mapped back by index — no fragile shared iterator.
+    # Flag duplicates (existing + intra-file) up front.
     dup_flags: list[bool] = []
     seen_hashes: set = set()
     for h, lh in zip(hashes, legacy_hashes):
         dup_flags.append(h in existing_hashes or lh in existing_hashes or h in seen_hashes)
         seen_hashes.add(h)
 
-    to_categorize = []  # (index, txn_dict)
-    for i, t in enumerate(transactions):
-        if t.category_id is None and not dup_flags[i]:
-            d = t.model_dump()
-            if account_id is not None:
-                d["account_id"] = account_id
-            to_categorize.append((i, d))
-    cat_results = await categorize_batch([d for _, d in to_categorize], db, pid)
-    cat_by_index = {idx: cat_results[k] for k, (idx, _) in enumerate(to_categorize)}
+    # Evaluate rules once for EVERY row against the DESTINATION account (parse_csv
+    # leaves account_id=0), so account-scoped rules fire here exactly as on confirm.
+    # We get both the winning category and the set of all matching categories, so a
+    # row where several distinct categories apply can be flagged (category_conflict).
+    eval_dicts = []
+    for t in transactions:
+        d = t.model_dump()
+        if account_id is not None:
+            d["account_id"] = account_id
+        eval_dicts.append(d)
+    rule_eval = await evaluate_rules_batch(eval_dicts, db, pid)
 
     result_rows = []
     for i, (t, h) in enumerate(zip(transactions, hashes)):
         is_duplicate = dup_flags[i]
+        chosen, source, matches = rule_eval[i]
         cat_id = t.category_id
         cat_source = None
         if cat_id is None and not is_duplicate:
-            cat_id, cat_source = cat_by_index.get(i, (None, None))
+            cat_id, cat_source = chosen, source
         result_rows.append({
             "date": str(t.date),
             "description": t.description,
@@ -243,6 +243,7 @@ async def parse_preview(
             "category_name": cat_map.get(cat_id, {}).get("name") if cat_id else None,
             "is_duplicate": is_duplicate,
             "categorization_source": cat_source,
+            "category_conflict": len(matches) >= 2,
         })
 
 

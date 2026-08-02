@@ -16,6 +16,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CategorySelect } from "@/components/transactions/category-select";
 import { TransactionDialog } from "@/components/transactions/transaction-dialog";
+import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   useAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionMutations,
@@ -201,6 +202,7 @@ export default function TransactionsPage() {
                       {t.is_internal_transfer && <span className="rounded bg-info/12 px-1 text-info">virement</span>}
                       {t.is_manually_reviewed && <span className="rounded bg-positive/12 px-1 text-positive">vérifié</span>}
                       {t.is_manually_edited && <span className="rounded bg-warning/15 px-1 text-warning" title="Transaction modifiée manuellement">modifié</span>}
+                      {t.category_conflict && <ConflictBadge />}
                     </p>
                   </TableCell>
                   <TableCell>

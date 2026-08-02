@@ -16,6 +16,7 @@ import { api, unwrap } from "@/lib/api/client";
 import { useAllRules, useCategories, useRuleMutations, type CategoryRule, type Account, type Transaction } from "@/lib/api/hooks";
 import { groupByAccount } from "@/lib/group";
 import { formatCents } from "@/lib/format";
+import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 
@@ -186,7 +187,10 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
                     {preview.map((t) => (
                       <div key={t.id} className="flex items-center gap-3 px-3 py-1.5 text-xs">
                         <span className="nums w-16 shrink-0 text-muted-foreground">{format(new Date(t.date), "dd MMM yy", { locale: fr })}</span>
-                        <span className="flex-1 truncate">{t.description}</span>
+                        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                          <span className="truncate">{t.description}</span>
+                          {t.category_conflict && <ConflictBadge className="shrink-0 text-[10px]" />}
+                        </span>
                         <span className="shrink-0 truncate text-muted-foreground">{t.account_name}</span>
                         <span className={`nums w-24 shrink-0 text-right font-semibold ${t.is_debit ? "text-negative" : "text-positive"}`}>
                           {t.is_debit ? "−" : "+"}{formatCents(t.amount_cents, t.currency)}

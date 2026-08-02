@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import type { Account, Category } from "@/lib/api/hooks";
 import type { ParsePreviewTransaction } from "@/lib/api/upload";
 
@@ -126,7 +127,12 @@ export function ReviewStep({
                   <tr key={t.import_hash} className={cn("border-t border-border", uncat ? "bg-warning/8" : t.categorization_source === "rule" ? "bg-positive/6" : "")}>
 
                     <td className="nums whitespace-nowrap px-4 py-2 text-xs text-muted-foreground">{t.date}</td>
-                    <td className="max-w-xs px-4 py-2 text-xs"><span className="block truncate" title={t.description}>{t.description}</span></td>
+                    <td className="max-w-xs px-4 py-2 text-xs">
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate" title={t.description}>{t.description}</span>
+                        {t.category_conflict && <ConflictBadge className="shrink-0 text-[10px]" />}
+                      </span>
+                    </td>
                     <td className={cn("nums whitespace-nowrap px-4 py-2 text-right text-xs font-medium", t.is_debit ? "text-negative" : "text-positive")}>{money(t.amount_cents, t.is_debit)}</td>
                     <td className="px-4 py-2">
                       <select value={cid ?? ""} onChange={(e) => setOverrides((p) => ({ ...p, [t.import_hash]: e.target.value ? Number(e.target.value) : null }))} className={cn(SELECT_CLS, "w-full text-xs", uncat && "border-warning/50")}>
