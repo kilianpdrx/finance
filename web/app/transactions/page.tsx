@@ -216,7 +216,7 @@ export default function TransactionsPage() {
                     />
                   </TableCell>
                   <TableCell className={`nums blurable text-right font-semibold ${t.is_debit ? "text-negative" : "text-positive"}`}>
-                    {t.is_debit ? "−" : "+"}{formatCents(t.amount_cents, t.currency)}
+                    {t.is_debit ? "−" : "+"}{formatCents(t.amount_cents, t.currency, { decimals: 2 })}
                   </TableCell>
                   <TableCell className="pr-2">
                     <Button variant="ghost" size="icon" className="size-8 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
