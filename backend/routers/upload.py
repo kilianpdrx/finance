@@ -194,9 +194,12 @@ async def parse_preview(
     if not transactions:
         logger.warning("parse_csv returned 0 transactions — check column mapping and date format")
 
-    # Account-scoped hashes when the destination account is known (matches confirm).
+    # Account-scoped hashes when the destination account is known (matches confirm),
+    # plus the legacy no-account hashes so rows imported by older versions (which
+    # stored that format) are still recognised as duplicates.
     hashes = _acct_hashes(transactions, account_id) if account_id is not None else [t.import_hash for t in transactions]
-    existing_hashes = await _find_existing_hashes(db, hashes, pid)
+    legacy_hashes = [t.import_hash for t in transactions]
+    existing_hashes = await _find_existing_hashes(db, hashes + legacy_hashes, pid)
 
     from models import Category as CatModel
     cats_result = await db.execute(select(CatModel).where(CatModel.profile_id == pid))
@@ -204,8 +207,8 @@ async def parse_preview(
 
     # Batch categorize uncategorized transactions to avoid N+1 queries
     uncat_txns = []
-    for t, h in zip(transactions, hashes):
-        if t.category_id is None and h not in existing_hashes:
+    for t, h, lh in zip(transactions, hashes, legacy_hashes):
+        if t.category_id is None and h not in existing_hashes and lh not in existing_hashes:
             uncat_txns.append(t.model_dump())
 
     categorized_pairs = await categorize_batch(uncat_txns, db, pid)
@@ -213,8 +216,8 @@ async def parse_preview(
 
     result_rows = []
     seen_hashes: set = set()  # Track intra-file duplicates
-    for t, h in zip(transactions, hashes):
-        is_duplicate = h in existing_hashes or h in seen_hashes
+    for t, h, lh in zip(transactions, hashes, legacy_hashes):
+        is_duplicate = h in existing_hashes or lh in existing_hashes or h in seen_hashes
         seen_hashes.add(h)
         cat_id = t.category_id
         cat_source = None
@@ -335,9 +338,12 @@ async def confirm(
         raise HTTPException(status_code=404, detail="Compte introuvable")
     account_currency = acc_obj.currency or "EUR"
 
-    # Account-scoped hashes so identical txns across profiles/accounts never collide.
+    # Account-scoped hashes for new inserts (collision-safe on the global UNIQUE),
+    # plus the legacy no-account hashes so duplicates imported by older versions
+    # (which stored that format) are still recognised.
     hashes = _acct_hashes(transactions, account_id)
-    existing_hashes = await _find_existing_hashes(db, hashes, pid)
+    legacy_hashes = [t.import_hash for t in transactions]
+    existing_hashes = await _find_existing_hashes(db, hashes + legacy_hashes, pid)
 
     # Create import batch
     batch = ImportBatch(
@@ -356,10 +362,12 @@ async def confirm(
     import hashlib as _hl
     import time as _time
 
-    # Pre-categorize all uncategorized items in batch
+    # Pre-categorize all uncategorized items in batch. A row is a duplicate when
+    # EITHER its account-scoped or its legacy hash already exists in the profile.
     uncat_txns = []
-    for t, h in zip(transactions, hashes):
-        if (h not in existing_hashes or h in force_hashes) and h not in overrides and t.category_id is None:
+    for t, h, lh in zip(transactions, hashes, legacy_hashes):
+        is_dup = h in existing_hashes or lh in existing_hashes
+        if (not is_dup or h in force_hashes) and h not in overrides and t.category_id is None:
             txn_dict = t.model_dump()
             txn_dict['account_id'] = account_id
             uncat_txns.append(txn_dict)
@@ -367,9 +375,10 @@ async def confirm(
     categorized_pairs = await categorize_batch(uncat_txns, db, pid)
     cat_iter = iter(categorized_pairs)
 
-    for t, h in zip(transactions, hashes):
-        is_forced_dup = h in existing_hashes and h in force_hashes
-        if h in existing_hashes and h not in force_hashes:
+    for t, h, lh in zip(transactions, hashes, legacy_hashes):
+        is_dup = h in existing_hashes or lh in existing_hashes
+        is_forced_dup = is_dup and h in force_hashes
+        if is_dup and h not in force_hashes:
             skipped += 1
             continue
 
