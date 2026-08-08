@@ -24,11 +24,77 @@ class BulkCategoryUpdate(BaseModel):
     category_id: Optional[int] = None
 
 
+async def _build_txn_filters(
+    db: AsyncSession, pid: int, *, account_id=None, category_id=None, uncategorized=None,
+    categorized=None, date_from=None, date_to=None, search=None, is_debit=None,
+    is_internal_transfer=None, bank_name=None, month=None, import_batch_id=None,
+):
+    """Shared filter list for the transactions list and count endpoints."""
+    filters = [Transaction.profile_id == pid]
+    if account_id is not None:
+        filters.append(Transaction.account_id == account_id)
+    if uncategorized:
+        filters.append(Transaction.category_id == None)  # noqa: E711
+    elif categorized:
+        filters.append(Transaction.category_id != None)  # noqa: E711
+    elif category_id is not None:
+        filters.append(Transaction.category_id == category_id)
+    if date_from is not None:
+        filters.append(Transaction.date >= date_from)
+    if date_to is not None:
+        filters.append(Transaction.date <= date_to)
+    if month is not None:
+        filters.append(func.strftime("%Y-%m", Transaction.date) == month)  # YYYY-MM
+    if search:
+        filters.append(Transaction.description.ilike(f"%{search}%"))
+    if is_debit is not None:
+        filters.append(Transaction.is_debit == is_debit)
+    if is_internal_transfer is not None:
+        filters.append(Transaction.is_internal_transfer == is_internal_transfer)
+    if bank_name is not None:
+        account_ids_q = await db.execute(
+            select(Account.id).where(Account.bank_name == bank_name, Account.profile_id == pid)
+        )
+        filters.append(Transaction.account_id.in_([r[0] for r in account_ids_q]))
+    if import_batch_id is not None:
+        filters.append(Transaction.import_batch_id == import_batch_id)
+    return filters
+
+
+@router.get("/count")
+async def count_transactions(
+    account_id: Optional[int] = None,
+    category_id: Optional[int] = None,
+    uncategorized: Optional[bool] = None,
+    categorized: Optional[bool] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    search: Optional[str] = None,
+    is_debit: Optional[bool] = None,
+    is_internal_transfer: Optional[bool] = None,
+    bank_name: Optional[str] = None,
+    month: Optional[str] = None,
+    import_batch_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Total number of transactions matching the given filters (for the header count)."""
+    filters = await _build_txn_filters(
+        db, pid, account_id=account_id, category_id=category_id, uncategorized=uncategorized,
+        categorized=categorized, date_from=date_from, date_to=date_to, search=search,
+        is_debit=is_debit, is_internal_transfer=is_internal_transfer, bank_name=bank_name,
+        month=month, import_batch_id=import_batch_id,
+    )
+    total = (await db.execute(select(func.count(Transaction.id)).where(and_(*filters)))).scalar() or 0
+    return {"total": total}
+
+
 @router.get("", response_model=List[TransactionOut])
 async def list_transactions(
     account_id: Optional[int] = None,
     category_id: Optional[int] = None,
     uncategorized: Optional[bool] = None,
+    categorized: Optional[bool] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     search: Optional[str] = None,
@@ -42,35 +108,12 @@ async def list_transactions(
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
-    filters = [Transaction.profile_id == pid]
-    if account_id is not None:
-        filters.append(Transaction.account_id == account_id)
-    if uncategorized:
-        filters.append(Transaction.category_id == None)
-    elif category_id is not None:
-        filters.append(Transaction.category_id == category_id)
-    if date_from is not None:
-        filters.append(Transaction.date >= date_from)
-    if date_to is not None:
-        filters.append(Transaction.date <= date_to)
-    if month is not None:
-        # month format: YYYY-MM
-        filters.append(func.strftime("%Y-%m", Transaction.date) == month)
-    if search:
-        filters.append(Transaction.description.ilike(f"%{search}%"))
-    if is_debit is not None:
-        filters.append(Transaction.is_debit == is_debit)
-    if is_internal_transfer is not None:
-        filters.append(Transaction.is_internal_transfer == is_internal_transfer)
-    if bank_name is not None:
-        # Filter via join on accounts
-        account_ids_q = await db.execute(
-            select(Account.id).where(Account.bank_name == bank_name, Account.profile_id == pid)
-        )
-        account_ids = [r[0] for r in account_ids_q]
-        filters.append(Transaction.account_id.in_(account_ids))
-    if import_batch_id is not None:
-        filters.append(Transaction.import_batch_id == import_batch_id)
+    filters = await _build_txn_filters(
+        db, pid, account_id=account_id, category_id=category_id, uncategorized=uncategorized,
+        categorized=categorized, date_from=date_from, date_to=date_to, search=search,
+        is_debit=is_debit, is_internal_transfer=is_internal_transfer, bank_name=bank_name,
+        month=month, import_batch_id=import_batch_id,
+    )
 
     stmt = (
         select(Transaction)

@@ -149,3 +149,21 @@ async def test_editing_date_amount_persists(client: AsyncClient, seed_data: dict
     assert body["amount_cents"] == 7777
     assert body["is_debit"] is False
     assert body["is_manually_edited"] is True
+
+
+async def test_count_and_categorized_filter(client: AsyncClient, seed_data: dict, transactions_data: dict):
+    pid = seed_data["profile"].id
+    h = {"X-Profile-Id": str(pid)}
+    # transactions_data seeds 3 txns: t1 (cat_courses), t2 (None), t3 (see fixture).
+    total = (await client.get("/api/transactions/count", headers=h)).json()["total"]
+    assert total >= 3
+
+    uncat = (await client.get("/api/transactions/count?uncategorized=true", headers=h)).json()["total"]
+    cat = (await client.get("/api/transactions/count?categorized=true", headers=h)).json()["total"]
+    assert uncat >= 1 and cat >= 1
+    assert uncat + cat == total
+
+    # The categorized list excludes uncategorized rows.
+    rows = (await client.get("/api/transactions?categorized=true", headers=h)).json()
+    assert all(r["category_id"] is not None for r in rows)
+    assert len(rows) == cat

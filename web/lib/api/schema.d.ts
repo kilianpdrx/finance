@@ -96,6 +96,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/transactions/count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count Transactions
+         * @description Total number of transactions matching the given filters (for the header count).
+         */
+        get: operations["count_transactions_api_transactions_count_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/transactions": {
         parameters: {
             query?: never;
@@ -325,6 +345,27 @@ export interface paths {
         post?: never;
         /** Delete Category */
         delete: operations["delete_category_api_categories__category_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/categories/seed-defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Seed Default Categories
+         * @description Create the standard categories for the active profile, skipping names that
+         *     already exist. Returns how many were created.
+         */
+        post: operations["seed_default_categories_api_categories_seed_defaults_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1332,7 +1373,7 @@ export interface paths {
         };
         /**
          * Export Report Xlsx
-         * @description Excel workbook: a financial summary sheet plus the 12-month budget table.
+         * @description Comprehensive multi-sheet Excel report over the chosen period.
          */
         get: operations["export_report_xlsx_api_system_export_report_xlsx_get"];
         put?: never;
@@ -1352,7 +1393,7 @@ export interface paths {
         };
         /**
          * Export Report Pdf
-         * @description Print-ready PDF report: financial summary followed by the budget table.
+         * @description Comprehensive PDF report (KPIs, charts, spending, budget, investments) over the chosen period.
          */
         get: operations["export_report_pdf_api_system_export_report_pdf_get"];
         put?: never;
@@ -1786,6 +1827,8 @@ export interface components {
             category_name: string;
             /** Category Color */
             category_color: string;
+            /** Parent Id */
+            parent_id?: number | null;
             /**
              * Is Investment
              * @default false
@@ -1847,6 +1890,8 @@ export interface components {
             category_id: number | null;
             /** Category Name */
             category_name: string;
+            /** Parent Id */
+            parent_id?: number | null;
             /** Total Cents */
             total_cents: number;
             /** Count */
@@ -2972,12 +3017,57 @@ export interface operations {
             };
         };
     };
+    count_transactions_api_transactions_count_get: {
+        parameters: {
+            query?: {
+                account_id?: number | null;
+                category_id?: number | null;
+                uncategorized?: boolean | null;
+                categorized?: boolean | null;
+                date_from?: string | null;
+                date_to?: string | null;
+                search?: string | null;
+                is_debit?: boolean | null;
+                is_internal_transfer?: boolean | null;
+                bank_name?: string | null;
+                month?: string | null;
+                import_batch_id?: number | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_transactions_api_transactions_get: {
         parameters: {
             query?: {
                 account_id?: number | null;
                 category_id?: number | null;
                 uncategorized?: boolean | null;
+                categorized?: boolean | null;
                 date_from?: string | null;
                 date_to?: string | null;
                 search?: string | null;
@@ -3579,6 +3669,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    seed_default_categories_api_categories_seed_defaults_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
             };
             /** @description Validation Error */
             422: {
@@ -5871,7 +5992,9 @@ export interface operations {
     export_report_xlsx_api_system_export_report_xlsx_get: {
         parameters: {
             query?: {
-                year?: number | null;
+                date_from?: string | null;
+                date_to?: string | null;
+                include_investments?: boolean;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
@@ -5904,7 +6027,9 @@ export interface operations {
     export_report_pdf_api_system_export_report_pdf_get: {
         parameters: {
             query?: {
-                year?: number | null;
+                date_from?: string | null;
+                date_to?: string | null;
+                include_investments?: boolean;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
