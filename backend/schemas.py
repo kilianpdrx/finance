@@ -347,6 +347,7 @@ class CashFlowMonth(BaseModel):
 class CategoryBreakdown(BaseModel):
     category_id: Optional[int]
     category_name: str
+    parent_id: Optional[int] = None   # top-level parent, for subcategory roll-up
     total_cents: int
     count: int
     percentage: float
@@ -392,6 +393,7 @@ class BudgetTableRow(BaseModel):
     category_id: Optional[int]
     category_name: str
     category_color: str
+    parent_id: Optional[int] = None   # top-level parent, for subcategory roll-up
     is_investment: bool = False
     cells: List[BudgetTableCell]
     total_actual_cents: int

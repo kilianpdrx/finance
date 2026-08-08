@@ -256,17 +256,20 @@ async def by_category(
     grand_total = sum(cat_totals.values()) or 1
 
     cat_ids = [cid for cid in cat_totals if cid is not None]
-    cat_map: dict = {}
+    cat_name: dict = {}
+    cat_parent: dict = {}
     if cat_ids:
         cats = await db.execute(select(Category).where(Category.id.in_(cat_ids)))
         for c in cats.scalars():
-            cat_map[c.id] = c.name
+            cat_name[c.id] = c.name
+            cat_parent[c.id] = c.parent_id
 
     result = []
     for cat_id in sorted(cat_totals, key=lambda x: cat_totals[x], reverse=True):
         result.append(CategoryBreakdown(
             category_id=cat_id,
-            category_name=cat_map.get(cat_id, "Non catégorisé") if cat_id else "Non catégorisé",
+            category_name=cat_name.get(cat_id, "Non catégorisé") if cat_id else "Non catégorisé",
+            parent_id=cat_parent.get(cat_id),
             total_cents=cat_totals[cat_id],
             count=cat_counts[cat_id],
             percentage=round(cat_totals[cat_id] / grand_total * 100, 1),
@@ -843,6 +846,7 @@ async def budget_full(
                 category_id=cat.id,
                 category_name=cat.name,
                 category_color=cat.color,
+                parent_id=getattr(cat, 'parent_id', None),
                 is_investment=getattr(cat, 'is_investment', False) or False,
                 cells=cells,
                 total_actual_cents=row_total_actual,
