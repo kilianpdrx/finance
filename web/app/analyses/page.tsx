@@ -1,7 +1,10 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { Inbox, ChevronRight, CornerDownRight, Wand2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { format } from "date-fns";
+import { fr } from "date-fns/locale";
+import { Inbox, ChevronRight, CornerDownRight, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RuleDialog } from "@/components/settings/rule-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,8 +20,9 @@ import { CourantTabs, type CourantSelection } from "@/components/analytics/coura
 import {
   useAnalyticsContext, useByCategory, useSpendingTrends, useRecurring, useRecurringUncovered, useCategories,
   useByCategoryPerAccount, useCashFlowPerAccount,
-  type SpendingTrend, type RecurringTransaction, type CategoryBreakdown,
+  type SpendingTrend, type RecurringTransaction, type CategoryBreakdown, type Transaction,
 } from "@/lib/api/hooks";
+import { api, unwrap } from "@/lib/api/client";
 import { formatCents, formatPercent } from "@/lib/format";
 
 interface RollupGroup {
@@ -65,19 +69,57 @@ export default function AnalysesPage() {
   const scopeIds = sel === "all" ? courantIds : [sel];
   const q = { ...query, account_ids: scopeIds.length ? scopeIds.join(",") : undefined, income };
 
+  const { data: categories = [] } = useCategories();
+  // fixe → 0, variable → 1, everything else (income, unknown) → 2. Categories are
+  // grouped by this rank, then by amount within each group.
+  const sectionRank = useMemo(() => {
+    const typeOf = new Map(categories.map((c) => [c.id, c.expense_type] as const));
+    return (id: number | null) => {
+      const t = id == null ? null : typeOf.get(id);
+      return t === "fixed" ? 0 : t === "variable" ? 1 : 2;
+    };
+  }, [categories]);
+
   const byCategory = useByCategory(q);
-  const rolled = useMemo(() => rollupCategories(byCategory.data ?? []), [byCategory.data]);
+  const rolled = useMemo(() => {
+    const groups = rollupCategories(byCategory.data ?? []);
+    return [...groups].sort((a, b) => sectionRank(a.id) - sectionRank(b.id) || b.total_cents - a.total_cents);
+  }, [byCategory.data, sectionRank]);
   const rolledDonut: CategoryBreakdown[] = rolled.map((g) => ({
     category_id: g.id, category_name: g.name, parent_id: null,
     total_cents: g.total_cents, count: g.count, percentage: g.percentage,
   }));
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const toggle = (id: number) => setExpanded((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  // Click a category name → its 20 biggest transactions in a table below.
+  const [detailCat, setDetailCat] = useState<{ name: string; ids: number[] } | null>(null);
+  const openDetail = (g: RollupGroup) => {
+    const ids = [g.id, ...g.children.map((c) => c.category_id)].filter((x): x is number => x != null);
+    if (ids.length) setDetailCat({ name: g.name, ids });
+  };
+  const detailQuery = useQuery({
+    queryKey: ["cat-top-txns", detailCat?.ids, q.date_from, q.date_to, income],
+    enabled: detailCat != null,
+    queryFn: async () => {
+      const results = await Promise.all(
+        (detailCat?.ids ?? []).map((cid) =>
+          unwrap(api.GET("/api/transactions", {
+            params: { query: {
+              category_id: cid, is_debit: !income, is_internal_transfer: false,
+              date_from: q.date_from ?? undefined, date_to: q.date_to ?? undefined, limit: 1000,
+            } },
+          })) as Promise<Transaction[]>,
+        ),
+      );
+      return results.flat().sort((a, b) => b.amount_cents - a.amount_cents).slice(0, 20);
+    },
+  });
+
   const trends = useSpendingTrends(q);
   const recurring = useRecurring(q.account_ids);
   const uncovered = useRecurringUncovered(q.account_ids);
   const [rulePrefill, setRulePrefill] = useState<{ description: string; categoryId: number | null } | null>(null);
-  const { data: categories = [] } = useCategories();
   const perAccountCats = useByCategoryPerAccount(q, scopeIds);
   const perAccountFlux = useCashFlowPerAccount(q, scopeIds);
 
@@ -143,13 +185,15 @@ export default function AnalysesPage() {
                         const hasChildren = g.children.length > 0;
                         return (
                           <Fragment key={g.id ?? g.name}>
-                            <TableRow className={hasChildren ? "cursor-pointer" : ""} onClick={() => hasChildren && toggle(g.id ?? -1)}>
+                            <TableRow>
                               <TableCell className="font-medium">
                                 <span className="flex items-center gap-1.5">
                                   {hasChildren
-                                    ? <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                                    ? <button onClick={() => toggle(g.id ?? -1)} className="shrink-0 text-muted-foreground" aria-label="Développer">
+                                        <ChevronRight className={`size-3.5 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                                      </button>
                                     : <span className="w-3.5 shrink-0" />}
-                                  {g.name}
+                                  <button onClick={() => openDetail(g)} className="text-left hover:text-brand hover:underline">{g.name}</button>
                                   {hasChildren && <span className="text-xs text-muted-foreground">({g.children.length})</span>}
                                 </span>
                               </TableCell>
@@ -198,6 +242,38 @@ export default function AnalysesPage() {
                     ))}
                   </div>
                 </div>
+              )}
+
+              {/* Top-20 transactions for the clicked category */}
+              {detailCat && (
+                <Card className="overflow-hidden p-0">
+                  <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+                    <p className="text-sm font-semibold">
+                      20 plus grosses {income ? "entrées" : "dépenses"} — <span className="text-brand">{detailCat.name}</span>
+                    </p>
+                    <Button variant="ghost" size="icon" className="size-7" onClick={() => setDetailCat(null)} aria-label="Fermer">
+                      <X className="size-4" />
+                    </Button>
+                  </div>
+                  {detailQuery.isLoading ? (
+                    <div className="space-y-2 p-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+                  ) : !detailQuery.data?.length ? (
+                    <EmptyState icon={Inbox} title="Aucune transaction" />
+                  ) : (
+                    <Table>
+                      <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="w-24">Date</TableHead><TableHead>Description</TableHead><TableHead className="text-right">Montant</TableHead></TableRow></TableHeader>
+                      <TableBody>
+                        {detailQuery.data.map((t) => (
+                          <TableRow key={t.id}>
+                            <TableCell className="nums whitespace-nowrap text-xs text-muted-foreground">{format(new Date(t.date), "dd MMM yy", { locale: fr })}</TableCell>
+                            <TableCell className="max-w-0"><span className="line-clamp-1" title={t.description}>{t.description}</span></TableCell>
+                            <TableCell className="nums blurable text-right font-semibold">{formatCents(t.amount_cents, currency)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </Card>
               )}
             </>
           )}
