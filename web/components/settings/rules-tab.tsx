@@ -17,6 +17,7 @@ import { useAllRules, useCategories, useRuleMutations, useCategoryMutations, typ
 import { groupByAccount } from "@/lib/group";
 import { formatCents } from "@/lib/format";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
+import { CategorySelect } from "@/components/transactions/category-select";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 
@@ -147,10 +148,8 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
           <div className="flex-1 space-y-4 overflow-y-auto px-1">
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1"><Label>Catégorie</Label>
-                <Select value={String(categoryId)} onValueChange={(v) => setCategoryId(Number(v))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{categories.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent>
-                </Select>
+                <CategorySelect value={categoryId || null} onChange={(v) => v != null && setCategoryId(v)}
+                  categories={categories} accountId={accountId} hideNone placeholder="Choisir…" />
               </div>
               <div className="space-y-1"><Label>Priorité</Label>
                 <Select value={order} onValueChange={setOrder}>

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { orderCategoryTree } from "@/lib/group";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useAccounts, useCategories, usePlannedExpenseMutations } from "@/lib/api/hooks";
@@ -105,10 +106,10 @@ export function PlanExpenseDialog({
             <Select value={categoryId ? String(categoryId) : ""} onValueChange={(v) => setCategoryId(parseInt(v))}>
               <SelectTrigger><SelectValue placeholder="Choisir une catégorie" /></SelectTrigger>
               <SelectContent>
-                {visibleCats.map((c) => {
+                {orderCategoryTree(visibleCats).map(({ cat: c, child }) => {
                   const an = acctName(c.account_id);
                   return (
-                    <SelectItem key={c.id} value={String(c.id)}>
+                    <SelectItem key={c.id} value={String(c.id)} className={child ? "pl-9" : undefined}>
                       <span className="flex items-center gap-1.5">
                         <span className="size-2 shrink-0 rounded-full" style={{ background: c.color }} />
                         <span>{c.name}</span>

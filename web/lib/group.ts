@@ -19,3 +19,22 @@ export function groupByAccount<T extends { account_id?: number | null }>(items: 
   if (orphans.length) groups.push({ key: "other", label: "Autres comptes", items: orphans });
   return groups.filter((g) => g.items.length > 0);
 }
+
+/** Order categories as parents each immediately followed by their children
+ *  (single level). Children whose parent isn't present render at top level. */
+export function orderCategoryTree<T extends { id: number; parent_id?: number | null }>(cats: T[]): { cat: T; child: boolean }[] {
+  const byParent = new Map<number, T[]>();
+  for (const c of cats) if (c.parent_id != null) {
+    const arr = byParent.get(c.parent_id) ?? [];
+    arr.push(c);
+    byParent.set(c.parent_id, arr);
+  }
+  const parentIds = new Set(cats.filter((c) => c.parent_id == null).map((c) => c.id));
+  const tops = cats.filter((c) => c.parent_id == null || !parentIds.has(c.parent_id));
+  const out: { cat: T; child: boolean }[] = [];
+  for (const p of tops) {
+    out.push({ cat: p, child: false });
+    for (const ch of byParent.get(p.id) ?? []) out.push({ cat: ch, child: true });
+  }
+  return out;
+}

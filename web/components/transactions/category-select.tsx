@@ -1,6 +1,7 @@
 "use client";
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { orderCategoryTree } from "@/lib/group";
 import type { Category } from "@/lib/api/hooks";
 
 const NONE = "__none__";
@@ -19,6 +20,7 @@ export function CategorySelect({
   placeholder = "Sans catégorie",
   accountId,
   accountNames,
+  hideNone = false,
 }: {
   value: number | null | undefined;
   onChange: (v: number | null) => void;
@@ -28,6 +30,7 @@ export function CategorySelect({
   placeholder?: string;
   accountId?: number | null;
   accountNames?: Record<number, string>;
+  hideNone?: boolean;
 }) {
   const visible =
     accountId == null
@@ -36,6 +39,8 @@ export function CategorySelect({
 
   const scopeLabel = (c: Category) =>
     c.account_id == null ? "Global" : accountNames?.[c.account_id] ?? "Compte";
+
+  const ordered = orderCategoryTree(visible);
 
   return (
     <Select
@@ -47,13 +52,13 @@ export function CategorySelect({
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value={NONE}>Sans catégorie</SelectItem>
-        {visible.map((c) => (
-          <SelectItem key={c.id} value={String(c.id)}>
+        {!hideNone && <SelectItem value={NONE}>Sans catégorie</SelectItem>}
+        {ordered.map(({ cat: c, child }) => (
+          <SelectItem key={c.id} value={String(c.id)} className={child ? "pl-9" : undefined}>
             <span className="flex items-center gap-2">
               <span className="size-2 rounded-full" style={{ background: c.color }} />
               {c.name}
-              <span className="ml-1 text-[10px] text-muted-foreground">· {scopeLabel(c)}</span>
+              {!child && <span className="ml-1 text-[10px] text-muted-foreground">· {scopeLabel(c)}</span>}
             </span>
           </SelectItem>
         ))}

@@ -122,6 +122,7 @@ export interface TransactionFilters {
   account_id?: number | null;
   category_id?: number | null;
   uncategorized?: boolean | null;
+  categorized?: boolean | null;
   date_from?: string | null;
   date_to?: string | null;
   search?: string | null;
@@ -209,6 +210,15 @@ export function useTransactions(filters: TransactionFilters) {
 }
 export function useTransactionMeta() {
   return useQuery({ queryKey: ["transactions", "meta"], queryFn: () => unwrap(api.GET("/api/transactions/meta")), staleTime: 60_000 });
+}
+export function useTransactionCount(filters: TransactionFilters) {
+  // Same filters as the list, minus pagination, for a real total count.
+  const { limit: _l, offset: _o, ...rest } = filters;
+  const query = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== null && v !== ""));
+  return useQuery({
+    queryKey: ["transactions", "count", rest],
+    queryFn: () => unwrap(api.GET("/api/transactions/count", { params: { query } })) as Promise<{ total: number }>,
+  });
 }
 export function useImportBatches() {
   return useQuery({ queryKey: ["transactions", "batches"], queryFn: () => unwrap(api.GET("/api/transactions/batches")) as Promise<ImportBatch[]> });
@@ -315,6 +325,7 @@ export function useCategoryMutations() {
     update: useMutation({ mutationFn: ({ id, body }: { id: number; body: CategoryUpdate }) => unwrap(api.PUT("/api/categories/{category_id}", { params: { path: { category_id: id } }, body })), onSuccess }),
     remove: useMutation({ mutationFn: ({ id, replaceWithId }: { id: number; replaceWithId?: number }) => api.DELETE("/api/categories/{category_id}", { params: { path: { category_id: id }, query: { replace_with_id: replaceWithId } } }), onSuccess }),
     rescan: useMutation({ mutationFn: () => unwrap(api.POST("/api/categories/rescan")), onSuccess }),
+    seedDefaults: useMutation({ mutationFn: () => unwrap(api.POST("/api/categories/seed-defaults")), onSuccess }),
   };
 }
 
