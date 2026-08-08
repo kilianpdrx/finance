@@ -211,7 +211,7 @@ export default function TransactionsPage() {
                       {t.is_internal_transfer && <span className="rounded bg-info/12 px-1 text-info">virement</span>}
                       {t.is_manually_reviewed && <span className="rounded bg-positive/12 px-1 text-positive">vérifié</span>}
                       {t.is_manually_edited && <span className="rounded bg-warning/15 px-1 text-warning" title="Transaction modifiée manuellement">modifié</span>}
-                      {t.category_conflict && <ConflictBadge />}
+                      {t.category_conflict && <ConflictBadge categories={t.conflict_categories} />}
                     </p>
                   </TableCell>
                   <TableCell>

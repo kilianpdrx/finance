@@ -2675,6 +2675,11 @@ export interface components {
              * @default false
              */
             category_conflict: boolean;
+            /**
+             * Conflict Categories
+             * @default []
+             */
+            conflict_categories: string[];
             /** Import Hash */
             import_hash: string;
             /** Import Batch Id */

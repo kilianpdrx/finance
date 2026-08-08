@@ -63,6 +63,8 @@ async def test_transactions_list_flags_conflict(client: AsyncClient, seed_data: 
     assert r.status_code == 200
     rows = r.json()
     assert len(rows) == 1 and rows[0]["category_conflict"] is True
+    # The conflicting category names are surfaced (sorted).
+    assert rows[0]["conflict_categories"] == sorted(["Alimentation", "Salaire"])
 
 
 async def test_rule_preview_flags_conflict(client: AsyncClient, seed_data: dict, db_session: AsyncSession):

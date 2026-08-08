@@ -213,6 +213,7 @@ class TransactionOut(TransactionBase):
     is_manually_edited: bool = False
     is_internal_transfer: bool = False
     category_conflict: bool = False  # >= 2 distinct categories match via rules
+    conflict_categories: List[str] = []  # names of the categories in conflict
     import_hash: str
     import_batch_id: Optional[int] = None
     created_at: datetime

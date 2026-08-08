@@ -148,15 +148,23 @@ async def list_transactions(
         outs.append(out)
 
     # Flag rows where several distinct categories match via rules (against the
-    # current ruleset, so newly-added conflicting rules show immediately).
-    from services.categorizer import conflict_flags_batch
-    flags = await conflict_flags_batch(
+    # current ruleset, so newly-added conflicting rules show immediately) and
+    # surface WHICH categories conflict.
+    from services.categorizer import evaluate_rules_batch
+    evals = await evaluate_rules_batch(
         [{"description": r.description, "amount_cents": r.amount_cents, "date": str(r.date),
           "is_debit": r.is_debit, "currency": r.currency, "account_id": r.account_id} for r in rows],
         db, pid,
     )
-    for out, flag in zip(outs, flags):
-        out.category_conflict = flag
+    conflict_ids = {cid for _, _, matches in evals if len(matches) >= 2 for cid in matches}
+    names: dict[int, str] = {}
+    if conflict_ids:
+        cat_rows = await db.execute(select(Category.id, Category.name).where(Category.id.in_(conflict_ids)))
+        names = {cid: name for cid, name in cat_rows}
+    for out, (_, _, matches) in zip(outs, evals):
+        if len(matches) >= 2:
+            out.category_conflict = True
+            out.conflict_categories = sorted(names.get(cid, str(cid)) for cid in matches)
     return outs
 
 
