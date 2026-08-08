@@ -50,31 +50,42 @@ export default function BudgetPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pendingPrepend = useRef(0);
   const extending = useRef(false);
+  const rafPending = useRef(false);
   const inited = useRef(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
 
-  // After prepending months, keep the viewport visually stable (no jump).
+  // After prepending months, keep the viewport visually stable (no jump). Hold
+  // the `extending` lock briefly after the layout settles so a fast scroll can't
+  // fire a second extension before the position adjustment lands (which caused a
+  // visible jump / double-jump when scrolling quickly).
   useLayoutEffect(() => {
     if (pendingPrepend.current && scrollRef.current) {
       scrollRef.current.scrollLeft += pendingPrepend.current * COL_W;
       pendingPrepend.current = 0;
     }
-    extending.current = false;
+    const t = setTimeout(() => { extending.current = false; }, 180);
+    return () => clearTimeout(t);
   }, [targetMonths]);
 
+  // Throttle scroll handling to one check per frame so rapid scrolling doesn't
+  // queue multiple range extensions.
   const onScroll = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    if (extending.current) return;
-    if (el.scrollLeft < COL_W * 2) {
-      extending.current = true;
-      pendingPrepend.current = STEP;
-      setRange((r) => ({ ...r, start: r.start - STEP }));
-    } else if (el.scrollLeft + el.clientWidth > el.scrollWidth - COL_W * 2) {
-      extending.current = true;
-      setRange((r) => ({ ...r, end: r.end + STEP }));
-    }
+    if (rafPending.current || extending.current) return;
+    rafPending.current = true;
+    requestAnimationFrame(() => {
+      rafPending.current = false;
+      const el = scrollRef.current;
+      if (!el || extending.current) return;
+      if (el.scrollLeft < COL_W * 2) {
+        extending.current = true;
+        pendingPrepend.current = STEP;
+        setRange((r) => ({ ...r, start: r.start - STEP }));
+      } else if (el.scrollLeft + el.clientWidth > el.scrollWidth - COL_W * 2) {
+        extending.current = true;
+        setRange((r) => ({ ...r, end: r.end + STEP }));
+      }
+    });
   };
 
   const results = useQueries({
