@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2, Pencil, Merge, FlaskConical, X } from "lucide-react";
+import { Plus, Trash2, Pencil, Merge, FlaskConical, X, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api, unwrap } from "@/lib/api/client";
-import { useAllRules, useCategories, useRuleMutations, type CategoryRule, type Account, type Transaction } from "@/lib/api/hooks";
+import { useAllRules, useCategories, useRuleMutations, useCategoryMutations, type CategoryRule, type Account, type Transaction } from "@/lib/api/hooks";
 import { groupByAccount } from "@/lib/group";
 import { formatCents } from "@/lib/format";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
@@ -43,6 +43,15 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
   const { data: rules = [] } = useAllRules();
   const { data: categories = [] } = useCategories();
   const { create, update, remove, merge } = useRuleMutations();
+  const { rescan } = useCategoryMutations();
+
+  // Rules only apply on import or when re-applied — run a rescan over existing
+  // (non-verified) transactions so newly-added rules take effect immediately.
+  const reapplyRules = () =>
+    rescan.mutate(undefined, {
+      onSuccess: (r) => toast.success(`${(r as { updated: number }).updated} transaction(s) recatégorisée(s)`),
+      onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur"),
+    });
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<CategoryRule | null>(null);
@@ -79,8 +88,12 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
     try {
       if (editing) await update.mutateAsync({ ruleId: editing.id, body });
       else await create.mutateAsync({ categoryId, body });
-      toast.success(editing ? "Règle mise à jour" : "Règle créée");
       setOpen(false);
+      // Rules don't retroactively categorize existing transactions on their own —
+      // offer to apply them right away.
+      toast.success(editing ? "Règle mise à jour" : "Règle créée", {
+        action: { label: "Appliquer", onClick: reapplyRules },
+      });
     } catch (e) { toast.error(e instanceof Error ? e.message : "Erreur"); }
   };
 
@@ -92,9 +105,14 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{rules.length} règles · triées par priorité</p>
+        <p className="text-sm text-muted-foreground">
+          {rules.length} règles · triées par priorité. Les règles s&apos;appliquent à l&apos;import ou via « Réappliquer ».
+        </p>
         <div className="flex gap-2">
           {selected.size >= 2 && <Button variant="outline" size="sm" onClick={doMerge}><Merge className="size-4" /> Fusionner ({selected.size})</Button>}
+          <Button variant="outline" size="sm" disabled={rescan.isPending} onClick={reapplyRules}>
+            <RefreshCw className={`size-4 ${rescan.isPending ? "animate-spin" : ""}`} /> Réappliquer les règles
+          </Button>
           <Button size="sm" onClick={openCreate}><Plus className="size-4" /> Règle</Button>
         </div>
       </div>
