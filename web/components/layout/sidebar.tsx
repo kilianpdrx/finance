@@ -61,7 +61,7 @@ export function SidebarBrand() {
 /** Desktop fixed rail. */
 export function Sidebar() {
   return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-surface/60 backdrop-blur lg:flex">
+    <aside className="hidden w-52 shrink-0 flex-col border-r border-border bg-surface/60 backdrop-blur lg:flex">
       <SidebarBrand />
       <SidebarNav />
       <div className="px-5 py-4 text-[11px] text-muted-foreground">v2 · Next.js</div>
