@@ -203,19 +203,19 @@ export default function DashboardPage() {
 function GettingStarted({ showBudget }: { showBudget: boolean }) {
   const steps = [
     {
-      icon: Upload,
-      title: "Importez un relevé bancaire",
-      description: "Glissez un fichier CSV de votre banque — les colonnes sont détectées automatiquement.",
-      href: "/importer",
-      cta: "Importer un relevé",
+      icon: Wallet,
+      title: "Créez un compte",
+      description: "Ajoutez votre compte bancaire (nom, banque, type, devise). C'est la destination de vos imports.",
+      href: "/comptes",
+      cta: "Créer un compte",
       primary: true,
     },
     {
-      icon: Wallet,
-      title: "Vérifiez vos comptes",
-      description: "Ajustez le type, la devise et le solde de chaque compte après l'import.",
-      href: "/comptes",
-      cta: "Voir les comptes",
+      icon: Upload,
+      title: "Importez un relevé bancaire",
+      description: "Glissez un fichier CSV de votre banque dans ce compte — les colonnes sont détectées automatiquement.",
+      href: "/importer",
+      cta: "Importer un relevé",
       primary: false,
     },
     ...(showBudget
