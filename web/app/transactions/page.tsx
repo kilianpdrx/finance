@@ -205,7 +205,7 @@ export default function TransactionsPage() {
                     {format(new Date(t.date), "dd MMM yy", { locale: fr })}
                   </TableCell>
                   <TableCell>
-                    <p className="line-clamp-1 font-medium">{t.description}</p>
+                    <p className="line-clamp-1 font-medium" title={t.description}>{t.description}</p>
                     <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       {t.account_name}
                       {t.is_internal_transfer && <span className="rounded bg-info/12 px-1 text-info">virement</span>}
