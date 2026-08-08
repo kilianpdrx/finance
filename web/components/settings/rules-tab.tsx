@@ -78,7 +78,7 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
 
   const runPreview = async () => {
     try {
-      const res = await unwrap(api.POST("/api/categories/rules/preview", { body: { conditions, account_id: accountId, logic_operator: logic } })) as Transaction[];
+      const res = await unwrap(api.POST("/api/categories/rules/preview", { params: { query: { limit: 200 } }, body: { conditions, account_id: accountId, logic_operator: logic } })) as Transaction[];
       setPreview(res);
     } catch (e) { toast.error(e instanceof Error ? e.message : "Erreur"); }
   };
@@ -142,9 +142,9 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>{editing ? "Modifier la règle" : "Nouvelle règle"}</DialogTitle></DialogHeader>
-          <div className="space-y-4">
+        <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col">
+          <DialogHeader className="shrink-0"><DialogTitle>{editing ? "Modifier la règle" : "Nouvelle règle"}</DialogTitle></DialogHeader>
+          <div className="flex-1 space-y-4 overflow-y-auto px-1">
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1"><Label>Catégorie</Label>
                 <Select value={String(categoryId)} onValueChange={(v) => setCategoryId(Number(v))}>
@@ -198,7 +198,7 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
             {preview != null && (
               <div className="space-y-2">
                 <p className="text-sm font-medium text-brand">
-                  {preview.length} transaction(s) correspond(ent) à ces conditions.
+                  {preview.length}{preview.length >= 200 ? "+" : ""} transaction(s) correspond(ent) à ces conditions.
                 </p>
                 {preview.length > 0 && (
                   <div className="max-h-56 divide-y divide-border overflow-y-auto rounded-lg border border-border">
@@ -220,7 +220,7 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
               </div>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button variant="outline" onClick={runPreview}><FlaskConical className="size-4" /> Tester</Button>
             <Button onClick={submit} disabled={!categoryId || conditions.some((c) => !c.value)}>Enregistrer</Button>
           </DialogFooter>
