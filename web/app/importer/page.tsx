@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, FolderOpen, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ColumnMappingStep } from "@/components/importer/column-mapping-step";
 import { ReviewStep } from "@/components/importer/review-step";
 import { HoldingsImportReview, type DuplicateAction } from "@/components/investments/holdings-import-review";
@@ -41,8 +40,13 @@ export default function ImporterPage() {
   const [holdingsActions, setHoldingsActions] = useState<Record<string, DuplicateAction>>({});
   const [holdingsResult, setHoldingsResult] = useState<HoldingsImportConfirmResponse | null>(null);
 
+  // The destination account is chosen in the review step (after parsing), not
+  // before. Default to the first current account so the bank-CSV pipeline runs.
   useEffect(() => {
-    if (accounts.length > 0 && !selectedAccount) setSelectedAccount(String(accounts[0].id));
+    if (accounts.length > 0 && !selectedAccount) {
+      const firstCourant = accounts.find((a) => a.account_type === "courant") ?? accounts[0];
+      setSelectedAccount(String(firstCourant.id));
+    }
   }, [accounts, selectedAccount]);
 
   const selectedAccObj = accounts.find((a) => String(a.id) === selectedAccount);
@@ -218,7 +222,7 @@ export default function ImporterPage() {
   if (step === "review" && file) {
     return (
       <ReviewStep
-        transactions={previewTxns} categories={categories} accounts={accounts}
+        transactions={previewTxns} categories={categories} accounts={accounts} fileName={file.name}
         selectedAccount={selectedAccount} onSelectAccount={setSelectedAccount}
         loading={loading} error={error} onConfirm={handleConfirm}
         onBack={() => { setError(""); detected && !detected.detected ? setStep("mapping") : reset(); }}
@@ -228,20 +232,6 @@ export default function ImporterPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-sm text-muted-foreground">Compte destination</span>
-        <Select value={selectedAccount} onValueChange={setSelectedAccount}>
-          <SelectTrigger className="w-56"><SelectValue placeholder="Choisir un compte" /></SelectTrigger>
-          <SelectContent>
-            {accounts.map((a) => (
-              <SelectItem key={a.id} value={String(a.id)}>
-                {a.name}{a.account_type === "investissement" ? " · positions" : ""}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
       <div
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}

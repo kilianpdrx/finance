@@ -22,7 +22,7 @@ function money(cents: number, isDebit: boolean, currency: string) {
 }
 
 export function ReviewStep({
-  transactions, categories, accounts, selectedAccount, onSelectAccount, loading, error, onConfirm, onBack,
+  transactions, categories, accounts, selectedAccount, onSelectAccount, loading, error, onConfirm, onBack, fileName,
 }: {
   transactions: ParsePreviewTransaction[];
   categories: Category[];
@@ -33,6 +33,7 @@ export function ReviewStep({
   error: string;
   onConfirm: (overrides: Record<string, number | null>, force: string[]) => void;
   onBack: () => void;
+  fileName?: string;
 }) {
   const [overrides, setOverrides] = useState<Record<string, number | null>>({});
   const [filterUncat, setFilterUncat] = useState(false);
@@ -57,7 +58,10 @@ export function ReviewStep({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Révision avant import</h2>
+        <h2 className="flex items-baseline gap-2 text-lg font-semibold">
+          Révision avant import
+          {fileName && <span className="truncate font-mono text-sm font-normal text-muted-foreground">{fileName}</span>}
+        </h2>
         <Button variant="ghost" size="sm" onClick={onBack}>← Retour</Button>
       </div>
 
