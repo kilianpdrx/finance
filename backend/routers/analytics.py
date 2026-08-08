@@ -1,3 +1,4 @@
+import re
 from typing import List, Optional
 from datetime import date
 from collections import defaultdict
@@ -525,6 +526,66 @@ async def net_worth_history(
     return result
 
 
+# Banking boilerplate that carries no merchant information — dropped so that
+# "PAIEMENT CB CARREFOUR 0512" and "ACHAT CARREFOUR 1806" merge into one group.
+_DESC_STOPWORDS = {
+    "paiement", "paiment", "achat", "cb", "carte", "card", "prelevement", "prlv",
+    "prelvt", "prel", "virement", "vir", "retrait", "sepa", "facture", "fact",
+    "com", "commission", "ttc", "ht", "www", "sarl", "sas", "eurl", "sa",
+    "du", "de", "des", "le", "la", "les", "au", "aux", "et", "chez", "mr", "mme",
+}
+_DIGIT_TOKEN = re.compile(r"\w*\d\w*", re.UNICODE)   # any token containing a digit
+_PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def _normalize_desc(desc: str) -> str:
+    """Reduce a raw description to a broad merchant keyword: lowercase, strip
+    punctuation, drop tokens that contain digits (dates/refs/amounts) and common
+    banking boilerplate, and collapse whitespace."""
+    s = (desc or "").lower()
+    s = _PUNCT.sub(" ", s)
+    s = _DIGIT_TOKEN.sub(" ", s)
+    tokens = [t for t in s.split() if len(t) >= 3 and t not in _DESC_STOPWORDS]
+    return " ".join(tokens).strip()
+
+
+def _recurring_groups(raw_rows, *, limit: int = 50) -> List[RecurringTransaction]:
+    """Group raw transactions by their broad keyword (numbers/refs dropped),
+    recomputing occurrences, average amount, last date and the most-frequent
+    category. Grouping raw (not by exact description) is what lets rows that each
+    carry a unique reference still count as recurring."""
+    groups: dict = {}
+    for r in raw_rows:
+        key = _normalize_desc(r.description) or (r.description or "").strip().lower()
+        if not key:
+            continue
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {"cnt": 0, "amt_sum": 0, "last_date": None,
+                               "cat_votes": defaultdict(int), "sample": r.description}
+        g["cnt"] += 1
+        g["amt_sum"] += r.amount_cents
+        if g["last_date"] is None or r.date > g["last_date"]:
+            g["last_date"] = r.date
+        if r.category_id is not None:
+            g["cat_votes"][r.category_id] += 1
+
+    out: List[RecurringTransaction] = []
+    for key, g in groups.items():
+        if g["cnt"] < 2:
+            continue
+        cat = max(g["cat_votes"], key=g["cat_votes"].get) if g["cat_votes"] else None
+        out.append(RecurringTransaction(
+            description=key.upper(),
+            occurrences=g["cnt"],
+            avg_amount_cents=int(g["amt_sum"] / g["cnt"]),
+            last_date=g["last_date"],
+            category_id=cat,
+        ))
+    out.sort(key=lambda x: x.occurrences, reverse=True)
+    return out[:limit]
+
+
 @router.get("/recurring", response_model=List[RecurringTransaction])
 async def recurring(
     account_ids: Optional[str] = None,
@@ -535,31 +596,11 @@ async def recurring(
     rec_filters = [Transaction.is_internal_transfer == False, Transaction.profile_id == pid]
     if parsed_ids:
         rec_filters.append(Transaction.account_id.in_(parsed_ids))
-    rows = await db.execute(
-        select(
-            Transaction.description,
-            func.count(Transaction.id).label("cnt"),
-            func.avg(Transaction.amount_cents).label("avg_amount"),
-            func.max(Transaction.date).label("last_date"),
-            Transaction.category_id,
-        )
+    raw = (await db.execute(
+        select(Transaction.description, Transaction.amount_cents, Transaction.date, Transaction.category_id)
         .where(and_(*rec_filters))
-        .group_by(Transaction.description, Transaction.category_id)
-        .having(func.count(Transaction.id) >= 2)
-        .order_by(func.count(Transaction.id).desc())
-        .limit(50)
-    )
-
-    return [
-        RecurringTransaction(
-            description=r.description,
-            occurrences=r.cnt,
-            avg_amount_cents=int(r.avg_amount),
-            last_date=r.last_date,
-            category_id=r.category_id,
-        )
-        for r in rows
-    ]
+    )).all()
+    return _recurring_groups(raw, limit=50)
 
 
 @router.get("/recurring-uncovered", response_model=List[RecurringTransaction])
@@ -581,38 +622,26 @@ async def recurring_uncovered(
     ]
     if parsed_ids:
         rec_filters.append(Transaction.account_id.in_(parsed_ids))
-    rows = (await db.execute(
-        select(
-            Transaction.description,
-            func.count(Transaction.id).label("cnt"),
-            func.avg(Transaction.amount_cents).label("avg_amount"),
-            func.max(Transaction.date).label("last_date"),
-            Transaction.category_id,
-        )
+    raw = (await db.execute(
+        select(Transaction.description, Transaction.amount_cents, Transaction.date, Transaction.category_id)
         .where(and_(*rec_filters))
-        .group_by(Transaction.description, Transaction.category_id)
-        .having(func.count(Transaction.id) >= 2)
-        .order_by(func.count(Transaction.id).desc())
-        .limit(200)
     )).all()
+    groups = _recurring_groups(raw, limit=10_000)
 
     rules = (await db.execute(
         select(CategoryRule).where(CategoryRule.is_active == True, CategoryRule.profile_id == pid)  # noqa: E712
     )).scalars().all()
 
     out = []
-    for r in rows:
-        txn_data = {"description": r.description, "amount_cents": int(r.avg_amount),
-                    "date": str(r.last_date), "is_debit": True, "currency": "", "account_id": ""}
+    for g in groups:
+        txn_data = {"description": g.description, "amount_cents": g.avg_amount_cents,
+                    "date": str(g.last_date), "is_debit": True, "currency": "", "account_id": ""}
         covered = any(
             rule.conditions and evaluate_conditions(txn_data, rule.conditions, getattr(rule, "logic_operator", "AND") or "AND")
             for rule in rules
         )
         if not covered:
-            out.append(RecurringTransaction(
-                description=r.description, occurrences=r.cnt, avg_amount_cents=int(r.avg_amount),
-                last_date=r.last_date, category_id=r.category_id,
-            ))
+            out.append(g)
         if len(out) >= 50:
             break
     return out

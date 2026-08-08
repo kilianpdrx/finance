@@ -3,7 +3,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { Inbox, ChevronRight, CornerDownRight, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CreateRuleDialog } from "@/components/analytics/create-rule-dialog";
+import { RuleDialog } from "@/components/settings/rule-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -266,7 +266,7 @@ export default function AnalysesPage() {
 
       </Tabs>
 
-      <CreateRuleDialog open={rulePrefill !== null} onOpenChange={(v) => !v && setRulePrefill(null)} prefill={rulePrefill} />
+      <RuleDialog open={rulePrefill !== null} onOpenChange={(v) => !v && setRulePrefill(null)} accounts={accounts} prefill={rulePrefill} />
     </div>
   );
 }

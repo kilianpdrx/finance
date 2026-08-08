@@ -119,6 +119,30 @@ async def test_analytics_by_category_income(client: AsyncClient, seed_data: dict
     assert data[0]["total_cents"] == 200000
 
 
+async def test_recurring_merges_broad_keyword(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """Rows that differ only by numbers/refs merge into one broad-keyword group."""
+    profile = seed_data["profile"]
+    acc = seed_data["account_courant"]
+    from datetime import date as _date
+    for i, ref in enumerate(["0512", "1806", "2401"]):
+        db_session.add(Transaction(
+            profile_id=profile.id, account_id=acc.id, date=_date(2026, 1 + i, 5),
+            amount_cents=1200 + i, is_debit=True,
+            description=f"PAIEMENT CB CARREFOUR MARKET {ref} PARIS",
+            import_hash=f"rec_{ref}",
+        ))
+    await db_session.commit()
+
+    r = await client.get("/api/analytics/recurring", headers={"X-Profile-Id": str(profile.id)})
+    assert r.status_code == 200
+    rows = r.json()
+    carrefour = [x for x in rows if "CARREFOUR" in x["description"]]
+    assert len(carrefour) == 1
+    assert carrefour[0]["occurrences"] == 3
+    # The keyword dropped the numbers and banking boilerplate.
+    assert "0512" not in carrefour[0]["description"] and "PAIEMENT" not in carrefour[0]["description"]
+
+
 async def test_analytics_cash_flow(client: AsyncClient, seed_data: dict, analytics_data: dict):
     profile = seed_data["profile"]
     res = await client.get("/api/analytics/cash-flow", headers={"X-Profile-Id": str(profile.id)})
