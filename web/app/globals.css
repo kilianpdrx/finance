@@ -93,8 +93,10 @@
   }
   html {
     color-scheme: light dark;
-    /* Match the previous manual 80% browser zoom as the default view. */
-    zoom: 0.8;
+    /* Match the previous manual 80% browser zoom as the default view. We scale the
+     * root font-size (rem-based layout) instead of using `zoom`, because CSS `zoom`
+     * breaks Recharts' pointer math (tooltips stop tracking the cursor). */
+    font-size: 80%;
   }
   body {
     background-color: var(--color-background);
