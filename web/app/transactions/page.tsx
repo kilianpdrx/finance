@@ -19,7 +19,7 @@ import { TransactionDialog } from "@/components/transactions/transaction-dialog"
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
-  useAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionCount, useTransactionMutations,
+  useAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionCount, useTransactionStats, useTransactionMutations,
   type TransactionFilters, type Transaction,
 } from "@/lib/api/hooks";
 import { orderCategoryTree } from "@/lib/group";
@@ -78,6 +78,7 @@ export default function TransactionsPage() {
 
   const { data: rows = [], isLoading, isFetching } = useTransactions(filters);
   const { data: countData } = useTransactionCount(filters);
+  const { data: stats } = useTransactionStats(filters);
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const someSelected = rows.some((r) => selected.has(r.id));
@@ -138,6 +139,25 @@ export default function TransactionsPage() {
           <Switch checked={hideTransfers} onCheckedChange={(v) => { setHideTransfers(v); setPage(0); }} />
           Masquer virements
         </label>
+      </div>
+
+      {/* Stats + actions */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="text-xs text-muted-foreground">
+          {stats ? (
+            <>
+              <span className="font-semibold text-foreground">{stats.total}</span> transactions
+              <span className="mx-1.5 text-border">·</span>
+              <span className="text-positive">{stats.categorized}</span> catégorisées
+              <span className="mx-1.5 text-border">·</span>
+              <span className="text-warning">{stats.uncategorized}</span> sans catégorie
+              <span className="mx-1.5 text-border">·</span>
+              <span className="text-info">{stats.transfers}</span> virements
+            </>
+          ) : (
+            <span className="opacity-0">—</span>
+          )}
+        </div>
         <div className="ml-auto flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => runBulk(() => mut.detectTransfers.mutateAsync(), "Virements détectés")}>
             <Shuffle className="size-4" /> Détecter virements

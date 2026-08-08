@@ -83,6 +83,21 @@ async def test_list_transactions_filters(client: AsyncClient, seed_data: dict, t
     assert len(res.json()) == 1
     assert res.json()[0]["amount_cents"] == 200000
 
+async def test_transaction_stats(client: AsyncClient, seed_data: dict, transactions_data: dict):
+    profile = seed_data["profile"]
+    h = {"X-Profile-Id": str(profile.id)}
+    # No filters: 3 total, 2 categorised (t1, t3), 1 uncategorised (t2), 0 transfers.
+    res = await client.get("/api/transactions/stats", headers=h)
+    assert res.status_code == 200
+    d = res.json()
+    assert d == {"total": 3, "categorized": 2, "uncategorized": 1, "transfers": 0}
+
+    # Stats respect base filters (is_debit) but ignore the category toggles.
+    res = await client.get("/api/transactions/stats", params={"is_debit": "true"}, headers=h)
+    d = res.json()
+    assert d["total"] == 2 and d["categorized"] == 1 and d["uncategorized"] == 1
+
+
 async def test_bulk_delete_transactions(client: AsyncClient, seed_data: dict, transactions_data: dict):
     profile = seed_data["profile"]
     t_id = transactions_data["t1"].id

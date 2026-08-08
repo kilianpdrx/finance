@@ -104,6 +104,45 @@ async def count_transactions(
     return {"total": total}
 
 
+@router.get("/stats")
+async def transaction_stats(
+    account_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    search: Optional[str] = None,
+    is_debit: Optional[bool] = None,
+    bank_name: Optional[str] = None,
+    month: Optional[str] = None,
+    import_batch_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Counts for the transactions toolbar: total, categorised, uncategorised and
+    internal transfers — over the base filters, *ignoring* the categorized/
+    uncategorized/hideTransfers toggles (those are the dimensions being counted)."""
+    from sqlalchemy import case
+    filters = await _build_txn_filters(
+        db, pid, account_id=account_id, date_from=date_from, date_to=date_to, search=search,
+        is_debit=is_debit, bank_name=bank_name, month=month, import_batch_id=import_batch_id,
+    )
+    row = (await db.execute(
+        select(
+            func.count(Transaction.id),
+            func.sum(case((Transaction.category_id != None, 1), else_=0)),  # noqa: E711
+            func.sum(case((Transaction.is_internal_transfer == True, 1), else_=0)),  # noqa: E712
+        ).where(and_(*filters))
+    )).one()
+    total = row[0] or 0
+    categorized = row[1] or 0
+    transfers = row[2] or 0
+    return {
+        "total": total,
+        "categorized": categorized,
+        "uncategorized": total - categorized,
+        "transfers": transfers,
+    }
+
+
 @router.get("", response_model=List[TransactionOut])
 async def list_transactions(
     account_id: Optional[int] = None,

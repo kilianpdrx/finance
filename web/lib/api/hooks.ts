@@ -224,6 +224,17 @@ export function useTransactionCount(filters: TransactionFilters) {
     queryFn: () => unwrap(api.GET("/api/transactions/count", { params: { query } })) as Promise<{ total: number }>,
   });
 }
+export interface TransactionStats { total: number; categorized: number; uncategorized: number; transfers: number; }
+export function useTransactionStats(filters: TransactionFilters) {
+  // Base filters only — the categorized/uncategorized/transfer toggles are the
+  // dimensions being counted, so they're excluded to keep counts stable.
+  const { limit: _l, offset: _o, category_id: _c, uncategorized: _u, categorized: _cz, is_internal_transfer: _t, ...rest } = filters;
+  const query = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== null && v !== ""));
+  return useQuery({
+    queryKey: ["transactions", "stats", rest],
+    queryFn: () => unwrap(api.GET("/api/transactions/stats", { params: { query } })) as Promise<TransactionStats>,
+  });
+}
 export function useImportBatches() {
   return useQuery({ queryKey: ["transactions", "batches"], queryFn: () => unwrap(api.GET("/api/transactions/batches")) as Promise<ImportBatch[]> });
 }
