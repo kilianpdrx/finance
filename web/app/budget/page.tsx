@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CourantTabs, type CourantSelection } from "@/components/analytics/courant-tabs";
 import { useAccounts, useBudgetMutation, usePlannedExpenseMutations, type BudgetFullResponse } from "@/lib/api/hooks";
 import { PlanExpenseDialog } from "@/components/budget/plan-expense-dialog";
-import { buildMonths, cellDisplayValue, cellType, mergeYears, yearOf, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
+import { buildMonths, cellDisplayValue, cellType, mergeYears, parentSubtotalRow, yearOf, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
 import { formatCents, formatMonthLabel, deriveCurrency } from "@/lib/format";
 
 // Column geometry (must match the Tailwind widths used in the table).
@@ -244,6 +244,23 @@ export default function BudgetPage() {
     );
   }
 
+  // A grouping category (parent): read-only subtotal header = Σ of its children.
+  function GroupRow({ row }: { row: MergedRow }) {
+    return (
+      <tr className="border-b border-border/60 font-semibold hover:bg-muted/40">
+        <td className="sticky left-0 z-10 w-52 border-r border-border bg-surface px-4 py-2">
+          <div className="flex items-center gap-2">
+            {row.category_color && <span className="size-2 shrink-0 rounded-full" style={{ background: row.category_color }} />}
+            <span className="truncate text-sm" title={row.category_name}>{row.category_name}</span>
+          </div>
+        </td>
+        {renderCells(row.cells, (cell) => (
+          <td className="w-24 px-2 py-2 text-right text-sm">{fmt(cellDisplayValue(cell, currentMonth), true)}</td>
+        ))}
+      </tr>
+    );
+  }
+
   function TotalRow({ row, label, cls }: { row: MergedRow; label: string; cls: string }) {
     return (
       <tr className={`border-b-2 border-border font-semibold ${cls}`}>
@@ -336,13 +353,24 @@ export default function BudgetPage() {
                 const style = SECTION[section.section] ?? SECTION.depenses_variables;
                 const nonInvest = section.rows.filter((r) => !r.is_investment);
                 const hasInvest = section.section === "depenses_variables" && section.rows.some((r) => r.is_investment);
+                // Categories that group others → rendered as read-only subtotal headers.
+                const parentIds = new Set(section.rows.filter((r) => r.parent_id != null).map((r) => r.parent_id));
                 return (
                   <Fragment key={section.section}>
                     <tr className={style.head}>
                       <td className={`sticky left-0 z-10 w-52 px-4 py-2 text-sm font-bold tracking-wide ${style.head}`}>{section.section_label}</td>
                       <td colSpan={data.months.length + yearSpans.length} className={style.head} />
                     </tr>
-                    {section.rows.map((row, rIdx) => <CatRow key={rIdx} row={row} sIdx={sIdx} rIdx={rIdx} />)}
+                    {section.rows.map((row, rIdx) =>
+                      row.category_id != null && parentIds.has(row.category_id) ? (
+                        <GroupRow
+                          key={rIdx}
+                          row={parentSubtotalRow(row, section.rows.filter((r) => r.parent_id === row.category_id), currentMonth)}
+                        />
+                      ) : (
+                        <CatRow key={rIdx} row={row} sIdx={sIdx} rIdx={rIdx} />
+                      ),
+                    )}
                     <TotalRow row={section.section_totals} label={`TOTAL ${section.section_label}`} cls={style.total} />
                     {hasInvest && (
                       <TotalRow

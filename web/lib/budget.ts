@@ -75,6 +75,19 @@ export function cellDisplayValue(cell: MergedCell, _currentMonth?: string): numb
   return cell.actual_cents + cell.expected_cents + (plannedActive ? cell.planned_cents : 0);
 }
 
+/** A parent's subtotal row: per-month sum of the parent's own displayed value
+ *  plus each of its children's (parents hold ~0 directly, so this is effectively
+ *  the group total). Rendered read-only as a group header above the children. */
+export function parentSubtotalRow(parent: MergedRow, children: MergedRow[], currentMonth?: string): MergedRow {
+  const cells: MergedCell[] = parent.cells.map((pc, i) => {
+    const sum =
+      cellDisplayValue(pc, currentMonth) +
+      children.reduce((s, ch) => s + cellDisplayValue(ch.cells[i], currentMonth), 0);
+    return { month: pc.month, actual_cents: sum, expected_cents: 0, planned_cents: 0, planned_matched: false, planned_id: null };
+  });
+  return { ...parent, cells };
+}
+
 /** Merge per-year budget-full responses into one continuous 24-month table. */
 export function mergeYears(responses: BudgetFullResponse[], targetMonths: string[]): MergedBudget {
   const byYear = new Map<string, BudgetFullResponse>();
