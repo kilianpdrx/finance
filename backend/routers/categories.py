@@ -33,13 +33,54 @@ async def get_category(category_id: int, db: AsyncSession = Depends(get_db), pid
     return cat
 
 
+async def _validate_parent(db: AsyncSession, pid: int, parent_id: Optional[int], self_id: Optional[int] = None):
+    """Enforce a single level of nesting: the parent must exist in the profile,
+    be top-level itself, and not be the category being edited."""
+    if parent_id is None:
+        return
+    if parent_id == self_id:
+        raise HTTPException(400, "Une catégorie ne peut pas être son propre parent.")
+    parent = (await db.execute(
+        select(Category).where(Category.id == parent_id, Category.profile_id == pid)
+    )).scalar_one_or_none()
+    if not parent:
+        raise HTTPException(400, "Catégorie parente introuvable.")
+    if parent.parent_id is not None:
+        raise HTTPException(400, "Un seul niveau de sous-catégorie est autorisé.")
+    if self_id is not None:
+        has_children = (await db.execute(
+            select(Category.id).where(Category.parent_id == self_id).limit(1)
+        )).scalar_one_or_none()
+        if has_children:
+            raise HTTPException(400, "Cette catégorie a des sous-catégories ; elle ne peut pas devenir une sous-catégorie.")
+
+
 @router.post("", response_model=CategoryOut, status_code=201)
 async def create_category(payload: CategoryCreate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    await _validate_parent(db, pid, payload.parent_id)
     cat = Category(**payload.model_dump(), profile_id=pid)
     db.add(cat)
     await db.commit()
     await db.refresh(cat)
     return cat
+
+
+@router.post("/seed-defaults", status_code=201)
+async def seed_default_categories(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    """Create the standard categories for the active profile, skipping names that
+    already exist. Returns how many were created."""
+    from seed import DEFAULT_CATEGORIES
+    existing = {name for (name,) in (await db.execute(
+        select(Category.name).where(Category.profile_id == pid)
+    )).all()}
+    created = 0
+    for cat_data in DEFAULT_CATEGORIES:
+        if cat_data["name"] in existing:
+            continue
+        db.add(Category(**cat_data, profile_id=pid))
+        created += 1
+    await db.commit()
+    return {"created": created}
 
 
 @router.put("/{category_id}", response_model=CategoryOut)
@@ -48,7 +89,10 @@ async def update_category(category_id: int, payload: CategoryUpdate, db: AsyncSe
     cat = result.scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if "parent_id" in updates:
+        await _validate_parent(db, pid, updates["parent_id"], self_id=category_id)
+    for field, value in updates.items():
         setattr(cat, field, value)
     await db.commit()
     await db.refresh(cat)
@@ -82,6 +126,9 @@ async def delete_category(category_id: int, replace_with_id: Optional[int] = Non
             .where(Transaction.category_id == category_id)
             .values(category_id=None)
         )
+
+    # Re-parent any children to top-level so they aren't orphaned.
+    await db.execute(update(Category).where(Category.parent_id == category_id).values(parent_id=None))
 
     # Delete associated rules first
     rules = await db.execute(select(CategoryRule).where(CategoryRule.category_id == category_id))
