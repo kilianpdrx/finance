@@ -22,15 +22,18 @@ async def gather_report_data(db: AsyncSession, pid: int, date_from=None, date_to
         net_worth_history as _networth, spending_trends as _trends,
         recurring as _recurring, budget_full as _budget_full,
     )
-    from models import Account, Category
+    from models import Account, Category, Profile
 
     summ = await _summary(date_from=date_from, date_to=date_to, db=db, pid=pid)
     base_ccy = summ.base_currency
     cat_rows = (await db.execute(select(Category.id, Category.name).where(Category.profile_id == pid))).all()
+    prof = await db.get(Profile, pid)
     year = (date_to or date.today()).year
 
     data = {
         "date_from": date_from, "date_to": date_to, "base_ccy": base_ccy,
+        "profile_name": prof.name if prof else None,
+        "profile_color": prof.color if prof else None,
         "summary": summ,
         "cash_flow": await _cash_flow(date_from=date_from, date_to=date_to, db=db, pid=pid),
         "by_category": await _by_category(date_from=date_from, date_to=date_to, db=db, pid=pid),
@@ -144,6 +147,25 @@ def _patrimoine_by_type(data):
         by[t] = by.get(t, 0) + (v or 0)
     by = {t.capitalize(): v for t, v in by.items() if v > 0}
     return by or None
+
+
+def _rollup_by_category(bc, cat_map):
+    """Fold subcategory spending into the parent (single level). No-op until
+    CategoryBreakdown carries parent_id. Returns [{name, total_cents, count}] desc."""
+    groups, order = {}, []
+    for c in bc:
+        pid = getattr(c, "parent_id", None)
+        top_id = pid if pid is not None else c.category_id
+        key = top_id if top_id is not None else "__uncat__"
+        if key not in groups:
+            name = cat_map.get(top_id) if top_id is not None else c.category_name
+            groups[key] = {"name": name or c.category_name, "total_cents": 0, "count": 0}
+            order.append(key)
+        groups[key]["total_cents"] += c.total_cents
+        groups[key]["count"] += c.count
+    result = [groups[k] for k in order]
+    result.sort(key=lambda g: g["total_cents"], reverse=True)
+    return result
 
 
 def _top_categories_trends(data, n=6):
@@ -321,7 +343,7 @@ def build_pdf(data, base_ccy: str, opts=None) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.units import cm
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether
     from services import report_charts as rc
 
     REG, BOLD = rc.register_pdf_fonts()
@@ -363,95 +385,117 @@ def build_pdf(data, base_ccy: str, opts=None) -> bytes:
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(A4), title="Rapport financier",
-                            leftMargin=1 * cm, rightMargin=1 * cm, topMargin=1 * cm, bottomMargin=1 * cm)
+                            leftMargin=1 * cm, rightMargin=1 * cm, topMargin=1.7 * cm, bottomMargin=1.4 * cm)
     summ = data["summary"]
+
+    # Repeating header (profile · title) + footer (page · date · period) on every page.
+    profile_name = data.get("profile_name") or "Rapport financier"
+    period = _period_label(data)
+    gen_date = date.today().strftime("%d/%m/%Y")
+
+    def _hf(canvas, docu):
+        canvas.saveState()
+        w, h = landscape(A4)
+        canvas.setFont(REG, 8)
+        canvas.setFillColor(colors.HexColor("#64748b"))
+        canvas.drawString(1 * cm, h - 1.0 * cm, profile_name)
+        canvas.drawRightString(w - 1 * cm, h - 1.0 * cm, "Rapport financier")
+        canvas.setStrokeColor(colors.HexColor("#e5e7eb"))
+        canvas.line(1 * cm, h - 1.15 * cm, w - 1 * cm, h - 1.15 * cm)
+        canvas.drawCentredString(w / 2, 0.7 * cm, f"Page {docu.page} · généré le {gen_date} · {period}")
+        canvas.restoreState()
+
+    def sect(*flowables):
+        """Keep a section title with its chart/table so a heading never orphans."""
+        return KeepTogether(list(flowables))
+
     e = [
         Paragraph("Rapport financier", st_title),
-        Paragraph(f"Période : {_period_label(data)} · Devise de base : {base_ccy}", st_muted),
+        Paragraph(f"{profile_name} · Période : {period} · Devise de base : {base_ccy}", st_muted),
         Spacer(1, 0.4 * cm),
     ]
 
     # 1. KPIs
-    e.append(Paragraph("Vue d'ensemble", st_h2))
-    kpi = [[label, money(cents)] for label, cents in _summary_rows(summ)]
-    e.append(styled_table(kpi, col_widths=[7 * cm, 5 * cm], header=False))
+    kpi_flow = [Paragraph("Vue d'ensemble", st_h2),
+                styled_table([[label, money(cents)] for label, cents in _summary_rows(summ)],
+                             col_widths=[7 * cm, 5 * cm], header=False)]
     if summ.net_worth_by_currency:
-        e.append(Spacer(1, 0.3 * cm))
         rows = [["Devise", "Montant natif", f"Converti ({base_ccy})"]]
         for c in summ.net_worth_by_currency:
             rows.append([c.currency, cents_to_display(c.native_cents, c.currency), money(c.converted_cents)])
-        e.append(styled_table(rows, col_widths=[4 * cm, 6 * cm, 6 * cm]))
+        kpi_flow += [Spacer(1, 0.3 * cm), styled_table(rows, col_widths=[4 * cm, 6 * cm, 6 * cm])]
+    e.append(sect(*kpi_flow))
 
     # 2. Net worth
     if data.get("networth"):
         nw = data["networth"]
         months = [row["month"] for row in nw]
         totals = [int(row.get("total") or 0) for row in nw]
-        e.append(Paragraph("Évolution du patrimoine", st_h2))
-        e.append(png_image(rc.networth_area(months, totals, base_ccy), PAGE_W * 0.62))
+        e.append(sect(Paragraph("Évolution du patrimoine", st_h2),
+                      png_image(rc.networth_area(months, totals, base_ccy), PAGE_W * 0.62)))
         by_type = _patrimoine_by_type(data)
         if by_type:
-            e.append(Paragraph("Répartition du patrimoine par type de compte", st_h2))
-            e.append(png_image(rc.donut(list(by_type.keys()), list(by_type.values()), base_ccy), 13))
+            e.append(sect(Paragraph("Répartition du patrimoine par type de compte", st_h2),
+                          png_image(rc.donut(list(by_type.keys()), list(by_type.values()), base_ccy), 13)))
 
     # 3. Cash flow
     cf = data.get("cash_flow") or []
     if cf:
-        e.append(Paragraph("Revenus & dépenses", st_h2))
         months = [m.month for m in cf]
-        e.append(png_image(rc.cashflow_bars(
+        e.append(sect(Paragraph("Revenus & dépenses", st_h2), png_image(rc.cashflow_bars(
             months, [m.income_cents for m in cf], [m.expenses_cents for m in cf],
-            [m.net_cents for m in cf], base_ccy), PAGE_W * 0.66))
+            [m.net_cents for m in cf], base_ccy), PAGE_W * 0.66)))
 
-    # 4. Spending
-    bc = data.get("by_category") or []
+    # 4. Spending — rolled up by parent category (children folded into their parent)
+    bc = _rollup_by_category(data.get("by_category") or [], data["cat_map"])
     if bc:
-        e.append(Paragraph("Dépenses par catégorie", st_h2))
         top = bc[:6]
-        others = sum(c.total_cents for c in bc[6:])
-        labels = [c.category_name for c in top] + (["Autres"] if others > 0 else [])
-        values = [c.total_cents for c in top] + ([others] if others > 0 else [])
-        e.append(png_image(rc.donut(labels, values, base_ccy), 13))
+        others = sum(c["total_cents"] for c in bc[6:])
+        labels = [c["name"] for c in top] + (["Autres"] if others > 0 else [])
+        values = [c["total_cents"] for c in top] + ([others] if others > 0 else [])
         rows = [["Catégorie", "Nb", f"Total ({base_ccy})", "%"]]
+        grand = sum(c["total_cents"] for c in bc) or 1
         for c in bc:
-            rows.append([c.category_name, str(c.count), money(c.total_cents), f"{c.percentage:.1f}%"])
-        e.append(styled_table(rows, col_widths=[10 * cm, 3 * cm, 6 * cm, 3 * cm]))
+            rows.append([c["name"], str(c["count"]), money(c["total_cents"]), f"{c['total_cents'] / grand * 100:.1f}%"])
+        e.append(sect(Paragraph("Dépenses par catégorie", st_h2),
+                      png_image(rc.donut(labels, values, base_ccy), 13),
+                      styled_table(rows, col_widths=[10 * cm, 3 * cm, 6 * cm, 3 * cm])))
 
     # 5. Top expenses
     te = data.get("top_expenses") or []
     if te:
-        e.append(Paragraph("Top 10 des dépenses", st_h2))
         rows = [["Date", "Description", "Catégorie", "Compte", f"Montant ({base_ccy})"]]
         for t in te:
             rows.append([t["date"], t["description"][:60], t["category"], t["account"], money(t["amount_cents"])])
-        e.append(styled_table(rows, col_widths=[2.6 * cm, 13 * cm, 4.5 * cm, 3.5 * cm, 3.6 * cm]))
+        e.append(sect(Paragraph("Top 10 des dépenses", st_h2),
+                      styled_table(rows, col_widths=[2.6 * cm, 13 * cm, 4.5 * cm, 3.5 * cm, 3.6 * cm])))
 
     # 6. Category trends
     tr = _top_categories_trends(data)
     if tr:
-        e.append(Paragraph("Tendances par catégorie", st_h2))
-        e.append(png_image(rc.category_trends(tr, base_ccy), PAGE_W * 0.66))
+        e.append(sect(Paragraph("Tendances par catégorie", st_h2),
+                      png_image(rc.category_trends(tr, base_ccy), PAGE_W * 0.66)))
 
     # 7. Recurring
     rec = data.get("recurring") or []
     if rec:
-        e.append(Paragraph("Transactions récurrentes", st_h2))
         cat_map = data["cat_map"]
         rows = [["Description", "Catégorie", "Occ.", "Montant moyen", "Dernière"]]
         for r in rec[:20]:
             rows.append([r.description[:55], cat_map.get(r.category_id, "—"), str(r.occurrences),
                          cents_to_display(r.avg_amount_cents, base_ccy), str(r.last_date)])
-        e.append(styled_table(rows, col_widths=[11 * cm, 5 * cm, 2 * cm, 4 * cm, 3 * cm]))
+        e.append(sect(Paragraph("Transactions récurrentes", st_h2),
+                      styled_table(rows, col_widths=[11 * cm, 5 * cm, 2 * cm, 4 * cm, 3 * cm])))
 
     # 8. Budget
-    e.append(Paragraph(f"Budget {data['budget_year']}", st_h2))
-    e.append(_pdf_budget_table(data["budget"], REG, BOLD))
+    e.append(sect(Paragraph(f"Budget {data['budget_year']}", st_h2),
+                  _pdf_budget_table(data["budget"], REG, BOLD)))
 
     # 9. Investments
     if data.get("investments"):
         _pdf_investments(e, data, base_ccy, png_image, styled_table, st_h2, rc, REG, BOLD)
 
-    doc.build(e)
+    doc.build(e, onFirstPage=_hf, onLaterPages=_hf)
     return buf.getvalue()
 
 
