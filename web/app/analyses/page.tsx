@@ -4,7 +4,7 @@ import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Inbox, ChevronRight, CornerDownRight, Wand2, X } from "lucide-react";
+import { Inbox, ChevronRight, CornerDownRight, Wand2, X, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RuleDialog } from "@/components/settings/rule-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -126,6 +126,42 @@ export default function AnalysesPage() {
   const accName = (id: number) => accounts.find((a) => a.id === id)?.name ?? `Compte ${id}`;
   const catName = (id: number | null) => categories.find((c) => c.id === id)?.name ?? "—";
   const catAccountId = (id: number | null) => categories.find((c) => c.id === id)?.account_id ?? null;
+  const catColor = (id: number | null) => categories.find((c) => c.id === id)?.color ?? "#94a3b8";
+
+  // Small tinted badge describing a category's type (Revenu / Fixe / Variable).
+  const typeBadge = (id: number | null) => {
+    const c = categories.find((x) => x.id === id);
+    if (!c) return null;
+    if (c.is_income) return <span className="rounded bg-emerald-500/15 px-1 text-[10px] text-emerald-600 dark:text-emerald-400">Revenu</span>;
+    if (c.expense_type === "fixed") return <span className="rounded bg-indigo-500/15 px-1 text-[10px] text-indigo-600 dark:text-indigo-400">Fixe</span>;
+    if (c.expense_type === "variable") return <span className="rounded bg-amber-500/15 px-1 text-[10px] text-amber-600 dark:text-amber-400">Variable</span>;
+    return null;
+  };
+
+  // Column sort for the categories table. `null` = default fixe/variable grouping.
+  type SortCol = "name" | "count" | "total" | "pct";
+  const [sort, setSort] = useState<{ col: SortCol; dir: "asc" | "desc" } | null>(null);
+  const toggleSort = (col: SortCol) =>
+    setSort((s) => {
+      const first: "asc" | "desc" = col === "name" ? "asc" : "desc";
+      if (s?.col !== col) return { col, dir: first };
+      if (s.dir === first) return { col, dir: first === "asc" ? "desc" : "asc" };
+      return null;
+    });
+  const sortedRolled = useMemo(() => {
+    if (!sort) return rolled;
+    const dir = sort.dir === "asc" ? 1 : -1;
+    const val = (g: RollupGroup) =>
+      sort.col === "name" ? g.name.toLowerCase() : sort.col === "count" ? g.count : sort.col === "total" ? g.total_cents : g.percentage;
+    return [...rolled].sort((a, b) => {
+      const va = val(a), vb = val(b);
+      return va < vb ? -dir : va > vb ? dir : 0;
+    });
+  }, [rolled, sort]);
+  const sortIcon = (col: SortCol) => {
+    const Icon = sort?.col !== col ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
+    return <Icon className={`size-3 ${sort?.col === col ? "text-brand" : "text-muted-foreground/40"}`} />;
+  };
 
   // Global vs account-specific category split (shared by Tendances / Mensuelle).
   const globalTrends = (trends.data ?? []).filter((t: SpendingTrend) => t.category_account_id == null);
@@ -178,9 +214,24 @@ export default function AnalysesPage() {
                 <Card><CardContent className="flex items-center justify-center py-8"><SpendingDonut data={rolledDonut} currency={currency} size={260} /></CardContent></Card>
                 <Card className="overflow-hidden p-0">
                   <Table>
-                    <TableHeader><TableRow className="hover:bg-transparent"><TableHead>Catégorie</TableHead><TableHead className="text-right">Nb</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">%</TableHead></TableRow></TableHeader>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead>
+                          <button onClick={() => toggleSort("name")} className="inline-flex items-center gap-1 hover:text-foreground">Catégorie {sortIcon("name")}</button>
+                        </TableHead>
+                        <TableHead className="text-right">
+                          <button onClick={() => toggleSort("count")} className="inline-flex items-center gap-1 hover:text-foreground">Nb {sortIcon("count")}</button>
+                        </TableHead>
+                        <TableHead className="text-right">
+                          <button onClick={() => toggleSort("total")} className="inline-flex items-center gap-1 hover:text-foreground">Total {sortIcon("total")}</button>
+                        </TableHead>
+                        <TableHead className="text-right">
+                          <button onClick={() => toggleSort("pct")} className="inline-flex items-center gap-1 hover:text-foreground">% {sortIcon("pct")}</button>
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
                     <TableBody>
-                      {rolled.map((g) => {
+                      {sortedRolled.map((g) => {
                         const isOpen = expanded.has(g.id ?? -1);
                         const hasChildren = g.children.length > 0;
                         return (
@@ -193,7 +244,10 @@ export default function AnalysesPage() {
                                         <ChevronRight className={`size-3.5 transition-transform ${isOpen ? "rotate-90" : ""}`} />
                                       </button>
                                     : <span className="w-3.5 shrink-0" />}
+                                  <span className="size-2 shrink-0 rounded-full" style={{ background: catColor(g.id) }} />
                                   <button onClick={() => openDetail(g)} className="text-left hover:text-brand hover:underline">{g.name}</button>
+                                  {g.id != null && typeBadge(g.id)}
+                                  {g.id != null && <span className="text-[10px] text-muted-foreground">· {catAccountId(g.id) == null ? "Global" : accName(catAccountId(g.id)!)}</span>}
                                   {hasChildren && <span className="text-xs text-muted-foreground">({g.children.length})</span>}
                                 </span>
                               </TableCell>
@@ -211,7 +265,7 @@ export default function AnalysesPage() {
                             )}
                             {isOpen && g.children.map((ch) => (
                               <TableRow key={ch.category_id} className="hover:bg-transparent">
-                                <TableCell className="py-1.5 pl-9 text-sm"><span className="flex items-center gap-1.5"><CornerDownRight className="size-3 text-muted-foreground/60" /> {ch.category_name}</span></TableCell>
+                                <TableCell className="py-1.5 pl-9 text-sm"><span className="flex items-center gap-1.5"><CornerDownRight className="size-3 text-muted-foreground/60" /><span className="size-2 shrink-0 rounded-full" style={{ background: catColor(ch.category_id) }} /> {ch.category_name} {typeBadge(ch.category_id)}</span></TableCell>
                                 <TableCell className="nums py-1.5 text-right text-xs text-muted-foreground">{ch.count}</TableCell>
                                 <TableCell className="nums blurable py-1.5 text-right text-sm">{formatCents(ch.total_cents, currency)}</TableCell>
                                 <TableCell />
