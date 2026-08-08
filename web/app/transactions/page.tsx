@@ -19,14 +19,16 @@ import { TransactionDialog } from "@/components/transactions/transaction-dialog"
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
-  useAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionMutations,
+  useAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionCount, useTransactionMutations,
   type TransactionFilters, type Transaction,
 } from "@/lib/api/hooks";
+import { orderCategoryTree } from "@/lib/group";
 import { formatCents } from "@/lib/format";
 
 const PAGE = 100;
 const ALL = "__all__";
 const UNCAT = "__uncat__";
+const CATEGORIZED = "__has_cat__";
 
 export default function TransactionsPage() {
   const { data: accounts = [] } = useAccounts();
@@ -60,11 +62,13 @@ export default function TransactionsPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
+  const isSentinel = (c: string) => c === ALL || c === UNCAT || c === CATEGORIZED;
   const filters: TransactionFilters = useMemo(() => ({
     search: search || undefined,
     account_id: account === ALL ? undefined : Number(account),
-    category_id: category === ALL || category === UNCAT ? undefined : Number(category),
+    category_id: isSentinel(category) ? undefined : Number(category),
     uncategorized: category === UNCAT ? true : undefined,
+    categorized: category === CATEGORIZED ? true : undefined,
     is_debit: type === ALL ? undefined : type === "debit",
     is_internal_transfer: hideTransfers ? false : undefined,
     month: month === ALL ? undefined : month,
@@ -73,6 +77,7 @@ export default function TransactionsPage() {
   }), [search, account, category, type, hideTransfers, month, page]);
 
   const { data: rows = [], isLoading, isFetching } = useTransactions(filters);
+  const { data: countData } = useTransactionCount(filters);
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const someSelected = rows.some((r) => selected.has(r.id));
@@ -116,10 +121,14 @@ export default function TransactionsPage() {
         <FilterSelect value={category} onChange={(v) => { setCategory(v); setPage(0); }} placeholder="Catégorie" width="w-48"
           options={[
             { value: ALL, label: "Toutes catégories" },
+            { value: CATEGORIZED, label: "Catégorisées" },
             { value: UNCAT, label: "Sans catégorie" },
-            ...categories
-              .filter((c) => account === ALL || c.account_id == null || c.account_id === Number(account))
-              .map((c) => ({ value: String(c.id), label: `${c.name} · ${c.account_id == null ? "Global" : accountNames[c.account_id] ?? "Compte"}` })),
+            ...orderCategoryTree(
+              categories.filter((c) => account === ALL || c.account_id == null || c.account_id === Number(account)),
+            ).map(({ cat: c, child }) => ({
+              value: String(c.id),
+              label: `${child ? "   ↳ " : ""}${c.name}${child ? "" : ` · ${c.account_id == null ? "Global" : accountNames[c.account_id] ?? "Compte"}`}`,
+            })),
           ]} />
         <FilterSelect value={type} onChange={(v) => { setType(v); setPage(0); }} placeholder="Type" width="w-32"
           options={[{ value: ALL, label: "Tout" }, { value: "debit", label: "Dépenses" }, { value: "credit", label: "Revenus" }]} />
@@ -233,7 +242,7 @@ export default function TransactionsPage() {
 
       {/* Pagination */}
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{rows.length} transaction(s){isFetching ? " · …" : ""}</span>
+        <span>{countData?.total ?? rows.length} transaction(s){isFetching ? " · …" : ""}</span>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}><ChevronLeft className="size-4" /></Button>
           <span>Page {page + 1}</span>
