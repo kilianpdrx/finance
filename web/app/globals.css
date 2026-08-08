@@ -93,6 +93,8 @@
   }
   html {
     color-scheme: light dark;
+    /* Match the previous manual 80% browser zoom as the default view. */
+    zoom: 0.8;
   }
   body {
     background-color: var(--color-background);
