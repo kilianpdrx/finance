@@ -163,7 +163,8 @@ export default function BudgetPage() {
     return (
       <tr className="border-b border-border/60 hover:bg-muted/40">
         <td className="sticky left-0 z-10 w-52 border-r border-border bg-surface px-4 py-2">
-          <div className="flex items-center gap-2">
+          <div className={`flex items-center gap-2 ${row.child ? "pl-4" : ""}`}>
+            {row.child && <span className="text-muted-foreground/60">↳</span>}
             {row.category_color && <span className="size-2 shrink-0 rounded-full" style={{ background: row.category_color }} />}
             <span className="truncate text-sm" title={row.category_name}>{row.category_name}</span>
           </div>

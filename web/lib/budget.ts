@@ -1,4 +1,5 @@
 import type { BudgetFullResponse, BudgetTableRow } from "./api/hooks";
+import { orderCategoryTree } from "./group";
 
 export interface MergedCell {
   month: string;
@@ -29,6 +30,8 @@ export interface MergedRow {
   category_id: number | null;
   category_name: string;
   category_color: string;
+  parent_id?: number | null;
+  child?: boolean;   // rendered indented under its parent
   is_investment: boolean;
   cells: MergedCell[];
 }
@@ -99,12 +102,12 @@ export function mergeYears(responses: BudgetFullResponse[], targetMonths: string
 
   const mergeRow = (getRow: (r: BudgetFullResponse) => BudgetTableRow | undefined, fallbackName: string, fallbackColor: string): MergedRow => {
     const cells = targetMonths.map((m) => findCell(byYear.get(yearOf(m)) ? getRow(byYear.get(yearOf(m))!) : undefined, byYear.get(yearOf(m)), m));
-    let name = fallbackName, color = fallbackColor, catId: number | null = null, isInvestment = false;
+    let name = fallbackName, color = fallbackColor, catId: number | null = null, isInvestment = false, parentId: number | null = null;
     for (const resp of responses) {
       const row = getRow(resp);
-      if (row) { name = row.category_name; color = row.category_color; catId = row.category_id; isInvestment = row.is_investment ?? false; break; }
+      if (row) { name = row.category_name; color = row.category_color; catId = row.category_id; isInvestment = row.is_investment ?? false; parentId = row.parent_id ?? null; break; }
     }
-    return { category_id: catId, category_name: name, category_color: color, is_investment: isInvestment, cells };
+    return { category_id: catId, category_name: name, category_color: color, parent_id: parentId, is_investment: isInvestment, cells };
   };
 
   const sectionKeys: string[] = [];
@@ -125,9 +128,12 @@ export function mergeYears(responses: BudgetFullResponse[], targetMonths: string
         if (!cats.has(key)) cats.set(key, { id: row.category_id, name: row.category_name, color: row.category_color });
       }
     }
-    const rows = Array.from(cats.keys()).map((key) =>
+    const rawRows = Array.from(cats.keys()).map((key) =>
       mergeRow((resp) => resp.sections.find((s) => s.section === sKey)?.rows.find((r) => (r.category_id ?? r.category_name) === key), "", ""),
     );
+    // Order subcategories directly under their parent, flagged for indentation.
+    const rows: MergedRow[] = orderCategoryTree(rawRows.map((r) => ({ ...r, id: r.category_id ?? -1 })))
+      .map(({ cat, child }) => ({ ...cat, child }));
     const section_totals = mergeRow((resp) => resp.sections.find((s) => s.section === sKey)?.section_totals, `TOTAL ${sectionLabels.get(sKey) ?? sKey}`, "");
     return { section: sKey, section_label: sectionLabels.get(sKey) ?? sKey, rows, section_totals };
   });
