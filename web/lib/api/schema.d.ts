@@ -660,6 +660,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/analytics/recurring-uncovered": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recurring Uncovered
+         * @description Recurring EXPENSES whose description isn't matched by any active rule —
+         *     good candidates for creating a new categorization rule.
+         */
+        get: operations["recurring_uncovered_api_analytics_recurring_uncovered_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/analytics/budget": {
         parameters: {
             query?: never;
@@ -4300,6 +4321,39 @@ export interface operations {
         };
     };
     recurring_api_analytics_recurring_get: {
+        parameters: {
+            query?: {
+                account_ids?: string | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecurringTransaction"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    recurring_uncovered_api_analytics_recurring_uncovered_get: {
         parameters: {
             query?: {
                 account_ids?: string | null;

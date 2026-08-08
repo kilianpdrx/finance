@@ -198,6 +198,9 @@ export function useSpendingTrends(query: AnalyticsQuery) {
 export function useRecurring(accountIds?: string | null) {
   return useQuery({ queryKey: ["analytics", "recurring", accountIds], queryFn: () => unwrap(api.GET("/api/analytics/recurring", { params: { query: { account_ids: accountIds ?? undefined } } })) });
 }
+export function useRecurringUncovered(accountIds?: string | null) {
+  return useQuery({ queryKey: ["analytics", "recurring-uncovered", accountIds], queryFn: () => unwrap(api.GET("/api/analytics/recurring-uncovered", { params: { query: { account_ids: accountIds ?? undefined } } })) as Promise<RecurringTransaction[]> });
+}
 export function useBudgetFull(year: number | undefined, accountIds?: string | null) {
   return useQuery({
     queryKey: ["budget-full", year, accountIds],

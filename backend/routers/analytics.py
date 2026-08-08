@@ -560,6 +560,62 @@ async def recurring(
     ]
 
 
+@router.get("/recurring-uncovered", response_model=List[RecurringTransaction])
+async def recurring_uncovered(
+    account_ids: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Recurring EXPENSES whose description isn't matched by any active rule —
+    good candidates for creating a new categorization rule."""
+    from models import CategoryRule
+    from services.categorizer import evaluate_conditions
+
+    parsed_ids = _parse_account_ids(account_ids)
+    rec_filters = [
+        Transaction.is_internal_transfer == False,  # noqa: E712
+        Transaction.is_debit == True,  # noqa: E712
+        Transaction.profile_id == pid,
+    ]
+    if parsed_ids:
+        rec_filters.append(Transaction.account_id.in_(parsed_ids))
+    rows = (await db.execute(
+        select(
+            Transaction.description,
+            func.count(Transaction.id).label("cnt"),
+            func.avg(Transaction.amount_cents).label("avg_amount"),
+            func.max(Transaction.date).label("last_date"),
+            Transaction.category_id,
+        )
+        .where(and_(*rec_filters))
+        .group_by(Transaction.description, Transaction.category_id)
+        .having(func.count(Transaction.id) >= 2)
+        .order_by(func.count(Transaction.id).desc())
+        .limit(200)
+    )).all()
+
+    rules = (await db.execute(
+        select(CategoryRule).where(CategoryRule.is_active == True, CategoryRule.profile_id == pid)  # noqa: E712
+    )).scalars().all()
+
+    out = []
+    for r in rows:
+        txn_data = {"description": r.description, "amount_cents": int(r.avg_amount),
+                    "date": str(r.last_date), "is_debit": True, "currency": "", "account_id": ""}
+        covered = any(
+            rule.conditions and evaluate_conditions(txn_data, rule.conditions, getattr(rule, "logic_operator", "AND") or "AND")
+            for rule in rules
+        )
+        if not covered:
+            out.append(RecurringTransaction(
+                description=r.description, occurrences=r.cnt, avg_amount_cents=int(r.avg_amount),
+                last_date=r.last_date, category_id=r.category_id,
+            ))
+        if len(out) >= 50:
+            break
+    return out
+
+
 @router.get("/budget", response_model=BudgetTableResponse)
 async def budget_table(
     months: int = Query(default=13, le=24),

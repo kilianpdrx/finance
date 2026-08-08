@@ -1,7 +1,9 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { Inbox, ChevronRight, CornerDownRight } from "lucide-react";
+import { Inbox, ChevronRight, CornerDownRight, Wand2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CreateRuleDialog } from "@/components/analytics/create-rule-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,7 +15,7 @@ import { CategoryTrendGrid } from "@/components/charts/category-trend-grid";
 import { MonthlyDistribution } from "@/components/charts/monthly-distribution";
 import { CourantTabs, type CourantSelection } from "@/components/analytics/courant-tabs";
 import {
-  useAnalyticsContext, useByCategory, useSpendingTrends, useRecurring, useCategories,
+  useAnalyticsContext, useByCategory, useSpendingTrends, useRecurring, useRecurringUncovered, useCategories,
   useByCategoryPerAccount, useCashFlowPerAccount,
   type SpendingTrend, type RecurringTransaction, type CategoryBreakdown,
 } from "@/lib/api/hooks";
@@ -71,6 +73,8 @@ export default function AnalysesPage() {
   const toggle = (id: number) => setExpanded((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const trends = useSpendingTrends(q);
   const recurring = useRecurring(q.account_ids);
+  const uncovered = useRecurringUncovered(q.account_ids);
+  const [rulePrefill, setRulePrefill] = useState<{ description: string; categoryId: number | null } | null>(null);
   const { data: categories = [] } = useCategories();
   const perAccountCats = useByCategoryPerAccount(q, scopeIds);
   const perAccountFlux = useCashFlowPerAccount(q, scopeIds);
@@ -98,6 +102,7 @@ export default function AnalysesPage() {
           <TabsTrigger value="distribution">Répartition mensuelle</TabsTrigger>
           <TabsTrigger value="cashflow">Flux de trésorerie</TabsTrigger>
           <TabsTrigger value="recurring">Récurrents</TabsTrigger>
+          <TabsTrigger value="uncovered">Sans règle</TabsTrigger>
         </TabsList>
 
         {/* ── Catégories ──────────────────────────────────────────────── */}
@@ -220,28 +225,53 @@ export default function AnalysesPage() {
           {recurring.isLoading ? <Card className="p-4"><Skeleton className="h-64 w-full" /></Card> : !recurring.data?.length ? (
             <Card><EmptyState icon={Inbox} title="Aucune transaction récurrente détectée" /></Card>
           ) : (
-            <RecurringTable rows={recurring.data} currency={currency} catName={catName} />
+            <RecurringTable rows={recurring.data} currency={currency} catName={catName}
+              onCreateRule={(r) => setRulePrefill({ description: r.description, categoryId: r.category_id })} />
+          )}
+        </TabsContent>
+
+        {/* ── Sans règle (recurring expenses no rule matches) ─────────── */}
+        <TabsContent value="uncovered" className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Dépenses récurrentes qu&apos;aucune règle automatique ne couvre — créez une règle pour les classer à l&apos;avenir.
+          </p>
+          {uncovered.isLoading ? <Card className="p-4"><Skeleton className="h-64 w-full" /></Card> : !uncovered.data?.length ? (
+            <Card><EmptyState icon={Inbox} title="Toutes les dépenses récurrentes sont couvertes par une règle 🎉" /></Card>
+          ) : (
+            <RecurringTable rows={uncovered.data} currency={currency} catName={catName}
+              onCreateRule={(r) => setRulePrefill({ description: r.description, categoryId: r.category_id })} />
           )}
         </TabsContent>
 
       </Tabs>
+
+      <CreateRuleDialog open={rulePrefill !== null} onOpenChange={(v) => !v && setRulePrefill(null)} prefill={rulePrefill} />
     </div>
   );
 }
 
-function RecurringTable({ rows, currency, catName }: { rows: RecurringTransaction[]; currency: string; catName: (id: number | null) => string }) {
+function RecurringTable({ rows, currency, catName, onCreateRule }: {
+  rows: RecurringTransaction[]; currency: string; catName: (id: number | null) => string;
+  onCreateRule: (r: RecurringTransaction) => void;
+}) {
   return (
     <Card className="overflow-hidden p-0">
       <Table>
-        <TableHeader><TableRow className="hover:bg-transparent"><TableHead>Description</TableHead><TableHead>Catégorie</TableHead><TableHead className="text-right">Occurrences</TableHead><TableHead className="text-right">Montant moyen</TableHead><TableHead className="text-right">Dernière</TableHead></TableRow></TableHeader>
+        <TableHeader><TableRow className="hover:bg-transparent"><TableHead>Description</TableHead><TableHead>Catégorie</TableHead><TableHead className="text-right">Occurrences</TableHead><TableHead className="text-right">Montant moyen</TableHead><TableHead className="text-right">Dernière</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
         <TableBody>
           {rows.map((r, i) => (
-            <TableRow key={i}>
+            <TableRow key={i} className="group">
               <TableCell className="max-w-xs"><span className="line-clamp-1 font-medium">{r.description}</span></TableCell>
               <TableCell className="text-muted-foreground">{catName(r.category_id)}</TableCell>
               <TableCell className="nums text-right">{r.occurrences}×</TableCell>
               <TableCell className="nums blurable text-right font-semibold">{formatCents(r.avg_amount_cents, currency)}</TableCell>
               <TableCell className="nums text-right text-muted-foreground">{r.last_date}</TableCell>
+              <TableCell className="pr-2 text-right">
+                <Button variant="ghost" size="sm" className="gap-1.5 opacity-0 transition-opacity group-hover:opacity-100"
+                  title="Créer une règle depuis cette transaction" onClick={() => onCreateRule(r)}>
+                  <Wand2 className="size-3.5" /> Règle
+                </Button>
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
