@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2, Pencil, Merge, FlaskConical, X, RefreshCw } from "lucide-react";
+import { Plus, Trash2, Pencil, Merge, FlaskConical, X, RefreshCw, Search } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,7 +66,19 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
 
   const catName = (id: number) => categories.find((c) => c.id === id)?.name ?? `#${id}`;
   const catColor = (id: number) => categories.find((c) => c.id === id)?.color ?? "var(--muted-foreground)";
-  const groups = useMemo(() => groupByAccount(rules, accounts), [rules, accounts]);
+
+  const [search, setSearch] = useState("");
+  const filteredRules = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rules;
+    const nameOf = (id: number) => (categories.find((c) => c.id === id)?.name ?? "").toLowerCase();
+    return rules.filter(
+      (r) =>
+        nameOf(r.category_id).includes(q) ||
+        r.conditions.some((c) => String(c.value).toLowerCase().includes(q) || c.field.toLowerCase().includes(q)),
+    );
+  }, [rules, categories, search]);
+  const groups = useMemo(() => groupByAccount(filteredRules, accounts), [filteredRules, accounts]);
 
   const openCreate = () => {
     setEditing(null); setConditions([{ field: "description", operator: "contains", value: "" }]);
@@ -107,9 +119,13 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          {rules.length} règles · triées par priorité. Les règles s&apos;appliquent à l&apos;import ou via « Réappliquer ».
+          {search.trim() ? `${filteredRules.length} / ${rules.length}` : rules.length} règles · triées par priorité. Les règles s&apos;appliquent à l&apos;import ou via « Réappliquer ».
         </p>
         <div className="flex gap-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher une règle…" className="h-9 w-52 pl-8" />
+          </div>
           {selected.size >= 2 && <Button variant="outline" size="sm" onClick={doMerge}><Merge className="size-4" /> Fusionner ({selected.size})</Button>}
           <Button variant="outline" size="sm" disabled={rescan.isPending} onClick={reapplyRules}>
             <RefreshCw className={`size-4 ${rescan.isPending ? "animate-spin" : ""}`} /> Réappliquer les règles
