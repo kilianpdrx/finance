@@ -235,6 +235,14 @@ export function useTransactionStats(filters: TransactionFilters) {
     queryFn: () => unwrap(api.GET("/api/transactions/stats", { params: { query } })) as Promise<TransactionStats>,
   });
 }
+/** Fetch all transaction ids matching the given filters (for "select all across
+ *  pages"). One-shot on demand rather than a standing query. */
+export async function fetchTransactionIds(filters: TransactionFilters): Promise<number[]> {
+  const { limit: _l, offset: _o, ...rest } = filters;
+  const query = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== null && v !== ""));
+  const res = (await unwrap(api.GET("/api/transactions/ids", { params: { query } }))) as { ids: number[] };
+  return res.ids;
+}
 export function useImportBatches() {
   return useQuery({ queryKey: ["transactions", "batches"], queryFn: () => unwrap(api.GET("/api/transactions/batches")) as Promise<ImportBatch[]> });
 }

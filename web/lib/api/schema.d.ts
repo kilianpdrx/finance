@@ -138,6 +138,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/transactions/ids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Transaction Ids
+         * @description All transaction ids matching the given filters — for "select all matching"
+         *     across pages. Same filter surface as the list endpoint.
+         */
+        get: operations["transaction_ids_api_transactions_ids_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/transactions": {
         parameters: {
             query?: never;
@@ -3117,6 +3138,50 @@ export interface operations {
                 date_to?: string | null;
                 search?: string | null;
                 is_debit?: boolean | null;
+                bank_name?: string | null;
+                month?: string | null;
+                import_batch_id?: number | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transaction_ids_api_transactions_ids_get: {
+        parameters: {
+            query?: {
+                account_id?: number | null;
+                category_id?: number | null;
+                uncategorized?: boolean | null;
+                categorized?: boolean | null;
+                date_from?: string | null;
+                date_to?: string | null;
+                search?: string | null;
+                is_debit?: boolean | null;
+                is_internal_transfer?: boolean | null;
                 bank_name?: string | null;
                 month?: string | null;
                 import_batch_id?: number | null;

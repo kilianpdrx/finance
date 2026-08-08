@@ -98,6 +98,38 @@ async def test_transaction_stats(client: AsyncClient, seed_data: dict, transacti
     assert d["total"] == 2 and d["categorized"] == 1 and d["uncategorized"] == 1
 
 
+async def test_transaction_ids_respects_filters(client: AsyncClient, seed_data: dict, transactions_data: dict):
+    profile = seed_data["profile"]
+    h = {"X-Profile-Id": str(profile.id)}
+    res = await client.get("/api/transactions/ids", headers=h)
+    assert res.status_code == 200
+    ids = res.json()["ids"]
+    assert set(ids) == {transactions_data[k].id for k in ("t1", "t2", "t3")}
+
+    # Filtered ids (uncategorised) return just t2.
+    res = await client.get("/api/transactions/ids", params={"uncategorized": "true"}, headers=h)
+    assert res.json()["ids"] == [transactions_data["t2"].id]
+
+
+async def test_bulk_delete_chunks_large_selection(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """A selection larger than SQLite's parameter cap must still delete (chunked)."""
+    profile = seed_data["profile"]
+    acc = seed_data["account_courant"]
+    txns = [
+        Transaction(profile_id=profile.id, account_id=acc.id, date=date(2026, 1, 1),
+                    amount_cents=100, is_debit=True, description=f"bulk {i}", import_hash=f"bulk_{i}")
+        for i in range(1500)
+    ]
+    db_session.add_all(txns)
+    await db_session.commit()
+    ids = [t.id for t in txns]
+
+    res = await client.post("/api/transactions/bulk-delete", headers={"X-Profile-Id": str(profile.id)}, json={"ids": ids})
+    assert res.status_code == 204
+    remaining = (await client.get("/api/transactions/count", headers={"X-Profile-Id": str(profile.id)})).json()["total"]
+    assert remaining == 0
+
+
 async def test_bulk_delete_transactions(client: AsyncClient, seed_data: dict, transactions_data: dict):
     profile = seed_data["profile"]
     t_id = transactions_data["t1"].id

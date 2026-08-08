@@ -24,6 +24,16 @@ class BulkCategoryUpdate(BaseModel):
     category_id: Optional[int] = None
 
 
+# SQLite caps the number of host parameters per statement (historically 999);
+# chunk large id lists so bulk operations on a full selection don't overflow it.
+_ID_CHUNK = 900
+
+
+def _chunks(seq: List[int], size: int = _ID_CHUNK):
+    for i in range(0, len(seq), size):
+        yield seq[i:i + size]
+
+
 async def _reject_grouping_category(db: AsyncSession, category_id: Optional[int]):
     """A category that has children is grouping-only and cannot hold transactions
     directly — the user must pick a sub-category (e.g. "Autre …")."""
@@ -141,6 +151,35 @@ async def transaction_stats(
         "uncategorized": total - categorized,
         "transfers": transfers,
     }
+
+
+@router.get("/ids")
+async def transaction_ids(
+    account_id: Optional[int] = None,
+    category_id: Optional[int] = None,
+    uncategorized: Optional[bool] = None,
+    categorized: Optional[bool] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    search: Optional[str] = None,
+    is_debit: Optional[bool] = None,
+    is_internal_transfer: Optional[bool] = None,
+    bank_name: Optional[str] = None,
+    month: Optional[str] = None,
+    import_batch_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """All transaction ids matching the given filters — for "select all matching"
+    across pages. Same filter surface as the list endpoint."""
+    filters = await _build_txn_filters(
+        db, pid, account_id=account_id, category_id=category_id, uncategorized=uncategorized,
+        categorized=categorized, date_from=date_from, date_to=date_to, search=search,
+        is_debit=is_debit, is_internal_transfer=is_internal_transfer, bank_name=bank_name,
+        month=month, import_batch_id=import_batch_id,
+    )
+    rows = (await db.execute(select(Transaction.id).where(and_(*filters)))).all()
+    return {"ids": [r[0] for r in rows]}
 
 
 @router.get("", response_model=List[TransactionOut])
@@ -315,9 +354,10 @@ async def bulk_delete_transactions(
     if not payload.ids:
         return
 
-    await db.execute(
-        Transaction.__table__.delete().where(Transaction.id.in_(payload.ids), Transaction.profile_id == pid)
-    )
+    for chunk in _chunks(payload.ids):
+        await db.execute(
+            Transaction.__table__.delete().where(Transaction.id.in_(chunk), Transaction.profile_id == pid)
+        )
     await db.commit()
 
 
@@ -336,11 +376,12 @@ async def bulk_update_transfer(
     if not payload.ids:
         return {"updated": 0}
     from sqlalchemy import update
-    await db.execute(
-        update(Transaction)
-        .where(Transaction.id.in_(payload.ids), Transaction.profile_id == pid)
-        .values(is_internal_transfer=payload.is_internal_transfer)
-    )
+    for chunk in _chunks(payload.ids):
+        await db.execute(
+            update(Transaction)
+            .where(Transaction.id.in_(chunk), Transaction.profile_id == pid)
+            .values(is_internal_transfer=payload.is_internal_transfer)
+        )
     await db.commit()
     return {"updated": len(payload.ids)}
 
@@ -360,11 +401,12 @@ async def bulk_update_reviewed(
     if not payload.ids:
         return {"updated": 0}
     from sqlalchemy import update
-    await db.execute(
-        update(Transaction)
-        .where(Transaction.id.in_(payload.ids), Transaction.profile_id == pid)
-        .values(is_manually_reviewed=payload.is_manually_reviewed)
-    )
+    for chunk in _chunks(payload.ids):
+        await db.execute(
+            update(Transaction)
+            .where(Transaction.id.in_(chunk), Transaction.profile_id == pid)
+            .values(is_manually_reviewed=payload.is_manually_reviewed)
+        )
     await db.commit()
     return {"updated": len(payload.ids)}
 
@@ -380,11 +422,12 @@ async def bulk_update_category(
         return {"updated": 0}
     await _reject_grouping_category(db, payload.category_id)
     from sqlalchemy import update
-    await db.execute(
-        update(Transaction)
-        .where(Transaction.id.in_(payload.ids), Transaction.profile_id == pid)
-        .values(category_id=payload.category_id)
-    )
+    for chunk in _chunks(payload.ids):
+        await db.execute(
+            update(Transaction)
+            .where(Transaction.id.in_(chunk), Transaction.profile_id == pid)
+            .values(category_id=payload.category_id)
+        )
     await db.commit()
     return {"updated": len(payload.ids)}
 

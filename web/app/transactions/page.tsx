@@ -20,7 +20,7 @@ import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   useAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionCount, useTransactionStats, useTransactionMutations,
-  type TransactionFilters, type Transaction,
+  fetchTransactionIds, type TransactionFilters, type Transaction,
 } from "@/lib/api/hooks";
 import { orderCategoryTree } from "@/lib/group";
 import { formatCents } from "@/lib/format";
@@ -94,6 +94,17 @@ export default function TransactionsPage() {
   const toggleRow = (id: number) =>
     setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const clearSelection = () => setSelected(new Set());
+
+  // "Select all matching" across pages (not just the visible page).
+  const total = countData?.total ?? rows.length;
+  const hasMorePages = total > rows.length;
+  const allMatchingSelected = total > 0 && selected.size >= total;
+  const selectAllMatching = async () => {
+    try {
+      const allIds = await fetchTransactionIds(filters);
+      setSelected(new Set(allIds));
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Erreur"); }
+  };
 
   const ids = [...selected];
   const runBulk = async (fn: () => Promise<unknown>, msg: string) => {
@@ -173,6 +184,14 @@ export default function TransactionsPage() {
       {selected.size > 0 && (
         <Card className="flex flex-wrap items-center gap-2 p-3">
           <span className="text-sm font-medium">{selected.size} sélectionnée(s)</span>
+          {allSelected && hasMorePages && !allMatchingSelected && (
+            <button className="text-xs font-medium text-brand underline underline-offset-2 hover:text-brand/80" onClick={selectAllMatching}>
+              Sélectionner les {total} transactions correspondantes
+            </button>
+          )}
+          {allMatchingSelected && hasMorePages && (
+            <span className="text-xs text-muted-foreground">Toutes les transactions correspondantes sont sélectionnées.</span>
+          )}
           <div className="ml-2 w-48">
             <CategorySelect value={null} placeholder="Catégoriser…" categories={categories} accountNames={accountNames}
               onChange={(cid) => runBulk(() => mut.bulkCategory.mutateAsync({ ids, category_id: cid }), "Catégorie appliquée")} />
