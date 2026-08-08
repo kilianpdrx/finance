@@ -34,7 +34,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Tableau de bord", icon: LayoutDashboard },
   { href: "/budget", label: "Budget", icon: Wallet },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
-  { href: "/analyses", label: "Analyse des dépenses", icon: ChartPie },
+  { href: "/analyses", label: "Analyses", icon: ChartPie },
   { href: "/comptes", label: "Comptes", icon: Landmark },
   { href: "/objectifs", label: "Objectifs", icon: Target },
   { href: "/emprunts", label: "Emprunts", icon: BadgeMinus },

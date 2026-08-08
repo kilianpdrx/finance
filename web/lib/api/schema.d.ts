@@ -4186,6 +4186,7 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
                 account_ids?: string | null;
+                income?: boolean;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
@@ -4221,6 +4222,7 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
                 account_ids?: string | null;
+                income?: boolean;
             };
             header?: {
                 "X-Profile-Id"?: number | null;

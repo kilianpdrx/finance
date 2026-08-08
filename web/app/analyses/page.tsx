@@ -60,8 +60,10 @@ export default function AnalysesPage() {
   const courantIds = courant.map((a) => a.id);
 
   const [sel, setSel] = useState<CourantSelection>("all");
+  const [flow, setFlow] = useState<"depenses" | "revenus">("depenses");
+  const income = flow === "revenus";
   const scopeIds = sel === "all" ? courantIds : [sel];
-  const q = { ...query, account_ids: scopeIds.length ? scopeIds.join(",") : undefined };
+  const q = { ...query, account_ids: scopeIds.length ? scopeIds.join(",") : undefined, income };
 
   const byCategory = useByCategory(q);
   const rolled = useMemo(() => rollupCategories(byCategory.data ?? []), [byCategory.data]);
@@ -93,7 +95,26 @@ export default function AnalysesPage() {
 
   return (
     <div className="space-y-4">
-      <CourantTabs accounts={accounts} value={sel} onChange={setSel} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <CourantTabs accounts={accounts} value={sel} onChange={setSel} />
+        <div className="inline-flex rounded-lg border border-border bg-surface p-0.5 text-sm">
+          {([["depenses", "Dépenses"], ["revenus", "Revenus"]] as const).map(([val, label]) => (
+            <button
+              key={val}
+              onClick={() => setFlow(val)}
+              className={`rounded-md px-3 py-1 font-medium transition-colors ${
+                flow === val
+                  ? val === "revenus"
+                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                    : "bg-brand/15 text-brand"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <Tabs defaultValue="categories">
         <TabsList>
@@ -108,7 +129,7 @@ export default function AnalysesPage() {
         {/* ── Catégories ──────────────────────────────────────────────── */}
         <TabsContent value="categories" className="space-y-4">
           {byCategory.isLoading ? <Skeleton className="h-80 rounded-2xl" /> : !byCategory.data?.length ? (
-            <Card><EmptyState icon={Inbox} title="Aucune dépense sur la période" /></Card>
+            <Card><EmptyState icon={Inbox} title={income ? "Aucun revenu sur la période" : "Aucune dépense sur la période"} /></Card>
           ) : (
             <>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

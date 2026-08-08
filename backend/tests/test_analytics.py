@@ -105,6 +105,20 @@ async def test_analytics_by_category(client: AsyncClient, seed_data: dict, analy
     assert data[0]["total_cents"] == 5000
 
 
+async def test_analytics_by_category_income(client: AsyncClient, seed_data: dict, analytics_data: dict):
+    """income=true flips the breakdown to credits (Revenus)."""
+    profile = seed_data["profile"]
+    res = await client.get(
+        "/api/analytics/by-category", params={"income": "true"},
+        headers={"X-Profile-Id": str(profile.id)},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) == 1
+    assert data[0]["category_id"] == seed_data["cat_salaire"].id
+    assert data[0]["total_cents"] == 200000
+
+
 async def test_analytics_cash_flow(client: AsyncClient, seed_data: dict, analytics_data: dict):
     profile = seed_data["profile"]
     res = await client.get("/api/analytics/cash-flow", headers={"X-Profile-Id": str(profile.id)})

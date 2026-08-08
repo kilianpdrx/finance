@@ -219,6 +219,7 @@ async def by_category(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
+    income: bool = False,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
@@ -227,7 +228,7 @@ async def by_category(
     acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
 
     filters = _date_filters(date_from, date_to)
-    filters.append(Transaction.is_debit == True)
+    filters.append(Transaction.is_debit == (not income))
     filters.append(Transaction.is_internal_transfer == False)
     filters.append(Transaction.profile_id == pid)
     if parsed_ids:
@@ -282,6 +283,7 @@ async def spending_trends(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
+    income: bool = False,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
@@ -290,7 +292,7 @@ async def spending_trends(
     acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
 
     filters = _date_filters(date_from, date_to)
-    filters.append(Transaction.is_debit == True)
+    filters.append(Transaction.is_debit == (not income))
     filters.append(Transaction.is_internal_transfer == False)
     filters.append(Transaction.profile_id == pid)
     if parsed_ids:

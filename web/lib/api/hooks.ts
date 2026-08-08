@@ -116,6 +116,7 @@ export interface AnalyticsQuery {
   date_from?: string | null;
   date_to?: string | null;
   account_ids?: string | null;
+  income?: boolean;   // by-category / spending-trends: true = revenus, false = dépenses
 }
 
 export interface TransactionFilters {
