@@ -33,6 +33,60 @@ async def get_category(category_id: int, db: AsyncSession = Depends(get_db), pid
     return cat
 
 
+async def _ensure_parent_group(db: AsyncSession, pid: int, parent: Category) -> Category:
+    """A category with children becomes *grouping-only*: it can no longer hold
+    transactions directly. Ensure an ``Autre {parent}`` leaf exists (inheriting the
+    parent's type/colour) and move the parent's directly-assigned transactions into
+    it. Idempotent — safe to call on every child add / at startup."""
+    autre_name = f"Autre {parent.name}"
+    autre = (await db.execute(
+        select(Category).where(
+            Category.parent_id == parent.id,
+            Category.name == autre_name,
+            Category.profile_id == pid,
+        )
+    )).scalar_one_or_none()
+    if autre is None:
+        autre = Category(
+            name=autre_name,
+            parent_id=parent.id,
+            color=parent.color,
+            icon=parent.icon,
+            is_income=parent.is_income,
+            expense_type=parent.expense_type,
+            is_investment=parent.is_investment,
+            account_id=parent.account_id,
+            profile_id=pid,
+        )
+        db.add(autre)
+        await db.flush()  # assign autre.id
+    # Move any transactions still pinned to the parent into the "Autre" leaf.
+    await db.execute(
+        update(Transaction)
+        .where(Transaction.category_id == parent.id, Transaction.profile_id == pid)
+        .values(category_id=autre.id)
+    )
+    return autre
+
+
+async def normalize_parent_groups(db: AsyncSession, pid: Optional[int] = None) -> int:
+    """Backfill: for every category that has children, ensure its ``Autre {parent}``
+    group and reassign directly-held transactions. Returns the number of parents
+    processed. Used at startup and after imports so existing parents comply."""
+    parent_ids_stmt = select(Category.parent_id).where(Category.parent_id != None).distinct()  # noqa: E711
+    parent_ids = [r[0] for r in (await db.execute(parent_ids_stmt)).all()]
+    if not parent_ids:
+        return 0
+    parents_stmt = select(Category).where(Category.id.in_(parent_ids))
+    if pid is not None:
+        parents_stmt = parents_stmt.where(Category.profile_id == pid)
+    parents = (await db.execute(parents_stmt)).scalars().all()
+    for parent in parents:
+        await _ensure_parent_group(db, pid if pid is not None else parent.profile_id, parent)
+    await db.commit()
+    return len(parents)
+
+
 async def _validate_parent(db: AsyncSession, pid: int, parent_id: Optional[int], self_id: Optional[int] = None):
     """Enforce a single level of nesting: the parent must exist in the profile,
     be top-level itself, and not be the category being edited."""
@@ -60,6 +114,14 @@ async def create_category(payload: CategoryCreate, db: AsyncSession = Depends(ge
     await _validate_parent(db, pid, payload.parent_id)
     cat = Category(**payload.model_dump(), profile_id=pid)
     db.add(cat)
+    await db.flush()
+    # Adding a child turns the parent into a grouping-only category.
+    if payload.parent_id is not None:
+        parent = (await db.execute(
+            select(Category).where(Category.id == payload.parent_id, Category.profile_id == pid)
+        )).scalar_one_or_none()
+        if parent is not None:
+            await _ensure_parent_group(db, pid, parent)
     await db.commit()
     await db.refresh(cat)
     return cat
@@ -94,6 +156,14 @@ async def update_category(category_id: int, payload: CategoryUpdate, db: AsyncSe
         await _validate_parent(db, pid, updates["parent_id"], self_id=category_id)
     for field, value in updates.items():
         setattr(cat, field, value)
+    # Re-parenting a category under a new parent turns that parent grouping-only.
+    if updates.get("parent_id") is not None:
+        await db.flush()
+        parent = (await db.execute(
+            select(Category).where(Category.id == updates["parent_id"], Category.profile_id == pid)
+        )).scalar_one_or_none()
+        if parent is not None:
+            await _ensure_parent_group(db, pid, parent)
     await db.commit()
     await db.refresh(cat)
     return cat

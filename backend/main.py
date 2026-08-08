@@ -24,6 +24,14 @@ async def lifespan(app: FastAPI):
         from seed import seed_if_empty
         await seed_if_empty(db)
 
+        # Ensure every parent category is grouping-only (has an "Autre {parent}"
+        # leaf and holds no transactions directly). Idempotent.
+        try:
+            from routers.categories import normalize_parent_groups
+            await normalize_parent_groups(db)
+        except Exception as e:
+            logger.warning("Parent-group normalization failed: %s", e)
+
         from sqlalchemy import text
         existing = (await db.execute(text("SELECT id FROM profiles WHERE is_default = 1 LIMIT 1"))).first()
         if not existing:

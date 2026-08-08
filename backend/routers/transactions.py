@@ -24,6 +24,21 @@ class BulkCategoryUpdate(BaseModel):
     category_id: Optional[int] = None
 
 
+async def _reject_grouping_category(db: AsyncSession, category_id: Optional[int]):
+    """A category that has children is grouping-only and cannot hold transactions
+    directly — the user must pick a sub-category (e.g. "Autre …")."""
+    if category_id is None:
+        return
+    has_children = (await db.execute(
+        select(Category.id).where(Category.parent_id == category_id).limit(1)
+    )).scalar_one_or_none()
+    if has_children:
+        raise HTTPException(
+            status_code=400,
+            detail="Cette catégorie sert de regroupement ; choisissez une sous-catégorie.",
+        )
+
+
 async def _build_txn_filters(
     db: AsyncSession, pid: int, *, account_id=None, category_id=None, uncategorized=None,
     categorized=None, date_from=None, date_to=None, search=None, is_debit=None,
@@ -316,6 +331,7 @@ async def bulk_update_category(
     """Update category for multiple transactions at once."""
     if not payload.ids:
         return {"updated": 0}
+    await _reject_grouping_category(db, payload.category_id)
     from sqlalchemy import update
     await db.execute(
         update(Transaction)
@@ -402,6 +418,8 @@ async def update_transaction(
     # Editing one of these core fields (vs. just recategorizing) marks the row edited.
     CORE_FIELDS = {"account_id", "date", "description", "amount_cents", "currency", "is_debit"}
     updates = payload.model_dump(exclude_unset=True)
+    if "category_id" in updates:
+        await _reject_grouping_category(db, updates["category_id"])
     for field, value in updates.items():
         if field in CORE_FIELDS and getattr(txn, field) != value:
             txn.is_manually_edited = True
