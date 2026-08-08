@@ -6,12 +6,11 @@ import { Plus, Trash2, Pencil, Merge, RefreshCw, Search } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAllRules, useCategories, useRuleMutations, useCategoryMutations, type CategoryRule, type Account } from "@/lib/api/hooks";
 import { groupByAccount } from "@/lib/group";
-import { RuleDialog, orderOf } from "@/components/settings/rule-dialog";
+import { RuleDialog } from "@/components/settings/rule-dialog";
 
 export function RulesTab({ accounts }: { accounts: Account[] }) {
   const { data: rules = [] } = useAllRules();
@@ -87,7 +86,6 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
                   <span className="flex-1 truncate font-mono text-xs text-muted-foreground">
                     {r.conditions.map((c) => `${c.field} ${c.operator} "${c.value}"`).join(` ${r.logic_operator} `)}
                   </span>
-                  <Badge variant="neutral">{orderOf(r.priority)}</Badge>
                   <Switch checked={r.is_active} onCheckedChange={(v) => update.mutate({ ruleId: r.id, body: { is_active: v } })} />
                   <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" onClick={() => openEdit(r)}><Pencil className="size-4" /></Button>
                   <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative" onClick={() => remove.mutate(r.id)}><Trash2 className="size-4" /></Button>

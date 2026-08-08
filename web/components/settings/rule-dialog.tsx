@@ -24,8 +24,8 @@ export const FIELDS = [
   { value: "account_id", label: "Compte (ID)" },
   { value: "date", label: "Date" },
 ];
-export const ORDER_MAP: Record<string, number> = { first: 5, standard: 100, last: 500 };
-export const orderOf = (p: number) => (p <= 10 ? "first" : p <= 100 ? "standard" : "last");
+// All rules share the same priority — kept as a constant for the API.
+const DEFAULT_PRIORITY = 100;
 
 export function operatorsFor(field: string) {
   if (field === "amount") return [{ value: ">", label: ">" }, { value: ">=", label: "≥" }, { value: "<", label: "<" }, { value: "<=", label: "≤" }, { value: "equals", label: "=" }];
@@ -58,7 +58,6 @@ export function RuleDialog({
   const [conditions, setConditions] = useState<Cond[]>([{ field: "description", operator: "contains", value: "" }]);
   const [logic, setLogic] = useState<"AND" | "OR">("AND");
   const [categoryId, setCategoryId] = useState<number>(0);
-  const [order, setOrder] = useState("standard");
   const [accountId, setAccountId] = useState<number | null>(null);
   const [preview, setPreview] = useState<Transaction[] | null>(null);
 
@@ -70,13 +69,11 @@ export function RuleDialog({
       setConditions(editing.conditions.map((c) => ({ ...c })));
       setLogic((editing.logic_operator as "AND" | "OR") ?? "AND");
       setCategoryId(editing.category_id);
-      setOrder(orderOf(editing.priority));
       setAccountId(editing.account_id ?? null);
     } else {
       setConditions([{ field: "description", operator: "contains", value: prefill?.description ?? "" }]);
       setLogic("AND");
       setCategoryId(prefill?.categoryId ?? categories[0]?.id ?? 0);
-      setOrder("standard");
       setAccountId(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -99,7 +96,7 @@ export function RuleDialog({
   };
 
   const submit = async () => {
-    const body = { conditions, category_id: categoryId, priority: ORDER_MAP[order], is_active: editing?.is_active ?? true, account_id: accountId, logic_operator: logic };
+    const body = { conditions, category_id: categoryId, priority: DEFAULT_PRIORITY, is_active: editing?.is_active ?? true, account_id: accountId, logic_operator: logic };
     try {
       if (editing) await update.mutateAsync({ ruleId: editing.id, body });
       else await create.mutateAsync({ categoryId, body });
@@ -115,16 +112,10 @@ export function RuleDialog({
       <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col">
         <DialogHeader className="shrink-0"><DialogTitle>{editing ? "Modifier la règle" : "Nouvelle règle"}</DialogTitle></DialogHeader>
         <div className="flex-1 space-y-4 overflow-y-auto px-1">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1"><Label>Catégorie</Label>
               <CategorySelect value={categoryId || null} onChange={(v) => v != null && setCategoryId(v)}
                 categories={categories} accountId={accountId} hideNone placeholder="Choisir…" />
-            </div>
-            <div className="space-y-1"><Label>Priorité</Label>
-              <Select value={order} onValueChange={setOrder}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="first">En premier</SelectItem><SelectItem value="standard">Standard</SelectItem><SelectItem value="last">En dernier</SelectItem></SelectContent>
-              </Select>
             </div>
             <div className="space-y-1"><Label>Compte</Label>
               <Select value={accountId == null ? "all" : String(accountId)} onValueChange={(v) => setAccountId(v === "all" ? null : Number(v))}>
