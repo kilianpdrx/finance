@@ -6,6 +6,15 @@ import type { Category } from "@/lib/api/hooks";
 
 const NONE = "__none__";
 
+/** Tint a category by its type so Revenus / Dépenses fixes / Dépenses variables
+ *  are visually distinct in every picker. */
+function typeAccent(c: Category): string {
+  if (c.is_income) return "text-emerald-600 dark:text-emerald-400";
+  if (c.expense_type === "fixed") return "text-indigo-600 dark:text-indigo-400";
+  if (c.expense_type === "variable") return "text-amber-600 dark:text-amber-400";
+  return "";
+}
+
 /** Category picker for editing a transaction's category (null = "Sans catégorie").
  *
  * When `accountId` is provided, only categories applicable to that account are
@@ -59,16 +68,16 @@ export function CategorySelect({
         {ordered.map(({ cat: c, child }) => {
           if (!child && parentIds.has(c.id)) {
             return (
-              <SelectLabel key={c.id} className="mt-1 flex items-center gap-2">
+              <SelectLabel key={c.id} className={`mt-1 flex items-center gap-2 ${typeAccent(c)}`}>
                 <span className="size-2 rounded-full" style={{ background: c.color }} />
                 {c.name}
-                <span className="text-[10px] font-normal">· {scopeLabel(c)}</span>
+                <span className="text-[10px] font-normal opacity-70">· {scopeLabel(c)}</span>
               </SelectLabel>
             );
           }
           return (
             <SelectItem key={c.id} value={String(c.id)} className={child ? "pl-9" : undefined}>
-              <span className="flex items-center gap-2">
+              <span className={`flex items-center gap-2 ${typeAccent(c)}`}>
                 <span className="size-2 rounded-full" style={{ background: c.color }} />
                 {c.name}
                 {!child && <span className="ml-1 text-[10px] text-muted-foreground">· {scopeLabel(c)}</span>}
