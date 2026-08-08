@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Inbox } from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
+import { Inbox, ChevronRight, CornerDownRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,9 +15,42 @@ import { CourantTabs, type CourantSelection } from "@/components/analytics/coura
 import {
   useAnalyticsContext, useByCategory, useSpendingTrends, useRecurring, useCategories,
   useByCategoryPerAccount, useCashFlowPerAccount,
-  type SpendingTrend, type RecurringTransaction,
+  type SpendingTrend, type RecurringTransaction, type CategoryBreakdown,
 } from "@/lib/api/hooks";
 import { formatCents, formatPercent } from "@/lib/format";
+
+interface RollupGroup {
+  id: number | null;
+  name: string;
+  total_cents: number;
+  count: number;
+  percentage: number;
+  own_cents: number;
+  children: CategoryBreakdown[];
+}
+
+/** Fold subcategory spending into the parent (single level). */
+function rollupCategories(data: CategoryBreakdown[]): RollupGroup[] {
+  const childrenOf = new Map<number, CategoryBreakdown[]>();
+  for (const d of data) if (d.parent_id != null) {
+    (childrenOf.get(d.parent_id) ?? childrenOf.set(d.parent_id, []).get(d.parent_id)!).push(d);
+  }
+  const topPresent = new Set(data.filter((d) => d.parent_id == null).map((d) => d.category_id));
+  const groups: RollupGroup[] = [];
+  for (const d of data) {
+    if (d.parent_id != null && topPresent.has(d.parent_id)) continue; // folded into its parent
+    const kids = d.category_id != null ? childrenOf.get(d.category_id) ?? [] : [];
+    const total = d.total_cents + kids.reduce((s, k) => s + k.total_cents, 0);
+    groups.push({
+      id: d.category_id, name: d.category_name, total_cents: total,
+      count: d.count + kids.reduce((s, k) => s + k.count, 0),
+      percentage: 0, own_cents: d.total_cents, children: kids,
+    });
+  }
+  groups.sort((a, b) => b.total_cents - a.total_cents);
+  const grand = groups.reduce((s, g) => s + g.total_cents, 0) || 1;
+  return groups.map((g) => ({ ...g, percentage: Math.round((g.total_cents / grand) * 1000) / 10 }));
+}
 
 export default function AnalysesPage() {
   const { query, currency, accounts } = useAnalyticsContext();
@@ -29,6 +62,13 @@ export default function AnalysesPage() {
   const q = { ...query, account_ids: scopeIds.length ? scopeIds.join(",") : undefined };
 
   const byCategory = useByCategory(q);
+  const rolled = useMemo(() => rollupCategories(byCategory.data ?? []), [byCategory.data]);
+  const rolledDonut: CategoryBreakdown[] = rolled.map((g) => ({
+    category_id: g.id, category_name: g.name, parent_id: null,
+    total_cents: g.total_cents, count: g.count, percentage: g.percentage,
+  }));
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const toggle = (id: number) => setExpanded((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const trends = useSpendingTrends(q);
   const recurring = useRecurring(q.account_ids);
   const { data: categories = [] } = useCategories();
@@ -67,19 +107,49 @@ export default function AnalysesPage() {
           ) : (
             <>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <Card><CardContent className="flex items-center justify-center py-8"><SpendingDonut data={byCategory.data} currency={currency} size={260} /></CardContent></Card>
+                <Card><CardContent className="flex items-center justify-center py-8"><SpendingDonut data={rolledDonut} currency={currency} size={260} /></CardContent></Card>
                 <Card className="overflow-hidden p-0">
                   <Table>
                     <TableHeader><TableRow className="hover:bg-transparent"><TableHead>Catégorie</TableHead><TableHead className="text-right">Nb</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">%</TableHead></TableRow></TableHeader>
                     <TableBody>
-                      {byCategory.data.map((c) => (
-                        <TableRow key={c.category_id ?? c.category_name}>
-                          <TableCell className="font-medium">{c.category_name}</TableCell>
-                          <TableCell className="nums text-right text-muted-foreground">{c.count}</TableCell>
-                          <TableCell className="nums blurable text-right font-semibold">{formatCents(c.total_cents, currency)}</TableCell>
-                          <TableCell className="nums text-right text-muted-foreground">{formatPercent(c.percentage)}</TableCell>
-                        </TableRow>
-                      ))}
+                      {rolled.map((g) => {
+                        const isOpen = expanded.has(g.id ?? -1);
+                        const hasChildren = g.children.length > 0;
+                        return (
+                          <Fragment key={g.id ?? g.name}>
+                            <TableRow className={hasChildren ? "cursor-pointer" : ""} onClick={() => hasChildren && toggle(g.id ?? -1)}>
+                              <TableCell className="font-medium">
+                                <span className="flex items-center gap-1.5">
+                                  {hasChildren
+                                    ? <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                                    : <span className="w-3.5 shrink-0" />}
+                                  {g.name}
+                                  {hasChildren && <span className="text-xs text-muted-foreground">({g.children.length})</span>}
+                                </span>
+                              </TableCell>
+                              <TableCell className="nums text-right text-muted-foreground">{g.count}</TableCell>
+                              <TableCell className="nums blurable text-right font-semibold">{formatCents(g.total_cents, currency)}</TableCell>
+                              <TableCell className="nums text-right text-muted-foreground">{formatPercent(g.percentage)}</TableCell>
+                            </TableRow>
+                            {isOpen && g.own_cents > 0 && (
+                              <TableRow className="hover:bg-transparent">
+                                <TableCell className="py-1.5 pl-9 text-sm text-muted-foreground"><span className="flex items-center gap-1.5"><CornerDownRight className="size-3 opacity-60" /> {g.name} (propre)</span></TableCell>
+                                <TableCell className="nums py-1.5 text-right text-xs text-muted-foreground">—</TableCell>
+                                <TableCell className="nums blurable py-1.5 text-right text-sm">{formatCents(g.own_cents, currency)}</TableCell>
+                                <TableCell />
+                              </TableRow>
+                            )}
+                            {isOpen && g.children.map((ch) => (
+                              <TableRow key={ch.category_id} className="hover:bg-transparent">
+                                <TableCell className="py-1.5 pl-9 text-sm"><span className="flex items-center gap-1.5"><CornerDownRight className="size-3 text-muted-foreground/60" /> {ch.category_name}</span></TableCell>
+                                <TableCell className="nums py-1.5 text-right text-xs text-muted-foreground">{ch.count}</TableCell>
+                                <TableCell className="nums blurable py-1.5 text-right text-sm">{formatCents(ch.total_cents, currency)}</TableCell>
+                                <TableCell />
+                              </TableRow>
+                            ))}
+                          </Fragment>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </Card>
