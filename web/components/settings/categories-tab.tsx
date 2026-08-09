@@ -174,7 +174,7 @@ export function CategoriesTab() {
                     <Badge variant={c.is_income ? "positive" : "neutral"}>{TYPE_LABEL[typeOf(c)]}</Badge>
                     {suggestBy.has(c.id) && (
                       <span className="inline-flex items-center gap-1.5 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
-                        inactive {suggestBy.get(c.id)!.months_inactive ?? "?"} mois
+                        {suggestBy.get(c.id)!.months_inactive != null ? `inactive ${suggestBy.get(c.id)!.months_inactive} mois` : "jamais utilisée"}
                         <button className="font-semibold underline underline-offset-2" onClick={() => onArchive(c)}>archiver</button>
                         <button className="opacity-70 hover:opacity-100" title="Garder (ne plus suggérer)" onClick={() => onDismissSuggestion(c)}>✕</button>
                       </span>
