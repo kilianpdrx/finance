@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { toast } from "sonner";
-import { Search, Plus, Download, Shuffle, Trash2, CheckCheck, ArrowLeftRight, X, Inbox, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
+import { Plus, Download, Shuffle, Trash2, CheckCheck, ArrowLeftRight, X, Inbox, ChevronLeft, ChevronRight, Pencil, Ban, Undo2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,6 +14,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CategorySelect } from "@/components/transactions/category-select";
+import { SearchBox } from "@/components/transactions/search-box";
 import { TransactionDialog } from "@/components/transactions/transaction-dialog";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -41,7 +41,6 @@ export default function TransactionsPage() {
   const txAccounts = useMemo(() => accounts.filter((a) => a.account_type === "courant"), [accounts]);
   const accountNames = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a.name])) as Record<number, string>, [accounts]);
 
-  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [account, setAccount] = useState(ALL);
   const [category, setCategory] = useState(ALL);
@@ -55,12 +54,6 @@ export default function TransactionsPage() {
   const [editing, setEditing] = useState<Transaction | null>(null);
   const openCreate = () => { setEditing(null); setDialogOpen(true); };
   const openEdit = (t: Transaction) => { setEditing(t); setDialogOpen(true); };
-
-  // Debounce search
-  useEffect(() => {
-    const t = setTimeout(() => { setSearch(searchInput); setPage(0); }, 300);
-    return () => clearTimeout(t);
-  }, [searchInput]);
 
   const isSentinel = (c: string) => c === ALL || c === UNCAT || c === CATEGORIZED;
   const filters: TransactionFilters = useMemo(() => ({
@@ -124,10 +117,7 @@ export default function TransactionsPage() {
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[12rem] flex-1">
-          <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-8" placeholder="Rechercher…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
-        </div>
+        <SearchBox onSearch={(v) => { setSearch(v); setPage(0); }} />
         <FilterSelect value={account} onChange={(v) => { setAccount(v); setPage(0); }} placeholder="Compte" width="w-40"
           options={[{ value: ALL, label: "Tous les comptes" }, ...txAccounts.map((a) => ({ value: String(a.id), label: a.name }))]} />
         <FilterSelect value={category} onChange={(v) => { setCategory(v); setPage(0); }} placeholder="Catégorie" width="w-48"
@@ -193,11 +183,17 @@ export default function TransactionsPage() {
             <span className="text-xs text-muted-foreground">Toutes les transactions correspondantes sont sélectionnées.</span>
           )}
           <div className="ml-2 w-48">
-            <CategorySelect value={null} placeholder="Catégoriser…" categories={categories} accountNames={accountNames}
+            <CategorySelect value={null} placeholder="Catégoriser…" categories={categories} accountNames={accountNames} hideNone
               onChange={(cid) => runBulk(() => mut.bulkCategory.mutateAsync({ ids, category_id: cid }), "Catégorie appliquée")} />
           </div>
+          <Button variant="outline" size="sm" onClick={() => runBulk(() => mut.bulkCategory.mutateAsync({ ids, category_id: null }), "Catégorie retirée")}>
+            <Ban className="size-4" /> Sans catégorie
+          </Button>
           <Button variant="outline" size="sm" onClick={() => runBulk(() => mut.bulkReviewed.mutateAsync({ ids, value: true }), "Marquées vérifiées")}>
             <CheckCheck className="size-4" /> Vérifié
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => runBulk(() => mut.bulkReviewed.mutateAsync({ ids, value: false }), "Marquées non vérifiées")}>
+            <Undo2 className="size-4" /> Non vérifié
           </Button>
           <Button variant="outline" size="sm" onClick={() => runBulk(() => mut.bulkTransfer.mutateAsync({ ids, value: true }), "Marquées virement")}>
             <ArrowLeftRight className="size-4" /> Virement
