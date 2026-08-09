@@ -38,7 +38,7 @@ export function PlanExpenseDialog({
   const relevantIds = accountId != null ? [accountId] : courantIds;
   const acctName = (id: number | null | undefined) => (id == null ? null : accounts.find((a) => a.id === id)?.name ?? null);
   const visibleCats = categories
-    .filter((c) => c.account_id == null || relevantIds.includes(c.account_id))
+    .filter((c) => !c.archived && (c.account_id == null || relevantIds.includes(c.account_id)))
     .sort((a, b) => Number(b.is_income) - Number(a.is_income) || a.name.localeCompare(b.name));
 
   const [categoryId, setCategoryId] = useState<number | 0>(0);

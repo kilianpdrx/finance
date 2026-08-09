@@ -66,7 +66,7 @@ export function CategoriesTab() {
   const editingHasChildren = editing ? categories.some((c) => c.parent_id === editing.id) : false;
   // Valid parents: top-level categories in the chosen account scope, excluding self.
   const parentOptions = categories.filter(
-    (c) => c.parent_id == null && c.id !== editing?.id && (c.account_id ?? null) === accountId,
+    (c) => c.parent_id == null && !c.archived && c.id !== editing?.id && (c.account_id ?? null) === accountId,
   );
 
   const submit = async () => {

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { toast } from "sonner";
-import { Plus, Download, Shuffle, Trash2, CheckCheck, ArrowLeftRight, X, Inbox, ChevronLeft, ChevronRight, Pencil, Ban, Undo2 } from "lucide-react";
+import { Plus, Download, Shuffle, Trash2, CheckCheck, ArrowLeftRight, X, Inbox, ChevronLeft, ChevronRight, Pencil, Ban, Undo2, Archive } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CategorySelect } from "@/components/transactions/category-select";
+import { CategorySelect, ArchivedBadge } from "@/components/transactions/category-select";
 import { SearchBox } from "@/components/transactions/search-box";
 import { AccountTile } from "@/components/accounts/account-select";
 import { ACCOUNT_TYPE_LABELS } from "@/components/accounts/account-dialog";
@@ -337,9 +337,12 @@ function AccountFilter({ value, onChange, accounts, width }: {
 function CategoryFilter({ value, onChange, categories, accountNames, accountFilter, width }: {
   value: string; onChange: (v: string) => void; categories: Category[]; accountNames: Record<number, string>; accountFilter: number | null; width: string;
 }) {
+  const [reveal, setReveal] = useState(false);
   const visible = accountFilter == null ? categories : categories.filter((c) => c.account_id == null || c.account_id === accountFilter);
   const ordered = orderCategoryTree(visible);
   const parentIds = new Set(visible.filter((c) => c.parent_id != null).map((c) => c.parent_id));
+  const anyArchived = visible.some((c) => c.archived);
+  const shown = ordered.filter(({ cat }) => reveal || !cat.archived || String(cat.id) === value);
   const tint = (c: Category) => c.is_income ? "text-emerald-600 dark:text-emerald-400" : c.expense_type === "fixed" ? "text-indigo-600 dark:text-indigo-400" : c.expense_type === "variable" ? "text-amber-600 dark:text-amber-400" : "";
   const scope = (c: Category) => c.account_id == null ? "Global" : accountNames[c.account_id] ?? "Compte";
   const selCat = /^\d+$/.test(value) ? categories.find((c) => c.id === Number(value)) : undefined;
@@ -350,7 +353,8 @@ function CategoryFilter({ value, onChange, categories, accountNames, accountFilt
         {selCat ? (
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="size-2 shrink-0 rounded-full" style={{ background: selCat.color }} />
-            <span className={`truncate ${tint(selCat)}`}>{selCat.name}</span>
+            <span className={`truncate ${tint(selCat)} ${selCat.archived ? "opacity-60" : ""}`}>{selCat.name}</span>
+            {selCat.archived && <ArchivedBadge className="shrink-0" />}
           </span>
         ) : (
           <span className="truncate">{sentinelLabel}</span>
@@ -360,19 +364,26 @@ function CategoryFilter({ value, onChange, categories, accountNames, accountFilt
         <SelectItem value={ALL}>Toutes catégories</SelectItem>
         <SelectItem value={CATEGORIZED}>Catégorisées</SelectItem>
         <SelectItem value={UNCAT}>Sans catégorie</SelectItem>
-        {ordered.map(({ cat: c, child }) => {
+        {shown.map(({ cat: c, child }) => {
           const isParent = parentIds.has(c.id);
           return (
-            <SelectItem key={c.id} value={String(c.id)} className={child ? "pl-12" : undefined}>
+            <SelectItem key={c.id} value={String(c.id)} className={`${child ? "pl-12" : ""} ${c.archived ? "opacity-60" : ""}`}>
               <span className={`flex items-center gap-2 ${tint(c)}`}>
                 <span className="size-2 shrink-0 rounded-full" style={{ background: c.color }} />
                 {c.name}
+                {c.archived && <ArchivedBadge />}
                 {isParent && <span className="rounded bg-muted px-1 text-[9px] font-normal text-muted-foreground">groupe</span>}
                 {!child && <span className="text-[10px] font-normal text-muted-foreground">· {scope(c)}</span>}
               </span>
             </SelectItem>
           );
         })}
+        {anyArchived && (
+          <button type="button" onPointerDown={(e) => e.preventDefault()} onClick={() => setReveal((v) => !v)}
+            className="mt-1 flex w-full items-center gap-1.5 border-t border-border px-2 py-1.5 text-left text-[11px] text-muted-foreground hover:text-foreground">
+            <Archive className="size-3" /> {reveal ? "Masquer les archivées" : "Afficher les archivées"}
+          </button>
+        )}
       </SelectContent>
     </Select>
   );

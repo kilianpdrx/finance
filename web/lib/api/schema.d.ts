@@ -374,6 +374,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/categories/archive-suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Archive Suggestions
+         * @description Categories worth retiring: no activity for `months` (default 12), not already
+         *     archived nor dismissed, not referenced by an active rule or a current/future
+         *     planned expense, and — for a namespace — only when its whole subtree is idle.
+         */
+        get: operations["archive_suggestions_api_categories_archive_suggestions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/categories/{category_id}": {
         parameters: {
             query?: never;
@@ -425,7 +447,10 @@ export interface paths {
         put?: never;
         /**
          * Rescan Categories
-         * @description Re-apply all category rules to all non-manually-reviewed transactions.
+         * @description Re-apply active rules. `scope="uncategorized"` (default) only fills in
+         *     transactions that have no category yet — it never rewrites already-categorised
+         *     history (the ledger stays intact). `scope="all"` re-applies to every
+         *     non-manually-reviewed transaction and may change past categorisations.
          */
         post: operations["rescan_categories_api_categories_rescan_post"];
         delete?: never;
@@ -2026,6 +2051,13 @@ export interface components {
             account_id?: number | null;
             /** Id */
             id: number;
+            /**
+             * Archived
+             * @default false
+             */
+            archived: boolean;
+            /** Archived At */
+            archived_at?: string | null;
         };
         /** CategoryRuleCreate */
         CategoryRuleCreate: {
@@ -2116,6 +2148,8 @@ export interface components {
             is_investment?: boolean | null;
             /** Account Id */
             account_id?: number | null;
+            /** Archived */
+            archived?: boolean | null;
         };
         /** ConfirmResponse */
         ConfirmResponse: {
@@ -3731,6 +3765,39 @@ export interface operations {
             };
         };
     };
+    archive_suggestions_api_categories_archive_suggestions_get: {
+        parameters: {
+            query?: {
+                months?: number;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_category_api_categories__category_id__get: {
         parameters: {
             query?: never;
@@ -3867,7 +3934,9 @@ export interface operations {
     };
     rescan_categories_api_categories_rescan_post: {
         parameters: {
-            query?: never;
+            query?: {
+                scope?: string;
+            };
             header?: {
                 "X-Profile-Id"?: number | null;
             };
