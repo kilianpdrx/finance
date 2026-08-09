@@ -239,6 +239,7 @@ class CategoryBase(BaseModel):
     expense_type: Optional[str] = None
     is_investment: bool = False
     account_id: Optional[int] = None
+    archived: bool = False
 
 class CategoryCreate(CategoryBase):
     pass
@@ -252,10 +253,12 @@ class CategoryUpdate(BaseModel):
     expense_type: Optional[str] = None
     is_investment: Optional[bool] = None
     account_id: Optional[int] = None
+    archived: Optional[bool] = None
 
 class CategoryOut(CategoryBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    archived_at: Optional[datetime] = None
 
 
 # ── CategoryRule ──────────────────────────────────────────────────────────────

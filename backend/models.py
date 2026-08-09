@@ -177,6 +177,11 @@ class Category(Base):
     expense_type = Column(String, nullable=True)  # "fixed" | "variable" | None (for income categories)
     is_investment = Column(Boolean, default=False)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)  # null = all accounts
+    # Soft lifecycle: an archived (retired) category is hidden from pickers but kept
+    # in history. `archive_dismissed` snoozes the "archive this inactive category?" hint.
+    archived = Column(Boolean, default=False)
+    archived_at = Column(DateTime, nullable=True)
+    archive_dismissed = Column(Boolean, default=False)
 
     children = relationship("Category", back_populates="parent")
     account = relationship("Account", foreign_keys=[account_id])
