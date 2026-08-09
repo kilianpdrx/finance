@@ -406,7 +406,7 @@ export default function BudgetPage() {
                   </Fragment>
                 );
               })}
-              <TotalRow row={data.grand_total_row} label="SOLDE NET" cls="bg-brand/15 text-foreground" />
+              <TotalRow row={data.grand_total_row} label="SOLDE NET" cls="bg-muted text-brand" />
             </tbody>
           </table>
         </div>
