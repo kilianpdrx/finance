@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAllRules, useCategories, useRuleMutations, useCategoryMutations, type CategoryRule, type Account } from "@/lib/api/hooks";
-import { groupByAccount } from "@/lib/group";
 import { RuleDialog } from "@/components/settings/rule-dialog";
 
 export function RulesTab({ accounts }: { accounts: Account[] }) {
@@ -44,7 +43,28 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
         r.conditions.some((c) => String(c.value).toLowerCase().includes(q) || c.field.toLowerCase().includes(q)),
     );
   }, [rules, categories, search]);
-  const groups = useMemo(() => groupByAccount(filteredRules, accounts), [filteredRules, accounts]);
+  // Group rules by their category's parent namespace (a top-level category is its
+  // own group). Groups sorted alphabetically; rules within a group by category name.
+  const groups = useMemo(() => {
+    const catById = new Map(categories.map((c) => [c.id, c]));
+    const nameOf = (id: number) => catById.get(id)?.name ?? "";
+    const map = new Map<number, { label: string; items: CategoryRule[] }>();
+    for (const r of filteredRules) {
+      const cat = catById.get(r.category_id);
+      const parent = cat?.parent_id != null ? catById.get(cat.parent_id) : null;
+      const keyId = parent?.id ?? cat?.id ?? -1;
+      const label = parent?.name ?? cat?.name ?? "Autres";
+      if (!map.has(keyId)) map.set(keyId, { label, items: [] });
+      map.get(keyId)!.items.push(r);
+    }
+    return [...map.entries()]
+      .map(([key, g]) => ({
+        key: String(key),
+        label: g.label,
+        items: g.items.sort((a, b) => nameOf(a.category_id).localeCompare(nameOf(b.category_id)) || a.id - b.id),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [filteredRules, categories]);
 
   const openCreate = () => { setEditing(null); setOpen(true); };
   const openEdit = (r: CategoryRule) => { setEditing(r); setOpen(true); };
