@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { Pencil, CalendarPlus, Check, X, HelpCircle } from "lucide-react";
+import { Pencil, CalendarPlus, Check, X, HelpCircle, ChevronRight } from "lucide-react";
 import { api, unwrap } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -54,6 +54,10 @@ export default function BudgetPage() {
   const inited = useRef(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  // Collapsed parent namespaces (by parent category id) — hides their children.
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  const toggleCollapsed = (pid: number) =>
+    setCollapsed((s) => { const n = new Set(s); n.has(pid) ? n.delete(pid) : n.add(pid); return n; });
 
   // After prepending months, keep the viewport visually stable (no jump). Hold
   // the `extending` lock briefly after the layout settles so a fast scroll can't
@@ -256,11 +260,21 @@ export default function BudgetPage() {
   }
 
   // A grouping category (parent): read-only subtotal header = Σ of its children.
+  // Clicking the chevron collapses/expands its sub-categories.
   function GroupRow({ row }: { row: MergedRow }) {
+    const pid = row.category_id;
+    const isCollapsed = pid != null && collapsed.has(pid);
     return (
       <tr className="border-b border-border/60 font-semibold hover:bg-muted/40">
         <td className="sticky left-0 z-10 w-52 border-r border-border bg-surface px-4 py-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => pid != null && toggleCollapsed(pid)}
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+              aria-label={isCollapsed ? "Développer" : "Réduire"}
+            >
+              <ChevronRight className={`size-3.5 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
+            </button>
             {row.category_color && <span className="size-2 shrink-0 rounded-full" style={{ background: row.category_color }} />}
             <span className="truncate text-sm" title={row.category_name}>{row.category_name}</span>
           </div>
@@ -372,16 +386,18 @@ export default function BudgetPage() {
                       <td className={`sticky left-0 z-10 w-52 px-4 py-2 text-sm font-bold tracking-wide ${style.head}`}>{section.section_label}</td>
                       <td colSpan={data.months.length + yearSpans.length} className={style.head} />
                     </tr>
-                    {section.rows.map((row, rIdx) =>
-                      row.category_id != null && parentIds.has(row.category_id) ? (
+                    {section.rows.map((row, rIdx) => {
+                      // Hide children of a collapsed parent namespace.
+                      if (row.parent_id != null && collapsed.has(row.parent_id)) return null;
+                      return row.category_id != null && parentIds.has(row.category_id) ? (
                         <GroupRow
                           key={rIdx}
                           row={parentSubtotalRow(row, section.rows.filter((r) => r.parent_id === row.category_id), currentMonth)}
                         />
                       ) : (
                         <CatRow key={rIdx} row={row} sIdx={sIdx} rIdx={rIdx} />
-                      ),
-                    )}
+                      );
+                    })}
                     <TotalRow row={section.section_totals} label={`TOTAL ${section.section_label}`} cls={style.total} />
                     {hasInvest && (
                       <TotalRow
