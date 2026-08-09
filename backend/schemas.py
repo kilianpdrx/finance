@@ -253,6 +253,7 @@ class CategoryUpdate(BaseModel):
     is_investment: Optional[bool] = None
     account_id: Optional[int] = None
     archived: Optional[bool] = None
+    archive_dismissed: Optional[bool] = None
 
 class CategoryOut(CategoryBase):
     model_config = ConfigDict(from_attributes=True)

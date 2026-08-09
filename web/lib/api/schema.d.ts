@@ -2150,6 +2150,8 @@ export interface components {
             account_id?: number | null;
             /** Archived */
             archived?: boolean | null;
+            /** Archive Dismissed */
+            archive_dismissed?: boolean | null;
         };
         /** ConfirmResponse */
         ConfirmResponse: {

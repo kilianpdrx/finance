@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, RefreshCw, Sparkles, CornerDownRight, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, RefreshCw, Sparkles, CornerDownRight, ChevronRight, Archive, ArchiveRestore, Replace } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,9 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useAccounts, useCategories, useCategoryMutations, type Category } from "@/lib/api/hooks";
+import { useAccounts, useCategories, useCategoryMutations, useArchiveSuggestions, type Category } from "@/lib/api/hooks";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { AccountSelect, GLOBAL_ACCOUNT } from "@/components/accounts/account-select";
+import { ArchivedBadge } from "@/components/transactions/category-select";
 import { groupByAccount, orderCategoryTree } from "@/lib/group";
 
 type TypeKey = "income" | "fixed" | "variable";
@@ -28,12 +29,17 @@ function typeOf(c: Category): TypeKey {
 export function CategoriesTab() {
   const { data: categories = [] } = useCategories();
   const { data: accounts = [] } = useAccounts();
+  const { data: suggestions = [] } = useArchiveSuggestions();
   const { create, update, remove, rescan, seedDefaults } = useCategoryMutations();
   const confirm = useConfirm();
-  const groups = useMemo(() => groupByAccount(categories, accounts), [categories, accounts]);
+  const active = useMemo(() => categories.filter((c) => !c.archived), [categories]);
+  const archived = useMemo(() => categories.filter((c) => c.archived), [categories]);
+  const groups = useMemo(() => groupByAccount(active, accounts), [active, accounts]);
+  const suggestBy = useMemo(() => new Map(suggestions.map((s) => [s.category_id, s])), [suggestions]);
+  const [showArchived, setShowArchived] = useState(false);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
-  const [seed, setSeed] = useState<{ parentId: number | null; accountId: number | null } | null>(null);
+  const [seed, setSeed] = useState<{ parentId: number | null; accountId: number | null; type?: TypeKey; color?: string } | null>(null);
   const [name, setName] = useState("");
   const [color, setColor] = useState("#10b981");
   const [type, setType] = useState<TypeKey>("variable");
@@ -50,8 +56,8 @@ export function CategoriesTab() {
   useEffect(() => {
     if (open) {
       setName(editing?.name ?? "");
-      setColor(editing?.color ?? "#10b981");
-      setType(editing ? typeOf(editing) : "variable");
+      setColor(editing?.color ?? seed?.color ?? "#10b981");
+      setType(editing ? typeOf(editing) : seed?.type ?? "variable");
       setIsInvestment(editing?.is_investment ?? false);
       setParentId(editing?.parent_id ?? seed?.parentId ?? null);
       setAccountId(editing?.account_id ?? seed?.accountId ?? null);
@@ -61,6 +67,25 @@ export function CategoriesTab() {
   const openNew = () => { setSeed(null); setEditing(null); setOpen(true); };
   const openEdit = (c: Category) => { setSeed(null); setEditing(c); setOpen(true); };
   const openAddSub = (parent: Category) => { setSeed({ parentId: parent.id, accountId: parent.account_id ?? null }); setEditing(null); setOpen(true); };
+
+  const onArchive = (c: Category) =>
+    update.mutate({ id: c.id, body: { archived: true } }, { onSuccess: () => toast.success(`« ${c.name} » archivée`) });
+  const onUnarchive = (c: Category) =>
+    update.mutate({ id: c.id, body: { archived: false } }, {
+      onSuccess: () => toast.success(`« ${c.name} » désarchivée`),
+      onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur"),
+    });
+  const onDismissSuggestion = (c: Category) => update.mutate({ id: c.id, body: { archive_dismissed: true } });
+  const onArchiveReplace = (c: Category) => {
+    update.mutate({ id: c.id, body: { archived: true } }, {
+      onSuccess: () => {
+        toast.success(`« ${c.name} » archivée — créez sa remplaçante`);
+        setSeed({ parentId: c.parent_id ?? null, accountId: c.account_id ?? null, type: typeOf(c), color: c.color });
+        setEditing(null);
+        setOpen(true);
+      },
+    });
+  };
 
   // A category that has children can't itself become a subcategory (single level).
   const editingHasChildren = editing ? categories.some((c) => c.parent_id === editing.id) : false;
@@ -102,7 +127,7 @@ export function CategoriesTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">{categories.length} catégories</p>
+        <p className="text-sm text-muted-foreground">{active.length} catégories{archived.length > 0 ? ` · ${archived.length} archivée(s)` : ""}</p>
         <div className="flex flex-wrap gap-2">
           {categories.length === 0 && (
             <Button variant="outline" size="sm" disabled={seedDefaults.isPending}
@@ -147,9 +172,18 @@ export function CategoriesTab() {
                     <span className="flex-1 truncate font-medium">{c.name}</span>
                     {c.is_investment && <Badge variant="brand">Invest.</Badge>}
                     <Badge variant={c.is_income ? "positive" : "neutral"}>{TYPE_LABEL[typeOf(c)]}</Badge>
+                    {suggestBy.has(c.id) && (
+                      <span className="inline-flex items-center gap-1.5 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                        inactive {suggestBy.get(c.id)!.months_inactive ?? "?"} mois
+                        <button className="font-semibold underline underline-offset-2" onClick={() => onArchive(c)}>archiver</button>
+                        <button className="opacity-70 hover:opacity-100" title="Garder (ne plus suggérer)" onClick={() => onDismissSuggestion(c)}>✕</button>
+                      </span>
+                    )}
                     {!child && (
                       <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-brand" title="Ajouter une sous-catégorie" onClick={() => openAddSub(c)}><Plus className="size-4" /></Button>
                     )}
+                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-foreground" title="Archiver" onClick={() => onArchive(c)}><Archive className="size-4" /></Button>
+                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-foreground" title="Archiver et remplacer" onClick={() => onArchiveReplace(c)}><Replace className="size-4" /></Button>
                     <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" onClick={() => openEdit(c)}><Pencil className="size-4" /></Button>
                     <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative" onClick={() => onDelete(c)}><Trash2 className="size-4" /></Button>
                   </div>
@@ -159,6 +193,29 @@ export function CategoriesTab() {
           </div>
         ))}
       </div>
+
+      {archived.length > 0 && (
+        <div className="space-y-2">
+          <button onClick={() => setShowArchived((v) => !v)} className="flex items-center gap-1.5 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
+            <ChevronRight className={`size-3.5 transition-transform ${showArchived ? "rotate-90" : ""}`} />
+            <Archive className="size-3.5" /> Archivées · {archived.length}
+          </button>
+          {showArchived && (
+            <Card className="divide-y divide-border p-0">
+              {archived.slice().sort((a, b) => a.name.localeCompare(b.name)).map((c) => (
+                <div key={c.id} className="flex items-center gap-3 px-4 py-2.5 opacity-70">
+                  <span className="size-3 shrink-0 rounded-full" style={{ background: c.color }} />
+                  <span className="flex-1 truncate font-medium">{c.name}</span>
+                  <ArchivedBadge />
+                  <Badge variant={c.is_income ? "positive" : "neutral"}>{TYPE_LABEL[typeOf(c)]}</Badge>
+                  <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-brand" title="Désarchiver" onClick={() => onUnarchive(c)}><ArchiveRestore className="size-4" /></Button>
+                  <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative" onClick={() => onDelete(c)}><Trash2 className="size-4" /></Button>
+                </div>
+              ))}
+            </Card>
+          )}
+        </div>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

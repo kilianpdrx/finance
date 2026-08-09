@@ -158,6 +158,14 @@ export function useAccounts() {
 export function useCategories() {
   return useQuery({ queryKey: ["categories"], queryFn: () => unwrap(api.GET("/api/categories")), staleTime: 60_000 });
 }
+export interface ArchiveSuggestion { category_id: number; name: string; last_activity: string | null; months_inactive: number | null; }
+export function useArchiveSuggestions() {
+  return useQuery({
+    queryKey: ["categories", "archive-suggestions"],
+    queryFn: () => unwrap(api.GET("/api/categories/archive-suggestions")) as Promise<ArchiveSuggestion[]>,
+    staleTime: 60_000,
+  });
+}
 export function useSummary(query: AnalyticsQuery) {
   return useQuery({ queryKey: ["analytics", "summary", query], queryFn: () => unwrap(api.GET("/api/analytics/summary", { params: { query } })) });
 }
