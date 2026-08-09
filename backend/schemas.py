@@ -239,7 +239,6 @@ class CategoryBase(BaseModel):
     expense_type: Optional[str] = None
     is_investment: bool = False
     account_id: Optional[int] = None
-    archived: bool = False
 
 class CategoryCreate(CategoryBase):
     pass
@@ -258,6 +257,7 @@ class CategoryUpdate(BaseModel):
 class CategoryOut(CategoryBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    archived: bool = False
     archived_at: Optional[datetime] = None
 
 
