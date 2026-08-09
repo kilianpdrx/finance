@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 import database
 from models import Base
 
-HEAD = "009_txn_manually_edited"
+HEAD = "010_category_archived"
 
 
 @pytest.fixture

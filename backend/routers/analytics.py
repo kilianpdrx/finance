@@ -888,6 +888,12 @@ async def budget_full(
     for cat in all_cats:
         if account_id is not None and cat.account_id is not None and cat.account_id != account_id:
             continue
+        # Archived categories are hidden from the budget unless they still carry data
+        # in the shown range (keeps historical totals correct, drops dead rows).
+        if getattr(cat, "archived", False) and not (
+            actuals.get(cat.id) or budgets.get(cat.id) or planned.get(cat.id)
+        ):
+            continue
         if cat.is_income:
             income_cats.append(cat)
         elif getattr(cat, "expense_type", None) == "fixed":
