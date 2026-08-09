@@ -20,7 +20,7 @@ import { CourantTabs, type CourantSelection } from "@/components/analytics/coura
 import {
   useAnalyticsContext, useByCategory, useSpendingTrends, useRecurring, useRecurringUncovered, useCategories,
   useByCategoryPerAccount, useCashFlowPerAccount,
-  type SpendingTrend, type RecurringTransaction, type CategoryBreakdown, type Transaction,
+  type SpendingTrend, type RecurringTransaction, type CategoryBreakdown, type Transaction, type Category,
 } from "@/lib/api/hooks";
 import { api, unwrap } from "@/lib/api/client";
 import { formatCents, formatPercent } from "@/lib/format";
@@ -35,27 +35,65 @@ interface RollupGroup {
   children: CategoryBreakdown[];
 }
 
-/** Fold subcategory spending into the parent (single level). */
-function rollupCategories(data: CategoryBreakdown[]): RollupGroup[] {
-  const childrenOf = new Map<number, CategoryBreakdown[]>();
-  for (const d of data) if (d.parent_id != null) {
-    (childrenOf.get(d.parent_id) ?? childrenOf.set(d.parent_id, []).get(d.parent_id)!).push(d);
-  }
-  const topPresent = new Set(data.filter((d) => d.parent_id == null).map((d) => d.category_id));
-  const groups: RollupGroup[] = [];
+/** Fold subcategory spending into its parent namespace (single level). Uses the
+ *  categories list to resolve the parent even when the parent itself has no direct
+ *  spending (grouping-only parents hold ~0, so they don't appear in the breakdown). */
+function rollupCategories(data: CategoryBreakdown[], cats: Category[]): RollupGroup[] {
+  const byCat = new Map(cats.map((c) => [c.id, c]));
+  const keyOf = (d: CategoryBreakdown): number | null =>
+    d.category_id == null ? null : byCat.get(d.category_id)?.parent_id ?? d.category_id;
+
+  const groups = new Map<number | string, RollupGroup>();
   for (const d of data) {
-    if (d.parent_id != null && topPresent.has(d.parent_id)) continue; // folded into its parent
-    const kids = d.category_id != null ? childrenOf.get(d.category_id) ?? [] : [];
-    const total = d.total_cents + kids.reduce((s, k) => s + k.total_cents, 0);
-    groups.push({
-      id: d.category_id, name: d.category_name, total_cents: total,
-      count: d.count + kids.reduce((s, k) => s + k.count, 0),
-      percentage: 0, own_cents: d.total_cents, children: kids,
-    });
+    const k = keyOf(d);
+    const mapKey = k ?? "none";
+    let g = groups.get(mapKey);
+    if (!g) {
+      const parentCat = k != null ? byCat.get(k) : null;
+      g = { id: k, name: parentCat?.name ?? d.category_name, total_cents: 0, count: 0, percentage: 0, own_cents: 0, children: [] };
+      groups.set(mapKey, g);
+    }
+    g.total_cents += d.total_cents;
+    g.count += d.count;
+    if (d.category_id === k) g.own_cents += d.total_cents; // the namespace's / leaf's own row
+    else g.children.push(d);
   }
-  groups.sort((a, b) => b.total_cents - a.total_cents);
-  const grand = groups.reduce((s, g) => s + g.total_cents, 0) || 1;
-  return groups.map((g) => ({ ...g, percentage: Math.round((g.total_cents / grand) * 1000) / 10 }));
+  const arr = [...groups.values()].sort((a, b) => b.total_cents - a.total_cents);
+  const grand = arr.reduce((s, g) => s + g.total_cents, 0) || 1;
+  return arr.map((g) => ({ ...g, percentage: Math.round((g.total_cents / grand) * 1000) / 10 }));
+}
+
+/** Fold per-category monthly trend series into the parent namespace (single level). */
+function rollupTrends(trends: SpendingTrend[], cats: Category[]): SpendingTrend[] {
+  const byCat = new Map(cats.map((c) => [c.id, c]));
+  const groups = new Map<number | string, SpendingTrend>();
+  const order: (number | string)[] = [];
+  for (const t of trends) {
+    const cat = t.category_id != null ? byCat.get(t.category_id) : null;
+    const parent = cat?.parent_id != null ? byCat.get(cat.parent_id) : null;
+    const key = parent ? parent.id : t.category_id ?? "none";
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        category_id: parent ? parent.id : t.category_id,
+        category_name: parent ? parent.name : t.category_name,
+        category_color: parent ? parent.color : t.category_color,
+        category_account_id: parent ? parent.account_id ?? null : t.category_account_id,
+        series: t.series.map((s) => ({ ...s })),
+      };
+      groups.set(key, g);
+      order.push(key);
+    } else {
+      const idx = new Map(g.series.map((s, i) => [s.month, i] as const));
+      for (const s of t.series) {
+        const i = idx.get(s.month);
+        if (i != null) g.series[i] = { month: s.month, amount_cents: g.series[i].amount_cents + s.amount_cents };
+        else { idx.set(s.month, g.series.length); g.series.push({ ...s }); }
+      }
+    }
+  }
+  for (const g of groups.values()) g.series.sort((a, b) => a.month.localeCompare(b.month));
+  return order.map((k) => groups.get(k)!);
 }
 
 export default function AnalysesPage() {
@@ -82,13 +120,18 @@ export default function AnalysesPage() {
 
   const byCategory = useByCategory(q);
   const rolled = useMemo(() => {
-    const groups = rollupCategories(byCategory.data ?? []);
+    const groups = rollupCategories(byCategory.data ?? [], categories);
     return [...groups].sort((a, b) => sectionRank(a.id) - sectionRank(b.id) || b.total_cents - a.total_cents);
-  }, [byCategory.data, sectionRank]);
+  }, [byCategory.data, categories, sectionRank]);
   const rolledDonut: CategoryBreakdown[] = rolled.map((g) => ({
     category_id: g.id, category_name: g.name, parent_id: null,
     total_cents: g.total_cents, count: g.count, percentage: g.percentage,
   }));
+  const toBreakdown = (data: CategoryBreakdown[]): CategoryBreakdown[] =>
+    rollupCategories(data, categories).map((g) => ({
+      category_id: g.id, category_name: g.name, parent_id: null,
+      total_cents: g.total_cents, count: g.count, percentage: g.percentage,
+    }));
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const toggle = (id: number) => setExpanded((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
@@ -117,6 +160,7 @@ export default function AnalysesPage() {
   });
 
   const trends = useSpendingTrends(q);
+  const rolledTrends = useMemo(() => rollupTrends(trends.data ?? [], categories), [trends.data, categories]);
   const recurring = useRecurring(q.account_ids);
   const uncovered = useRecurringUncovered(q.account_ids);
   const [rulePrefill, setRulePrefill] = useState<{ description: string; categoryId: number | null } | null>(null);
@@ -289,7 +333,7 @@ export default function AnalysesPage() {
                         <CardHeader><CardTitle className="text-sm">{accName(accountId)}</CardTitle></CardHeader>
                         <CardContent className="flex items-center justify-center pb-6">
                           {isLoading ? <Skeleton className="size-40 rounded-full" /> : data.length ? (
-                            <SpendingDonut data={data} currency={currency} size={150} />
+                            <SpendingDonut data={toBreakdown(data)} currency={currency} size={150} />
                           ) : <p className="py-8 text-sm text-muted-foreground">Aucune dépense</p>}
                         </CardContent>
                       </Card>
@@ -338,7 +382,7 @@ export default function AnalysesPage() {
           {trends.isLoading ? <Skeleton className="h-80 w-full rounded-2xl" /> : !trends.data?.length ? (
             <Card><EmptyState icon={Inbox} title="Pas de données" /></Card>
           ) : (
-            <CategoryTrendGrid data={trends.data} currency={currency} accounts={accounts} />
+            <CategoryTrendGrid data={rolledTrends} currency={currency} accounts={accounts} />
           )}
         </TabsContent>
 
@@ -347,7 +391,7 @@ export default function AnalysesPage() {
           {trends.isLoading ? <Skeleton className="h-80 w-full rounded-2xl" /> : !trends.data?.length ? (
             <Card><EmptyState icon={Inbox} title="Pas de données" /></Card>
           ) : (
-            <MonthlyDistribution data={trends.data} currency={currency} />
+            <MonthlyDistribution data={rolledTrends} currency={currency} />
           )}
         </TabsContent>
 
