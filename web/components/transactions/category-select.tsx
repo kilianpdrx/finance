@@ -1,6 +1,6 @@
 "use client";
 
-import { Select, SelectContent, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { orderCategoryTree } from "@/lib/group";
 import type { Category } from "@/lib/api/hooks";
 
@@ -68,11 +68,13 @@ export function CategorySelect({
         {ordered.map(({ cat: c, child }) => {
           if (!child && parentIds.has(c.id)) {
             return (
-              <SelectLabel key={c.id} className={`mt-1 flex items-center gap-2 ${typeAccent(c)}`}>
-                <span className="size-2 rounded-full" style={{ background: c.color }} />
-                {c.name}
-                <span className="text-[10px] font-normal opacity-70">· {scopeLabel(c)}</span>
-              </SelectLabel>
+              <SelectGroup key={c.id}>
+                <SelectLabel className={`mt-1 flex items-center gap-2 ${typeAccent(c)}`}>
+                  <span className="size-2 rounded-full" style={{ background: c.color }} />
+                  {c.name}
+                  <span className="text-[10px] font-normal opacity-70">· {scopeLabel(c)}</span>
+                </SelectLabel>
+              </SelectGroup>
             );
           }
           return (

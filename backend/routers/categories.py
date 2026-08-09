@@ -66,6 +66,13 @@ async def _ensure_parent_group(db: AsyncSession, pid: int, parent: Category) -> 
         .where(Transaction.category_id == parent.id, Transaction.profile_id == pid)
         .values(category_id=autre.id)
     )
+    # Re-point rules that classified into the (now grouping-only) parent so they
+    # keep working, classifying into the "Autre" leaf instead of a grouping node.
+    await db.execute(
+        update(CategoryRule)
+        .where(CategoryRule.category_id == parent.id, CategoryRule.profile_id == pid)
+        .values(category_id=autre.id)
+    )
     return autre
 
 

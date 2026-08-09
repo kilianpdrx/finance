@@ -6,7 +6,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Category, Transaction
+from models import Category, CategoryRule, Transaction
 
 
 async def test_making_parent_creates_autre_and_moves_txns(
@@ -37,6 +37,31 @@ async def test_making_parent_creates_autre_and_moves_txns(
     # The directly-held transaction was moved onto the "Autre" leaf.
     await db_session.refresh(txn)
     assert txn.category_id == autre.id
+
+
+async def test_rule_repointed_to_autre_when_parent_created(
+    client: AsyncClient, seed_data: dict, db_session: AsyncSession
+):
+    """A rule that classified into a category must follow it to the "Autre" leaf
+    when that category becomes grouping-only (so it keeps categorising)."""
+    pid = seed_data["profile"].id
+    h = {"X-Profile-Id": str(pid)}
+    parent = seed_data["cat_courses"]  # Alimentation
+
+    rule = CategoryRule(
+        profile_id=pid, category_id=parent.id, priority=100, is_active=True, logic_operator="AND",
+        conditions=[{"field": "description", "operator": "contains", "value": "CARREFOUR"}],
+    )
+    db_session.add(rule)
+    await db_session.commit()
+
+    await client.post("/api/categories", headers=h, json={"name": "Restaurants", "parent_id": parent.id})
+
+    autre = (await db_session.execute(
+        select(Category).where(Category.name == "Autre Alimentation", Category.profile_id == pid)
+    )).scalar_one()
+    await db_session.refresh(rule)
+    assert rule.category_id == autre.id
 
 
 async def test_parent_rejected_as_transaction_category(
