@@ -355,7 +355,7 @@ export function useCategoryMutations() {
     create: useMutation({ mutationFn: (body: CategoryCreate) => unwrap(api.POST("/api/categories", { body })), onSuccess }),
     update: useMutation({ mutationFn: ({ id, body }: { id: number; body: CategoryUpdate }) => unwrap(api.PUT("/api/categories/{category_id}", { params: { path: { category_id: id } }, body })), onSuccess }),
     remove: useMutation({ mutationFn: ({ id, replaceWithId }: { id: number; replaceWithId?: number }) => api.DELETE("/api/categories/{category_id}", { params: { path: { category_id: id }, query: { replace_with_id: replaceWithId } } }), onSuccess }),
-    rescan: useMutation({ mutationFn: () => unwrap(api.POST("/api/categories/rescan")), onSuccess }),
+    rescan: useMutation({ mutationFn: (scope?: "uncategorized" | "all") => unwrap(api.POST("/api/categories/rescan", { params: { query: scope ? { scope } : {} } })), onSuccess }),
     seedDefaults: useMutation({ mutationFn: () => unwrap(api.POST("/api/categories/seed-defaults")), onSuccess }),
   };
 }

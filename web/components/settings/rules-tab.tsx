@@ -2,13 +2,15 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2, Pencil, Merge, RefreshCw, Search } from "lucide-react";
+import { Plus, Trash2, Pencil, Merge, RefreshCw, Search, ChevronDown } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useAllRules, useCategories, useRuleMutations, useCategoryMutations, type CategoryRule, type Account } from "@/lib/api/hooks";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { RuleDialog } from "@/components/settings/rule-dialog";
 import { ArchivedBadge } from "@/components/transactions/category-select";
 
@@ -18,13 +20,24 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
   const { update, remove, merge } = useRuleMutations();
   const { rescan } = useCategoryMutations();
 
-  // Rules only apply on import or when re-applied — run a rescan over existing
-  // (non-verified) transactions so newly-added rules take effect immediately.
-  const reapplyRules = () =>
-    rescan.mutate(undefined, {
+  const confirm = useConfirm();
+  // Rules only apply on import or when re-applied. Default is safe (only fills
+  // transactions with no category yet); "à tout" re-applies to everything (except
+  // manually-verified rows) and can overwrite existing categorisations.
+  const reapply = (scope: "uncategorized" | "all") =>
+    rescan.mutate(scope, {
       onSuccess: (r) => toast.success(`${(r as { updated: number }).updated} transaction(s) recatégorisée(s)`),
       onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur"),
     });
+  const reapplyAll = async () => {
+    const ok = await confirm({
+      title: "Réappliquer à toutes les transactions ?",
+      description: "Les règles seront réappliquées à tout l'historique et peuvent remplacer des catégorisations existantes (les transactions marquées « vérifié » sont préservées).",
+      confirmLabel: "Réappliquer à tout",
+      destructive: true,
+    });
+    if (ok) reapply("all");
+  };
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<CategoryRule | null>(null);
@@ -88,9 +101,28 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher une règle…" className="h-9 w-52 pl-8" />
           </div>
           {selected.size >= 2 && <Button variant="outline" size="sm" onClick={doMerge}><Merge className="size-4" /> Fusionner ({selected.size})</Button>}
-          <Button variant="outline" size="sm" disabled={rescan.isPending} onClick={reapplyRules}>
-            <RefreshCw className={`size-4 ${rescan.isPending ? "animate-spin" : ""}`} /> Réappliquer les règles
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" disabled={rescan.isPending}>
+                <RefreshCw className={`size-4 ${rescan.isPending ? "animate-spin" : ""}`} /> Réappliquer les règles <ChevronDown className="size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72">
+              <DropdownMenuItem onSelect={() => reapply("uncategorized")}>
+                <div>
+                  <p className="text-sm">Aux transactions sans catégorie</p>
+                  <p className="text-xs text-muted-foreground">Ne touche pas l&apos;historique déjà classé.</p>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={reapplyAll}>
+                <div>
+                  <p className="text-sm text-warning">À toutes les transactions…</p>
+                  <p className="text-xs text-muted-foreground">Réécrit les catégorisations existantes.</p>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button size="sm" onClick={openCreate}><Plus className="size-4" /> Règle</Button>
         </div>
       </div>
