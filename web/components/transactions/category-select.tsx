@@ -1,6 +1,6 @@
 "use client";
 
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from "@/components/ui/select";
 import { orderCategoryTree } from "@/lib/group";
 import type { Category } from "@/lib/api/hooks";
 
@@ -30,6 +30,7 @@ export function CategorySelect({
   accountId,
   accountNames,
   hideNone = false,
+  showNamespace = false,
 }: {
   value: number | null | undefined;
   onChange: (v: number | null) => void;
@@ -40,6 +41,8 @@ export function CategorySelect({
   accountId?: number | null;
   accountNames?: Record<number, string>;
   hideNone?: boolean;
+  /** Show the parent namespace as a "Parent › Category" prefix in the trigger. */
+  showNamespace?: boolean;
 }) {
   const visible =
     accountId == null
@@ -54,6 +57,10 @@ export function CategorySelect({
   // non-selectable headers so transactions can only land on a leaf.
   const parentIds = new Set(visible.filter((c) => c.parent_id != null).map((c) => c.parent_id));
 
+  // Selected category + its parent namespace, for the custom trigger.
+  const selected = value == null ? null : categories.find((c) => c.id === value) ?? null;
+  const parent = selected?.parent_id != null ? categories.find((c) => c.id === selected.parent_id) ?? null : null;
+
   return (
     <Select
       value={value == null ? NONE : String(value)}
@@ -61,7 +68,15 @@ export function CategorySelect({
       disabled={disabled}
     >
       <SelectTrigger className={className}>
-        <SelectValue placeholder={placeholder} />
+        {selected ? (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="size-2 shrink-0 rounded-full" style={{ background: selected.color }} />
+            {showNamespace && parent && <span className="shrink-0 text-muted-foreground">{parent.name} ›</span>}
+            <span className={`truncate ${typeAccent(selected)}`}>{selected.name}</span>
+          </span>
+        ) : (
+          <span className="truncate text-muted-foreground">{placeholder}</span>
+        )}
       </SelectTrigger>
       <SelectContent>
         {!hideNone && <SelectItem value={NONE}>Sans catégorie</SelectItem>}
@@ -69,7 +84,7 @@ export function CategorySelect({
           if (!child && parentIds.has(c.id)) {
             return (
               <SelectGroup key={c.id}>
-                <SelectLabel className={`mt-1 flex items-center gap-2 ${typeAccent(c)}`}>
+                <SelectLabel className={`mt-1 flex items-center gap-2 pl-8 ${typeAccent(c)}`}>
                   <span className="size-2 rounded-full" style={{ background: c.color }} />
                   {c.name}
                   <span className="text-[10px] font-normal opacity-70">· {scopeLabel(c)}</span>
@@ -78,7 +93,7 @@ export function CategorySelect({
             );
           }
           return (
-            <SelectItem key={c.id} value={String(c.id)} className={child ? "pl-9" : undefined}>
+            <SelectItem key={c.id} value={String(c.id)} className={child ? "pl-12" : undefined}>
               <span className={`flex items-center gap-2 ${typeAccent(c)}`}>
                 <span className="size-2 rounded-full" style={{ background: c.color }} />
                 {c.name}

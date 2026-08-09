@@ -255,6 +255,7 @@ export default function TransactionsPage() {
                       categories={categories}
                       accountId={t.account_id}
                       accountNames={accountNames}
+                      showNamespace
                       className="h-8 border-transparent bg-transparent text-xs shadow-none hover:border-border"
                       onChange={(cid) => mut.update.mutate({ id: t.id, body: { category_id: cid } }, { onSuccess: () => toast.success("Catégorie mise à jour") })}
                     />
