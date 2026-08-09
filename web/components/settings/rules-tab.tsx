@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAllRules, useCategories, useRuleMutations, useCategoryMutations, type CategoryRule, type Account } from "@/lib/api/hooks";
 import { RuleDialog } from "@/components/settings/rule-dialog";
+import { ArchivedBadge } from "@/components/transactions/category-select";
 
 export function RulesTab({ accounts }: { accounts: Account[] }) {
   const { data: rules = [] } = useAllRules();
@@ -31,6 +32,7 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
 
   const catName = (id: number) => categories.find((c) => c.id === id)?.name ?? `#${id}`;
   const catColor = (id: number) => categories.find((c) => c.id === id)?.color ?? "var(--muted-foreground)";
+  const catArchived = (id: number) => categories.find((c) => c.id === id)?.archived ?? false;
 
   const [search, setSearch] = useState("");
   const filteredRules = useMemo(() => {
@@ -103,6 +105,7 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
                   <Checkbox checked={selected.has(r.id)} onCheckedChange={() => setSelected((p) => { const n = new Set(p); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n; })} />
                   <span className="size-2.5 shrink-0 rounded-full" style={{ background: catColor(r.category_id) }} />
                   <span className="w-40 shrink-0 truncate text-sm font-medium">{catName(r.category_id)}</span>
+                  {catArchived(r.category_id) && <ArchivedBadge className="shrink-0" />}
                   <span className="flex-1 truncate font-mono text-xs text-muted-foreground">
                     {r.conditions.map((c) => `${c.field} ${c.operator} "${c.value}"`).join(` ${r.logic_operator} `)}
                   </span>
