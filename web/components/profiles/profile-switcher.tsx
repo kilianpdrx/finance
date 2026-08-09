@@ -30,9 +30,11 @@ export function ProfileSwitcher() {
 
   const switchTo = (id: number) => {
     if (id === activeProfileId) return;
-    setActiveProfile(id);
+    setActiveProfile(id); // persisted to localStorage synchronously
     setSelectedAccountIds(null); // old profile's account ids no longer apply
-    qc.clear(); // refetch everything for the new profile
+    qc.clear();
+    // Full reload so every page/store re-initialises cleanly under the new profile.
+    window.location.reload();
   };
 
   return (
