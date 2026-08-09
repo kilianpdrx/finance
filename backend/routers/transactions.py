@@ -63,7 +63,14 @@ async def _build_txn_filters(
     elif categorized:
         filters.append(Transaction.category_id != None)  # noqa: E711
     elif category_id is not None:
-        filters.append(Transaction.category_id == category_id)
+        # Selecting a namespace (parent) matches all of its sub-categories too.
+        child_ids = [r[0] for r in (await db.execute(
+            select(Category.id).where(Category.parent_id == category_id)
+        )).all()]
+        if child_ids:
+            filters.append(Transaction.category_id.in_([category_id, *child_ids]))
+        else:
+            filters.append(Transaction.category_id == category_id)
     if date_from is not None:
         filters.append(Transaction.date >= date_from)
     if date_to is not None:

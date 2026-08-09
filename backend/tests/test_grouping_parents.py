@@ -92,6 +92,31 @@ async def test_parent_rejected_as_transaction_category(
     assert r2.status_code == 400
 
 
+async def test_filter_by_parent_includes_children(
+    client: AsyncClient, seed_data: dict, db_session: AsyncSession
+):
+    """Filtering the transactions list by a namespace (parent) returns the
+    transactions of its sub-categories too."""
+    pid = seed_data["profile"].id
+    h = {"X-Profile-Id": str(pid)}
+    parent = seed_data["cat_courses"]  # Alimentation
+    acc = seed_data["account_courant"]
+
+    child = (await client.post("/api/categories", headers=h, json={"name": "Restaurants", "parent_id": parent.id})).json()
+    db_session.add(Transaction(
+        profile_id=pid, account_id=acc.id, date=date(2025, 3, 1), description="Resto",
+        amount_cents=2000, is_debit=True, import_hash="filt-child-1", category_id=child["id"],
+    ))
+    await db_session.commit()
+
+    r = await client.get("/api/transactions", params={"category_id": parent.id}, headers=h)
+    assert r.status_code == 200
+    assert any(t["category_id"] == child["id"] for t in r.json())
+
+    c = await client.get("/api/transactions/count", params={"category_id": parent.id}, headers=h)
+    assert c.json()["total"] >= 1
+
+
 async def test_normalize_backfills_existing_parents(
     client: AsyncClient, seed_data: dict, db_session: AsyncSession
 ):

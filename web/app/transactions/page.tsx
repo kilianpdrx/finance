@@ -15,12 +15,14 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CategorySelect } from "@/components/transactions/category-select";
 import { SearchBox } from "@/components/transactions/search-box";
+import { AccountTile } from "@/components/accounts/account-select";
+import { ACCOUNT_TYPE_LABELS } from "@/components/accounts/account-dialog";
 import { TransactionDialog } from "@/components/transactions/transaction-dialog";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   useAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionCount, useTransactionStats, useTransactionMutations,
-  fetchTransactionIds, type TransactionFilters, type Transaction,
+  fetchTransactionIds, type TransactionFilters, type Transaction, type Account, type Category,
 } from "@/lib/api/hooks";
 import { orderCategoryTree } from "@/lib/group";
 import { formatCents } from "@/lib/format";
@@ -118,20 +120,9 @@ export default function TransactionsPage() {
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <SearchBox onSearch={(v) => { setSearch(v); setPage(0); }} />
-        <FilterSelect value={account} onChange={(v) => { setAccount(v); setPage(0); }} placeholder="Compte" width="w-40"
-          options={[{ value: ALL, label: "Tous les comptes" }, ...txAccounts.map((a) => ({ value: String(a.id), label: a.name }))]} />
-        <FilterSelect value={category} onChange={(v) => { setCategory(v); setPage(0); }} placeholder="Catégorie" width="w-48"
-          options={[
-            { value: ALL, label: "Toutes catégories" },
-            { value: CATEGORIZED, label: "Catégorisées" },
-            { value: UNCAT, label: "Sans catégorie" },
-            ...orderCategoryTree(
-              categories.filter((c) => account === ALL || c.account_id == null || c.account_id === Number(account)),
-            ).map(({ cat: c, child }) => ({
-              value: String(c.id),
-              label: `${child ? "   ↳ " : ""}${c.name}${child ? "" : ` · ${c.account_id == null ? "Global" : accountNames[c.account_id] ?? "Compte"}`}`,
-            })),
-          ]} />
+        <AccountFilter value={account} onChange={(v) => { setAccount(v); setPage(0); }} accounts={txAccounts} width="w-44" />
+        <CategoryFilter value={category} onChange={(v) => { setCategory(v); setPage(0); }} categories={categories}
+          accountNames={accountNames} accountFilter={account === ALL ? null : Number(account)} width="w-56" />
         <FilterSelect value={type} onChange={(v) => { setType(v); setPage(0); }} placeholder="Type" width="w-32"
           options={[{ value: ALL, label: "Tout" }, { value: "debit", label: "Dépenses" }, { value: "credit", label: "Revenus" }]} />
         <FilterSelect value={month} onChange={(v) => { setMonth(v); setPage(0); }} placeholder="Mois" width="w-32"
@@ -299,6 +290,89 @@ function FilterSelect({ value, onChange, options, placeholder, width }: {
       <SelectTrigger className={`${width} h-9`}><SelectValue placeholder={placeholder} /></SelectTrigger>
       <SelectContent>
         {options.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** Rich account filter: coloured tile + name + "bank · type". */
+function AccountFilter({ value, onChange, accounts, width }: {
+  value: string; onChange: (v: string) => void; accounts: Account[]; width: string;
+}) {
+  const sel = accounts.find((a) => String(a.id) === value);
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className={`${width} h-9`}>
+        {sel ? (
+          <span className="flex min-w-0 items-center gap-2">
+            <AccountTile account={sel} className="size-5 text-[9px]" />
+            <span className="truncate">{sel.name}</span>
+          </span>
+        ) : (
+          <span className="text-muted-foreground">Tous les comptes</span>
+        )}
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ALL}>Tous les comptes</SelectItem>
+        {accounts.map((a) => (
+          <SelectItem key={a.id} value={String(a.id)} className="py-1.5">
+            <span className="flex items-center gap-2">
+              <AccountTile account={a} className="size-5 text-[9px]" />
+              <span className="flex flex-col items-start leading-tight">
+                <span className="text-sm">{a.name}</span>
+                <span className="text-[10px] text-muted-foreground">
+                  {a.bank_name}{a.account_type ? ` · ${ACCOUNT_TYPE_LABELS[a.account_type] ?? a.account_type}` : ""}
+                </span>
+              </span>
+            </span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** Rich category filter: colour dots, type tint, scope, indentation; parents are
+ *  selectable (the backend expands a namespace to its sub-categories). */
+function CategoryFilter({ value, onChange, categories, accountNames, accountFilter, width }: {
+  value: string; onChange: (v: string) => void; categories: Category[]; accountNames: Record<number, string>; accountFilter: number | null; width: string;
+}) {
+  const visible = accountFilter == null ? categories : categories.filter((c) => c.account_id == null || c.account_id === accountFilter);
+  const ordered = orderCategoryTree(visible);
+  const parentIds = new Set(visible.filter((c) => c.parent_id != null).map((c) => c.parent_id));
+  const tint = (c: Category) => c.is_income ? "text-emerald-600 dark:text-emerald-400" : c.expense_type === "fixed" ? "text-indigo-600 dark:text-indigo-400" : c.expense_type === "variable" ? "text-amber-600 dark:text-amber-400" : "";
+  const scope = (c: Category) => c.account_id == null ? "Global" : accountNames[c.account_id] ?? "Compte";
+  const selCat = /^\d+$/.test(value) ? categories.find((c) => c.id === Number(value)) : undefined;
+  const sentinelLabel = value === CATEGORIZED ? "Catégorisées" : value === UNCAT ? "Sans catégorie" : "Toutes catégories";
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className={`${width} h-9`}>
+        {selCat ? (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="size-2 shrink-0 rounded-full" style={{ background: selCat.color }} />
+            <span className={`truncate ${tint(selCat)}`}>{selCat.name}</span>
+          </span>
+        ) : (
+          <span className="truncate">{sentinelLabel}</span>
+        )}
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ALL}>Toutes catégories</SelectItem>
+        <SelectItem value={CATEGORIZED}>Catégorisées</SelectItem>
+        <SelectItem value={UNCAT}>Sans catégorie</SelectItem>
+        {ordered.map(({ cat: c, child }) => {
+          const isParent = parentIds.has(c.id);
+          return (
+            <SelectItem key={c.id} value={String(c.id)} className={child ? "pl-12" : undefined}>
+              <span className={`flex items-center gap-2 ${tint(c)}`}>
+                <span className="size-2 shrink-0 rounded-full" style={{ background: c.color }} />
+                {c.name}
+                {isParent && <span className="rounded bg-muted px-1 text-[9px] font-normal text-muted-foreground">groupe</span>}
+                {!child && <span className="text-[10px] font-normal text-muted-foreground">· {scope(c)}</span>}
+              </span>
+            </SelectItem>
+          );
+        })}
       </SelectContent>
     </Select>
   );
