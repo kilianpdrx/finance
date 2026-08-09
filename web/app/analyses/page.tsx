@@ -138,8 +138,9 @@ export default function AnalysesPage() {
   // Click a category name → its 20 biggest transactions in a table below.
   const [detailCat, setDetailCat] = useState<{ name: string; ids: number[] } | null>(null);
   const openDetail = (g: RollupGroup) => {
-    const ids = [g.id, ...g.children.map((c) => c.category_id)].filter((x): x is number => x != null);
-    if (ids.length) setDetailCat({ name: g.name, ids });
+    // The backend expands a parent (namespace) to its sub-categories, so a single
+    // id per group is enough — fetching the children too would duplicate rows.
+    if (g.id != null) setDetailCat({ name: g.name, ids: [g.id] });
   };
   const detailQuery = useQuery({
     queryKey: ["cat-top-txns", detailCat?.ids, q.date_from, q.date_to, income],
@@ -155,7 +156,9 @@ export default function AnalysesPage() {
           })) as Promise<Transaction[]>,
         ),
       );
-      return results.flat().sort((a, b) => b.amount_cents - a.amount_cents).slice(0, 20);
+      // Dedupe by id (a namespace fetch already covers its children).
+      const byId = new Map(results.flat().map((t) => [t.id, t]));
+      return [...byId.values()].sort((a, b) => b.amount_cents - a.amount_cents).slice(0, 20);
     },
   });
 
