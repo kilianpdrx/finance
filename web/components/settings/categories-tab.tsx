@@ -13,12 +13,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAccounts, useCategories, useCategoryMutations, type Category } from "@/lib/api/hooks";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { AccountSelect, GLOBAL_ACCOUNT } from "@/components/accounts/account-select";
 import { groupByAccount, orderCategoryTree } from "@/lib/group";
 
 type TypeKey = "income" | "fixed" | "variable";
 const TYPE_LABEL: Record<TypeKey, string> = { income: "Revenu", fixed: "Dépense fixe", variable: "Dépense variable" };
 const NO_PARENT = "__none__";
-const GLOBAL = "__global__";
 
 function typeOf(c: Category): TypeKey {
   if (c.is_income) return "income";
@@ -178,16 +178,12 @@ export function CategoriesTab() {
             </div>
             <div className="space-y-1">
               <Label>Compte</Label>
-              <Select value={accountId == null ? GLOBAL : String(accountId)}
-                onValueChange={(v) => { setAccountId(v === GLOBAL ? null : Number(v)); setParentId(null); }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={GLOBAL}>Global (tous les comptes)</SelectItem>
-                  {accounts.map((a) => (
-                    <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <AccountSelect
+                accounts={accounts}
+                includeGlobal
+                value={accountId == null ? GLOBAL_ACCOUNT : String(accountId)}
+                onChange={(v) => { setAccountId(v === GLOBAL_ACCOUNT ? null : Number(v)); setParentId(null); }}
+              />
             </div>
             <div className="space-y-1">
               <Label>Catégorie parente</Label>
