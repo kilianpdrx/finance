@@ -315,12 +315,12 @@ export default function AnalysesPage() {
                     <EmptyState icon={Inbox} title="Aucune transaction" />
                   ) : (
                     <Table>
-                      <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="w-24">Date</TableHead><TableHead>Description</TableHead><TableHead className="text-right">Montant</TableHead></TableRow></TableHeader>
+                      <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="w-20">Date</TableHead><TableHead className="w-full">Description</TableHead><TableHead className="w-28 text-right">Montant</TableHead></TableRow></TableHeader>
                       <TableBody>
                         {detailQuery.data.map((t) => (
                           <TableRow key={t.id}>
                             <TableCell className="nums whitespace-nowrap text-xs text-muted-foreground">{format(new Date(t.date), "dd MMM yy", { locale: fr })}</TableCell>
-                            <TableCell className="max-w-0"><span className="line-clamp-1" title={t.description}>{t.description}</span></TableCell>
+                            <TableCell className="w-full max-w-0"><span className="line-clamp-1" title={t.description}>{t.description}</span></TableCell>
                             <TableCell className="nums blurable text-right font-semibold">{formatCents(t.amount_cents, currency)}</TableCell>
                           </TableRow>
                         ))}
