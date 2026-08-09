@@ -8,12 +8,11 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { Wallet } from "lucide-react";
 import { AccountSelect } from "@/components/accounts/account-select";
+import { CategorySelect } from "@/components/transactions/category-select";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { formatCents } from "@/lib/format";
 import type { Account, Category } from "@/lib/api/hooks";
 import type { ParsePreviewTransaction } from "@/lib/api/upload";
-
-const SELECT_CLS = "rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
 // Same formatting as the transactions table: 2 decimals, in the destination
 // account's currency. amount_cents is a positive magnitude; is_debit gives the sign.
@@ -41,6 +40,7 @@ export function ReviewStep({
   const [force, setForce] = useState<Set<string>>(new Set());
 
   const destCurrency = accounts.find((a) => String(a.id) === selectedAccount)?.currency ?? "EUR";
+  const accountNames = Object.fromEntries(accounts.map((a) => [a.id, a.name])) as Record<number, string>;
   const catId = (t: ParsePreviewTransaction) => (t.import_hash in overrides ? overrides[t.import_hash] : t.category_id);
   const duplicateTxns = useMemo(() => transactions.filter((t) => t.is_duplicate), [transactions]);
   const duplicates = duplicateTxns.length;
@@ -144,10 +144,14 @@ export function ReviewStep({
                     </td>
                     <td className={cn("nums whitespace-nowrap px-4 py-2 text-right text-xs font-medium", t.is_debit ? "text-negative" : "text-positive")}>{money(t.amount_cents, t.is_debit, destCurrency)}</td>
                     <td className="px-4 py-2">
-                      <select value={cid ?? ""} onChange={(e) => setOverrides((p) => ({ ...p, [t.import_hash]: e.target.value ? Number(e.target.value) : null }))} className={cn(SELECT_CLS, "w-full text-xs", uncat && "border-warning/50")}>
-                        <option value="">Non catégorisé</option>
-                        {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
+                      <CategorySelect
+                        value={cid}
+                        onChange={(v) => setOverrides((p) => ({ ...p, [t.import_hash]: v }))}
+                        categories={categories}
+                        accountId={selectedAccount ? Number(selectedAccount) : null}
+                        accountNames={accountNames}
+                        className={cn("h-8 w-full text-xs", uncat && "border-warning/50")}
+                      />
                     </td>
                   </tr>
                 );
