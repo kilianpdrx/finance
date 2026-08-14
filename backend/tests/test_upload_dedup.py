@@ -79,4 +79,8 @@ async def test_reimport_after_import_dedups(client: AsyncClient, seed_data: dict
 
     second = await client.post("/api/upload/confirm", headers=hdr,
                                files={"file": ("courant.csv", CSV, "text/csv")}, data=_form(acc.id))
-    assert second.json() == {"imported": 0, "skipped": 1, "total": 1, "categorized": 0}
+    body = second.json()
+    assert {k: body[k] for k in ("imported", "skipped", "total", "categorized")} == {
+        "imported": 0, "skipped": 1, "total": 1, "categorized": 0
+    }
+    assert body["unparsed"]["total"] == 0  # the row parsed fine; it was a duplicate

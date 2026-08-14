@@ -12,7 +12,16 @@ import { CategorySelect } from "@/components/transactions/category-select";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { formatCents } from "@/lib/format";
 import type { Account, Category } from "@/lib/api/hooks";
-import type { ParsePreviewTransaction } from "@/lib/api/upload";
+import type { ParsePreviewTransaction, SkippedReport } from "@/lib/api/upload";
+
+/** Human-readable reason for a dropped row, in the order we show them. */
+const SKIP_REASONS: { key: keyof SkippedReport; label: string }[] = [
+  { key: "malformed", label: "ligne illisible (nombre de colonnes inattendu)" },
+  { key: "bad_date", label: "date illisible" },
+  { key: "bad_amount", label: "montant illisible" },
+  { key: "missing_fields", label: "date ou libellé vide" },
+  { key: "zero_amount", label: "montant à zéro" },
+];
 
 // Same formatting as the transactions table: 2 decimals, in the destination
 // account's currency. amount_cents is a positive magnitude; is_debit gives the sign.
@@ -21,7 +30,7 @@ function money(cents: number, isDebit: boolean, currency: string) {
 }
 
 export function ReviewStep({
-  transactions, categories, accounts, selectedAccount, onSelectAccount, loading, error, onConfirm, onBack, fileName,
+  transactions, categories, accounts, selectedAccount, onSelectAccount, loading, error, onConfirm, onBack, fileName, skipped,
 }: {
   transactions: ParsePreviewTransaction[];
   categories: Category[];
@@ -33,10 +42,12 @@ export function ReviewStep({
   onConfirm: (overrides: Record<string, number | null>, force: string[]) => void;
   onBack: () => void;
   fileName?: string;
+  skipped?: SkippedReport;
 }) {
   const [overrides, setOverrides] = useState<Record<string, number | null>>({});
   const [filterUncat, setFilterUncat] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
+  const [showSkipped, setShowSkipped] = useState(false);
   const [force, setForce] = useState<Set<string>>(new Set());
 
   const destCurrency = accounts.find((a) => String(a.id) === selectedAccount)?.currency ?? "EUR";
@@ -48,6 +59,7 @@ export function ReviewStep({
   const uncategorized = transactions.filter((t) => (!t.is_duplicate || force.has(t.import_hash)) && catId(t) === null).length;
   const toImport = transactions.filter((t) => !t.is_duplicate).length + forcedCount;
   const canImport = toImport > 0 && !!selectedAccount;
+  const skippedTotal = skipped?.total ?? 0;
 
   const displayed = (filterUncat
     ? transactions.filter((t) => (!t.is_duplicate || force.has(t.import_hash)) && catId(t) === null)
@@ -72,7 +84,7 @@ export function ReviewStep({
         <AccountSelect accounts={accounts} value={selectedAccount} onChange={onSelectAccount} className="flex-1" />
       </Card>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className={cn("grid gap-3", skippedTotal > 0 ? "grid-cols-4" : "grid-cols-3")}>
         <Card className="p-3 text-center"><p className="text-2xl font-bold text-positive">{toImport}</p><p className="mt-0.5 text-xs text-positive">à importer</p></Card>
         <Card className={cn("p-3 text-center", uncategorized > 0 && "border-warning/40")}>
           <p className={cn("text-2xl font-bold", uncategorized > 0 ? "text-warning" : "text-muted-foreground")}>{uncategorized}</p>
@@ -82,7 +94,39 @@ export function ReviewStep({
           <p className={cn("text-2xl font-bold", duplicates > 0 ? "text-warning" : "text-muted-foreground")}>{duplicates}</p>
           <p className={cn("mt-0.5 text-xs", duplicates > 0 ? "text-warning" : "text-muted-foreground")}>doublons {force.size > 0 ? `(${force.size} inclus)` : "· cliquer"}</p>
         </Card>
+        {skippedTotal > 0 && (
+          <Card onClick={() => setShowSkipped((v) => !v)} className="cursor-pointer border-negative/40 p-3 text-center">
+            <p className="text-2xl font-bold text-negative">{skippedTotal}</p>
+            <p className="mt-0.5 text-xs text-negative">ignorées · cliquer</p>
+          </Card>
+        )}
       </div>
+
+      {showSkipped && skippedTotal > 0 && (
+        <Card className="overflow-hidden p-0">
+          <div className="bg-negative/10 px-4 py-2.5">
+            <p className="text-sm font-medium text-negative">
+              {skippedTotal} ligne(s) du fichier n&apos;ont pas pu être importées
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Elles ne sont pas dans l&apos;aperçu ci-dessous. Corrigez le fichier ou la
+              correspondance des colonnes, puis réimportez.
+            </p>
+          </div>
+          <div className="max-h-56 space-y-3 overflow-y-auto p-4">
+            {SKIP_REASONS.filter((r) => (skipped?.[r.key] as number) > 0).map((r) => (
+              <div key={r.key}>
+                <p className="text-xs font-semibold">
+                  {skipped?.[r.key] as number} × {r.label}
+                </p>
+                {(skipped?.samples?.[r.key] ?? []).map((s, i) => (
+                  <p key={i} className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{s}</p>
+                ))}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {showDuplicates && duplicates > 0 && (
         <Card className="overflow-hidden p-0">

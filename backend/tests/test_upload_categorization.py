@@ -68,7 +68,11 @@ async def test_confirm_applies_account_scoped_rule(client: AsyncClient, seed_dat
                           headers={"X-Profile-Id": str(seed_data['profile'].id)},
                           files={"file": ("courant.csv", CSV, "text/csv")}, data=_form(acc.id))
     assert r.status_code == 200
-    assert r.json() == {"imported": 1, "skipped": 0, "total": 1, "categorized": 1}
+    body = r.json()
+    assert {k: body[k] for k in ("imported", "skipped", "total", "categorized")} == {
+        "imported": 1, "skipped": 0, "total": 1, "categorized": 1
+    }
+    assert body["unparsed"]["total"] == 0  # nothing was dropped by the parser
 
     stored = (await db_session.execute(
         select(Transaction).where(Transaction.account_id == acc.id)

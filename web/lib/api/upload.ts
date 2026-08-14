@@ -27,10 +27,23 @@ export interface ParsePreviewTransaction {
   category_conflict: boolean;
 }
 
+/** Rows the parser had to drop, per reason, with a few raw examples each.
+ *  Surfaced so a short import is explained rather than silently losing rows. */
+export interface SkippedReport {
+  total: number;
+  malformed: number;
+  bad_date: number;
+  bad_amount: number;
+  zero_amount: number;
+  missing_fields: number;
+  samples: Record<string, string[]>;
+}
+
 export interface ParsePreviewResponse {
   transactions: ParsePreviewTransaction[];
   total: number;
   duplicates: number;
+  skipped: SkippedReport;
 }
 
 export interface ConfirmResponse {
@@ -38,6 +51,7 @@ export interface ConfirmResponse {
   skipped: number;
   total: number;
   categorized: number;
+  unparsed: SkippedReport;
 }
 
 async function post<T>(url: string, form: FormData): Promise<T> {

@@ -12,7 +12,7 @@ import {
   holdingsImportPreview, holdingsImportConfirm,
   type HoldingsImportPreviewResponse, type HoldingsImportConfirmResponse,
 } from "@/lib/api/hooks";
-import { uploadApi, type DetectResponse, type ParsePreviewTransaction, type ConfirmResponse } from "@/lib/api/upload";
+import { uploadApi, type DetectResponse, type ParsePreviewTransaction, type ConfirmResponse, type SkippedReport } from "@/lib/api/upload";
 import { cn } from "@/lib/utils";
 
 type Step = "drop" | "mapping" | "review" | "holdings-review" | "done";
@@ -36,6 +36,7 @@ export default function ImporterPage() {
   const [encoding, setEncoding] = useState("utf-8");
   const [delimiter, setDelimiter] = useState(";");
   const [previewTxns, setPreviewTxns] = useState<ParsePreviewTransaction[]>([]);
+  const [previewSkipped, setPreviewSkipped] = useState<SkippedReport | undefined>(undefined);
   const [holdingsPreview, setHoldingsPreview] = useState<HoldingsImportPreviewResponse | null>(null);
   const [holdingsActions, setHoldingsActions] = useState<Record<string, DuplicateAction>>({});
   const [holdingsResult, setHoldingsResult] = useState<HoldingsImportConfirmResponse | null>(null);
@@ -57,6 +58,7 @@ export default function ImporterPage() {
     try {
       const res = await uploadApi.parsePreview(f, { ...opts, accountId: selectedAccount ? Number(selectedAccount) : undefined });
       setPreviewTxns(res.transactions);
+      setPreviewSkipped(res.skipped);
       setStep("review");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur de prévisualisation");
@@ -154,7 +156,7 @@ export default function ImporterPage() {
 
   const reset = () => {
     setStep("drop"); setFile(null); setInputKey((k) => k + 1); setDetected(null);
-    setResult(null); setError(""); setMapping(null); setPreviewTxns([]);
+    setResult(null); setError(""); setMapping(null); setPreviewTxns([]); setPreviewSkipped(undefined);
     setHoldingsPreview(null); setHoldingsActions({}); setHoldingsResult(null);
   };
 
@@ -223,6 +225,7 @@ export default function ImporterPage() {
     return (
       <ReviewStep
         transactions={previewTxns} categories={categories} accounts={accounts} fileName={file.name}
+        skipped={previewSkipped}
         selectedAccount={selectedAccount} onSelectAccount={setSelectedAccount}
         loading={loading} error={error} onConfirm={handleConfirm}
         onBack={() => { setError(""); detected && !detected.detected ? setStep("mapping") : reset(); }}

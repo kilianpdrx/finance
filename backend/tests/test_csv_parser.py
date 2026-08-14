@@ -13,13 +13,19 @@ from utils import generate_import_hash
     ("1 234,56", 123456),      # space grouping
     ("-1'000.00", -100000),
     ("CHF 1’000.00", 100000),
-    ("0", 0),
-    ("", 0),
-    ("-", 0),
+    ("0", 0),                  # a genuine zero — NOT a parse failure
+    ("0,00", 0),
     ("3,50", 350),
 ])
 def test_parse_amount_locales(raw, expected):
     assert _parse_amount(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["", "-", "   ", "n/a", "abc"])
+def test_parse_amount_unparseable_is_none(raw):
+    """None (unreadable) must be distinguishable from 0 (a real zero amount), so a
+    broken row can be reported instead of silently vanishing."""
+    assert _parse_amount(raw) is None
 
 
 def test_import_hash_distinguishes_debit_credit():
@@ -49,9 +55,41 @@ def test_parse_csv_with_bank_profile():
         }
     )
     csv_bytes = b"Date;Label;Montant\n01/07/2026;SUPERMARCHE;-42.50\n"
-    txns = parse_csv(csv_bytes, bp)
+    txns, report = parse_csv(csv_bytes, bp)
     assert len(txns) == 1
     assert txns[0].amount_cents == 4250
     assert txns[0].is_debit is True
     assert "SUPERMARCHE" in txns[0].description
+    assert report.total == 0
+
+
+def _simple_profile() -> BankProfile:
+    return BankProfile(
+        name="Custom Bank", delimiter=";", encoding="utf-8", date_format="%d/%m/%Y",
+        column_mapping={"date": "Date", "description": "Label", "amount": "Montant"},
+    )
+
+
+def test_parse_csv_reports_every_skipped_row():
+    """Each dropped row is counted under its own reason, with samples — so the
+    importer can explain a short import instead of losing rows silently."""
+    csv_bytes = (
+        b"Date;Label;Montant\n"
+        b"01/07/2026;BON;-42.50\n"        # ok
+        b"pas-une-date;MAUVAISE DATE;-1.00\n"  # bad_date
+        b"02/07/2026;MONTANT ILLISIBLE;abc\n"  # bad_amount
+        b"03/07/2026;ZERO REEL;0,00\n"          # zero_amount (parsed fine, just empty)
+        b"04/07/2026;SANS LIBELLE;;\n"          # malformed (extra field)
+    )
+    txns, report = parse_csv(csv_bytes, _simple_profile())
+
+    assert len(txns) == 1 and txns[0].description == "BON"
+    assert report.bad_date == 1
+    assert report.bad_amount == 1
+    assert report.zero_amount == 1
+    assert report.malformed == 1
+    assert report.total == 4
+    # Samples are captured so the UI can show the offending line.
+    assert report.samples["bad_date"] and report.samples["bad_amount"]
+    assert report.as_dict()["total"] == 4
 

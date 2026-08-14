@@ -109,7 +109,7 @@ async def detect(
 
     if profile:
         try:
-            transactions = parse_csv(file_bytes, profile)
+            transactions, _report = parse_csv(file_bytes, profile)
             preview = [
                 {
                     "date": str(t.date),
@@ -186,7 +186,7 @@ async def parse_preview(
             )
 
     try:
-        transactions = parse_csv(file_bytes, profile)
+        transactions, report = parse_csv(file_bytes, profile)
     except Exception as e:
         logger.error("parse_csv error: %s", e)
         raise HTTPException(status_code=422, detail=str(e))
@@ -251,6 +251,9 @@ async def parse_preview(
         "transactions": result_rows,
         "total": len(result_rows),
         "duplicates": sum(1 for r in result_rows if r["is_duplicate"]),
+        # Rows the parser had to drop, so the UI can explain a short import
+        # instead of silently showing fewer transactions than the file contains.
+        "skipped": report.as_dict(),
     }
 
 
@@ -336,7 +339,7 @@ async def confirm(
             )
 
     try:
-        transactions = parse_csv(file_bytes, profile)
+        transactions, report = parse_csv(file_bytes, profile)
     except Exception as e:
         logger.error("parse_csv error during confirm: %s", e)
         raise HTTPException(status_code=422, detail=str(e))
@@ -435,4 +438,7 @@ async def confirm(
     # Detect internal transfers after importing (scoped to the profile)
     await detect_internal_transfers(db, pid)
 
-    return ConfirmResponse(imported=imported, skipped=skipped, total=imported + skipped, categorized=categorized)
+    return ConfirmResponse(
+        imported=imported, skipped=skipped, total=imported + skipped,
+        categorized=categorized, unparsed=report.as_dict(),
+    )

@@ -483,9 +483,12 @@ class ConfirmRequest(BaseModel):
 
 class ConfirmResponse(BaseModel):
     imported: int
-    skipped: int
+    skipped: int          # duplicates that were not re-imported
     total: int
     categorized: int = 0
+    # Rows the parser could not read at all (malformed line, unreadable date/amount).
+    # Distinct from `skipped`, which counts successfully-parsed duplicates.
+    unparsed: dict = {}
 
 
 # ── Holdings ─────────────────────────────────────────────────────────────────
