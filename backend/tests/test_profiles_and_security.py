@@ -6,14 +6,6 @@ from models import Profile, Transaction, Account
 
 pytestmark = pytest.mark.asyncio
 
-@pytest_asyncio.fixture
-async def extra_profile(db_session: AsyncSession):
-    p = Profile(name="Secondary Profile", color="#ff0000", is_default=False, enabled_modules=["transactions"])
-    db_session.add(p)
-    await db_session.commit()
-    await db_session.refresh(p)
-    return p
-
 async def test_list_profiles(client: AsyncClient, seed_data: dict, extra_profile: Profile):
     res = await client.get("/api/profiles")
     assert res.status_code == 200

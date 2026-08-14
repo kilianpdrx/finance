@@ -15,11 +15,21 @@ router = APIRouter()
 
 
 @router.get("", response_model=List[AccountOut])
-async def list_accounts(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+async def list_accounts(
+    include_inactive: bool = False,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Active accounts by default. `include_inactive=true` also returns closed
+    ones, so their historical transactions stay attributable and filterable
+    (a closed account keeps its history; only its balance leaves net worth)."""
+    filters = [Account.profile_id == pid]
+    if not include_inactive:
+        filters.append(Account.is_active == True)  # noqa: E712
     result = await db.execute(
         select(Account)
         .options(selectinload(Account.loan_details))
-        .where(Account.is_active == True, Account.profile_id == pid)
+        .where(*filters)
     )
     return result.scalars().all()
 
@@ -151,6 +161,11 @@ async def delete_snapshot(
 @router.get("/{account_id}/computed-balance")
 async def computed_balance(account_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     """Return the current balance using: latest snapshot + transactions after snapshot date."""
+    owned = (await db.execute(
+        select(Account.id).where(Account.id == account_id, Account.profile_id == pid)
+    )).scalar_one_or_none()
+    if not owned:
+        raise HTTPException(status_code=404, detail="Account not found")
     snap_result = await db.execute(
         select(AccountBalanceSnapshot)
         .where(AccountBalanceSnapshot.account_id == account_id, AccountBalanceSnapshot.profile_id == pid)

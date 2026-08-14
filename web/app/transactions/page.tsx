@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CategorySelect, ArchivedBadge } from "@/components/transactions/category-select";
+import { CategorySelect, ArchivedBadge, ClosedBadge } from "@/components/transactions/category-select";
 import { SearchBox } from "@/components/transactions/search-box";
 import { AccountTile } from "@/components/accounts/account-select";
 import { ACCOUNT_TYPE_LABELS } from "@/components/accounts/account-dialog";
@@ -21,7 +21,7 @@ import { TransactionDialog } from "@/components/transactions/transaction-dialog"
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
-  useAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionCount, useTransactionStats, useTransactionMutations,
+  useAccounts, useAllAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionCount, useTransactionStats, useTransactionMutations,
   fetchTransactionIds, type TransactionFilters, type Transaction, type Account, type Category,
 } from "@/lib/api/hooks";
 import { orderCategoryTree } from "@/lib/group";
@@ -34,14 +34,18 @@ const CATEGORIZED = "__has_cat__";
 
 export default function TransactionsPage() {
   const { data: accounts = [] } = useAccounts();
+  // Closed accounts are included here so their history stays filterable and
+  // attributable (they keep their transactions; only their balance is retired).
+  const { data: allAccounts = [] } = useAllAccounts();
   const { data: categories = [] } = useCategories();
   const { data: meta } = useTransactionMeta();
   const mut = useTransactionMutations();
   const confirm = useConfirm();
 
-  // The account filter only lists current accounts (no savings/credit/investment).
-  const txAccounts = useMemo(() => accounts.filter((a) => a.account_type === "courant"), [accounts]);
-  const accountNames = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a.name])) as Record<number, string>, [accounts]);
+  // The account filter only lists current accounts (no savings/credit/investment),
+  // including closed ones so past transactions remain reachable.
+  const txAccounts = useMemo(() => allAccounts.filter((a) => a.account_type === "courant"), [allAccounts]);
+  const accountNames = useMemo(() => Object.fromEntries(allAccounts.map((a) => [a.id, a.name])) as Record<number, string>, [allAccounts]);
 
   const [search, setSearch] = useState("");
   const [account, setAccount] = useState(ALL);
@@ -315,11 +319,14 @@ function AccountFilter({ value, onChange, accounts, width }: {
       <SelectContent>
         <SelectItem value={ALL}>Tous les comptes</SelectItem>
         {accounts.map((a) => (
-          <SelectItem key={a.id} value={String(a.id)} className="py-1.5">
+          <SelectItem key={a.id} value={String(a.id)} className={`py-1.5 ${a.is_active ? "" : "opacity-60"}`}>
             <span className="flex items-center gap-2">
               <AccountTile account={a} className="size-5 text-[9px]" />
               <span className="flex flex-col items-start leading-tight">
-                <span className="text-sm">{a.name}</span>
+                <span className="flex items-center gap-1.5 text-sm">
+                  {a.name}
+                  {!a.is_active && <ClosedBadge />}
+                </span>
                 <span className="text-[10px] text-muted-foreground">
                   {a.bank_name}{a.account_type ? ` · ${ACCOUNT_TYPE_LABELS[a.account_type] ?? a.account_type}` : ""}
                 </span>

@@ -72,6 +72,16 @@ async def client(test_engine):
 
 
 @pytest_asyncio.fixture
+async def extra_profile(db_session):
+    """A second profile, for cross-profile isolation checks."""
+    p = Profile(name="Secondary Profile", color="#ff0000", is_default=False, enabled_modules=["transactions"])
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+    return p
+
+
+@pytest_asyncio.fixture
 async def seed_data(db_session):
     """Seed initial Profile, Account, and Categories for testing."""
     profile = Profile(

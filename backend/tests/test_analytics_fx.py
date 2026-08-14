@@ -91,3 +91,27 @@ async def test_summary_flags_missing_fx(client: AsyncClient, db_session: AsyncSe
     res = await client.get("/api/analytics/summary", headers={"X-Profile-Id": str(profile.id)})
     assert res.status_code == 200
     assert res.json()["fx_incomplete"] is True
+
+
+async def test_closed_account_keeps_its_history(client: AsyncClient, db_session: AsyncSession, seed_data: dict):
+    """Deactivating an account must NOT rewrite past analytics — you did spend that
+    money. Only its balance leaves net worth (handled by the is_active filter there)."""
+    profile = seed_data["profile"]
+    acc = seed_data["account_courant"]
+    cat = seed_data["cat_courses"]
+    h = {"X-Profile-Id": str(profile.id)}
+    db_session.add(Transaction(profile_id=profile.id, account_id=acc.id, date=date(2026, 5, 4),
+                               description="COURSES", amount_cents=3000, currency="EUR",
+                               is_debit=True, category_id=cat.id, import_hash="closed_acc_hist"))
+    await db_session.commit()
+
+    def total_for(rows):
+        return next((r["total_cents"] for r in rows if r["category_id"] == cat.id), 0)
+
+    before = total_for((await client.get("/api/analytics/by-category", headers=h)).json())
+    assert before == 3000
+
+    assert (await client.delete(f"/api/accounts/{acc.id}", headers=h)).status_code == 204
+
+    after = total_for((await client.get("/api/analytics/by-category", headers=h)).json())
+    assert after == before, "closing an account must not retroactively change spending history"

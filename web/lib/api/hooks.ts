@@ -155,6 +155,15 @@ export function useAnalyticsContext() {
 export function useAccounts() {
   return useQuery({ queryKey: ["accounts"], queryFn: () => unwrap(api.GET("/api/accounts")), staleTime: 60_000 });
 }
+/** Active AND closed accounts. Use where history must stay attributable (the
+ *  transactions filter, the Comptes page); pickers should use useAccounts(). */
+export function useAllAccounts() {
+  return useQuery({
+    queryKey: ["accounts", "all"],
+    queryFn: () => unwrap(api.GET("/api/accounts", { params: { query: { include_inactive: true } } })),
+    staleTime: 60_000,
+  });
+}
 export function useCategories() {
   return useQuery({ queryKey: ["categories"], queryFn: () => unwrap(api.GET("/api/categories")), staleTime: 60_000 });
 }

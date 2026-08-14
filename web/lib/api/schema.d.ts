@@ -11,7 +11,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Accounts */
+        /**
+         * List Accounts
+         * @description Active accounts by default. `include_inactive=true` also returns closed
+         *     ones, so their historical transactions stay attributable and filterable
+         *     (a closed account keeps its history; only its balance leaves net worth).
+         */
         get: operations["list_accounts_api_accounts_get"];
         put?: never;
         /** Create Account */
@@ -2171,6 +2176,13 @@ export interface components {
              * @default 0
              */
             categorized: number;
+            /**
+             * Unparsed
+             * @default {}
+             */
+            unparsed: {
+                [key: string]: unknown;
+            };
         };
         /** CurrencyBalance */
         CurrencyBalance: {
@@ -2827,7 +2839,9 @@ export type $defs = Record<string, never>;
 export interface operations {
     list_accounts_api_accounts_get: {
         parameters: {
-            query?: never;
+            query?: {
+                include_inactive?: boolean;
+            };
             header?: {
                 "X-Profile-Id"?: number | null;
             };

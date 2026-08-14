@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Archive } from "lucide-react";
+import { Archive, Ban } from "lucide-react";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from "@/components/ui/select";
 import { orderCategoryTree } from "@/lib/group";
 import type { Category } from "@/lib/api/hooks";
@@ -13,6 +13,16 @@ export function ArchivedBadge({ className = "" }: { className?: string }) {
   return (
     <span className={`inline-flex items-center gap-0.5 rounded bg-muted px-1 text-[10px] text-muted-foreground ${className}`}>
       <Archive className="size-2.5" /> archivé
+    </span>
+  );
+}
+
+/** Muted "clôturé" pill for a closed (deactivated) account. Same visual language
+ *  as ArchivedBadge: the account keeps its history, it just isn't usable anymore. */
+export function ClosedBadge({ className = "" }: { className?: string }) {
+  return (
+    <span className={`inline-flex items-center gap-0.5 rounded bg-muted px-1 text-[10px] text-muted-foreground ${className}`}>
+      <Ban className="size-2.5" /> clôturé
     </span>
   );
 }

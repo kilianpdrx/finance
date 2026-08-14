@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Wallet } from "lucide-react";
+import { toast } from "sonner";
+import { Plus, Pencil, Trash2, Wallet, ChevronDown, ChevronRight, Undo2 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,20 +13,35 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { NetworthArea } from "@/components/charts/networth-area";
 import { AccountDialog, ACCOUNT_TYPE_LABELS } from "@/components/accounts/account-dialog";
 import { SnapshotDialog } from "@/components/accounts/snapshot-dialog";
-import { useAccounts, useNetWorth, useAccountMutations, type Account } from "@/lib/api/hooks";
+import { useAccounts, useAllAccounts, useNetWorth, useAccountMutations, type Account } from "@/lib/api/hooks";
+import { ClosedBadge } from "@/components/transactions/category-select";
 import { balancesFromNetWorth } from "@/lib/networth";
 import { deleteWithUndo } from "@/lib/undo";
 import { formatCents } from "@/lib/format";
 
 export default function ComptesPage() {
   const { data: accounts = [], isLoading } = useAccounts();
+  const { data: allAccounts = [] } = useAllAccounts();
   const { data: netWorth = [] } = useNetWorth({});
-  const { remove } = useAccountMutations();
+  const { remove, update } = useAccountMutations();
   const qc = useQueryClient();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
   const [snapshotAccount, setSnapshotAccount] = useState<Account | null>(null);
+  const [showClosed, setShowClosed] = useState(false);
+
+  // Closed accounts keep their history — they're just retired from the active
+  // list and from net worth. Shown here so they can be inspected or reopened.
+  const closed = allAccounts.filter((a) => !a.is_active);
+  const reactivate = (a: Account) =>
+    update.mutate(
+      { id: a.id, body: { is_active: true } },
+      {
+        onSuccess: () => toast.success(`Compte « ${a.name} » réactivé`),
+        onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur"),
+      },
+    );
 
   const balances = balancesFromNetWorth(netWorth, accounts);
   const total = Object.values(balances).reduce((s, v) => s + v, 0);
@@ -139,6 +155,37 @@ export default function ComptesPage() {
         </Tabs>
       ) : (
         <Grid items={accounts} />
+      )}
+
+      {closed.length > 0 && (
+        <div className="space-y-2">
+          <button
+            onClick={() => setShowClosed((v) => !v)}
+            className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+          >
+            {showClosed ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+            Comptes clôturés · {closed.length}
+          </button>
+          {showClosed && (
+            <Card className="divide-y divide-border p-0">
+              {closed.map((a) => (
+                <div key={a.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className="size-2.5 shrink-0 rounded-full" style={{ background: a.color }} />
+                  <span className="text-sm font-medium">{a.name}</span>
+                  <ClosedBadge />
+                  <span className="text-xs text-muted-foreground">{a.bank_name}</span>
+                  <Button variant="outline" size="sm" className="ml-auto" onClick={() => reactivate(a)}>
+                    <Undo2 className="size-4" /> Réactiver
+                  </Button>
+                </div>
+              ))}
+            </Card>
+          )}
+          <p className="px-1 text-xs text-muted-foreground">
+            Leurs transactions restent dans l&apos;historique et les analyses ; seul leur solde
+            sort du patrimoine.
+          </p>
+        </div>
       )}
 
       {netWorth.length > 0 && (
