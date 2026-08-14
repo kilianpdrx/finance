@@ -119,3 +119,17 @@ async def test_header_resolution(client: AsyncClient, seed_data: dict, extra_pro
     res2 = await client.get("/api/accounts", headers={"X-Profile-Id": str(seed_data["profile"].id)})
     assert res2.status_code == 200
     assert len(res2.json()) >= 2
+
+
+async def test_unknown_profile_header_is_rejected(client: AsyncClient, seed_data: dict):
+    """A header naming a non-existent profile must fail closed (404), not silently
+    fall through to the default profile — it's the only isolation boundary."""
+    res = await client.get("/api/accounts", headers={"X-Profile-Id": "99999"})
+    assert res.status_code == 404
+
+
+async def test_absent_header_falls_back_to_default(client: AsyncClient, seed_data: dict):
+    """No header still resolves the default profile (backwards compatibility)."""
+    res = await client.get("/api/accounts")
+    assert res.status_code == 200
+    assert len(res.json()) >= 2

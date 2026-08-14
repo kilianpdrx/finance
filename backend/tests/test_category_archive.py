@@ -87,6 +87,32 @@ async def test_rescan_scope_preserves_categorised(
     assert txn.category_id == seed_data["cat_salaire"].id
 
 
+async def test_rescan_fills_uncategorized(
+    client: AsyncClient, seed_data: dict, db_session: AsyncSession
+):
+    """Default-scope rescan (batched) assigns a category to an uncategorised row
+    that a rule matches, and leaves reviewed rows alone."""
+    pid = seed_data["profile"].id
+    h = {"X-Profile-Id": str(pid)}
+    acc = seed_data["account_courant"]
+    target = seed_data["cat_courses"]
+    db_session.add(Transaction(profile_id=pid, account_id=acc.id, date=date(2025, 3, 1),
+                               description="CARREFOUR MARKET", amount_cents=2000, is_debit=True,
+                               import_hash="resc-fill", category_id=None))
+    db_session.add(CategoryRule(profile_id=pid, category_id=target.id, priority=100,
+                                is_active=True, logic_operator="AND",
+                                conditions=[{"field": "description", "operator": "contains", "value": "CARREFOUR"}]))
+    await db_session.commit()
+
+    r = await client.post("/api/categories/rescan", headers=h)
+    assert r.status_code == 200 and r.json()["updated"] == 1
+
+    txn = (await db_session.execute(
+        select(Transaction).where(Transaction.import_hash == "resc-fill")
+    )).scalar_one()
+    assert txn.category_id == target.id
+
+
 async def test_archive_suggestions(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
     pid = seed_data["profile"].id
     h = {"X-Profile-Id": str(pid)}

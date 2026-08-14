@@ -1724,6 +1724,11 @@ export interface components {
              * @default []
              */
             net_worth_by_currency: components["schemas"]["CurrencyBalance"][];
+            /**
+             * Fx Incomplete
+             * @default false
+             */
+            fx_incomplete: boolean;
         };
         /** BankProfileCreate */
         BankProfileCreate: {

@@ -85,6 +85,28 @@ async def get_rate(
     return None
 
 
+async def convert_cents_checked(
+    db: AsyncSession,
+    amount_cents: int,
+    from_ccy: str,
+    to_ccy: str,
+    on_date: date,
+) -> tuple[int, bool]:
+    """Convert `amount_cents` from `from_ccy` to `to_ccy` at `on_date`.
+
+    Returns ``(converted_cents, ok)``. ``ok`` is ``False`` only when a real
+    conversion was needed (``from != to``) but no rate could be found — in that
+    case the amount is returned unconverted (a lossy fallback) and callers can
+    surface that the figures are provisional (see ``fx_incomplete``).
+    """
+    if from_ccy == to_ccy:
+        return amount_cents, True
+    rate = await get_rate(db, from_ccy, to_ccy, on_date)
+    if rate is None:
+        return amount_cents, False
+    return round(amount_cents * rate), True
+
+
 async def convert_cents(
     db: AsyncSession,
     amount_cents: int,
@@ -92,12 +114,8 @@ async def convert_cents(
     to_ccy: str,
     on_date: date,
 ) -> int:
-    if from_ccy == to_ccy:
-        return amount_cents
-    rate = await get_rate(db, from_ccy, to_ccy, on_date)
-    if rate is None:
-        return amount_cents
-    return round(amount_cents * rate)
+    converted, _ = await convert_cents_checked(db, amount_cents, from_ccy, to_ccy, on_date)
+    return converted
 
 
 async def backfill_range(

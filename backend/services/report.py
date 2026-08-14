@@ -83,7 +83,7 @@ async def _top_expenses(db, pid, date_from, date_to, base_ccy, limit=10):
     rows = (await db.execute(stmt)).scalars().all()
     conv = []
     for t in rows:
-        c = await convert_cents(db, t.amount_cents, t.currency or "EUR", base_ccy, date.today())
+        c = await convert_cents(db, t.amount_cents, t.currency or "EUR", base_ccy, t.date)
         conv.append((c, t))
     conv.sort(key=lambda x: x[0], reverse=True)
     return [{

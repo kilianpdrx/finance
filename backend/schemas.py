@@ -342,6 +342,9 @@ class AnalyticsSummary(BaseModel):
     last_transaction_date: Optional[str] = None
     base_currency: str = "EUR"                # the profile's reporting currency
     net_worth_by_currency: List[CurrencyBalance] = []
+    # True when at least one amount could not be converted to the base currency
+    # (a missing FX rate) — the totals are provisional and the UI should flag it.
+    fx_incomplete: bool = False
 
 class CashFlowMonth(BaseModel):
     month: str

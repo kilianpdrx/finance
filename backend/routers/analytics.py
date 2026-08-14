@@ -1,4 +1,5 @@
 import re
+import calendar
 from typing import List, Optional
 from datetime import date
 from collections import defaultdict
@@ -14,9 +15,18 @@ from schemas import (
     BudgetSectionRow, BudgetFullResponse,
     cents_to_display,
 )
-from services.fx import convert_cents
+from services.fx import convert_cents, convert_cents_checked
 
 router = APIRouter()
+
+
+def _month_end(month: str) -> date:
+    """Representative conversion date for a ``"YYYY-MM"`` bucket: the last day of
+    that month, clamped to today so the current month uses today's rate and no
+    future date is ever requested. Historical flows convert at their own period."""
+    y, m = int(month[:4]), int(month[5:7])
+    last = date(y, m, calendar.monthrange(y, m)[1])
+    return min(last, date.today())
 
 
 def _date_filters(date_from: Optional[date], date_to: Optional[date]):
@@ -51,18 +61,6 @@ async def _load_account_currencies(db: AsyncSession, parsed_ids: Optional[List[i
     return {r[0]: r[1] or "EUR" for r in rows}
 
 
-async def _convert_by_currency(
-    db: AsyncSession,
-    totals_by_ccy: dict[str, int],
-    base_ccy: str,
-    on_date: date,
-) -> int:
-    result = 0
-    for ccy, amount in totals_by_ccy.items():
-        result += await convert_cents(db, amount, ccy, base_ccy, on_date)
-    return result
-
-
 @router.get("/summary", response_model=AnalyticsSummary)
 async def summary(
     date_from: Optional[date] = None,
@@ -81,29 +79,34 @@ async def summary(
     if parsed_ids:
         filters.append(Transaction.account_id.in_(parsed_ids))
 
+    # Flows convert at each transaction's own period rate (group by month), so
+    # historical income/expenses reflect the FX of when they happened.
     txn_rows = (await db.execute(
         select(
             Transaction.account_id,
             Transaction.is_debit,
+            func.strftime("%Y-%m", Transaction.date).label("month"),
             func.sum(Transaction.amount_cents).label("total"),
         )
         .where(and_(*filters))
-        .group_by(Transaction.account_id, Transaction.is_debit)
+        .group_by(Transaction.account_id, Transaction.is_debit, "month")
     )).all()
 
-    income_by_ccy: dict[str, int] = defaultdict(int)
-    expenses_by_ccy: dict[str, int] = defaultdict(int)
+    fx_incomplete = False
+    total_income = 0
+    total_expenses = 0
     for r in txn_rows:
         ccy = acc_ccys.get(r.account_id, "EUR")
+        converted, ok = await convert_cents_checked(db, r.total, ccy, base_ccy, _month_end(r.month))
+        if not ok:
+            fx_incomplete = True
         if r.is_debit:
-            expenses_by_ccy[ccy] += r.total
+            total_expenses += converted
         else:
-            income_by_ccy[ccy] += r.total
+            total_income += converted
+    net_cash_flow = total_income - total_expenses
 
     today = date.today()
-    total_income = await _convert_by_currency(db, income_by_ccy, base_ccy, today)
-    total_expenses = await _convert_by_currency(db, expenses_by_ccy, base_ccy, today)
-    net_cash_flow = total_income - total_expenses
 
     from sqlalchemy.orm import selectinload
     from models import AccountType, LoanExtraPayment
@@ -178,7 +181,9 @@ async def summary(
             hv = await account_holdings_value_cents(db, acc_id, acc_ccy)
             if hv:
                 balance = hv
-        converted = await convert_cents(db, balance, acc_ccy, base_ccy, today)
+        converted, ok = await convert_cents_checked(db, balance, acc_ccy, base_ccy, today)
+        if not ok:
+            fx_incomplete = True
         net_worth += converted
         if is_loan and converted < 0:
             total_loans += -converted  # positive outstanding debt
@@ -212,6 +217,7 @@ async def summary(
         last_transaction_date=last_transaction_date,
         base_currency=base_ccy,
         net_worth_by_currency=net_worth_by_currency,
+        fx_incomplete=fx_incomplete,
     )
 
 
@@ -239,19 +245,19 @@ async def by_category(
         select(
             Transaction.category_id,
             Transaction.account_id,
+            func.strftime("%Y-%m", Transaction.date).label("month"),
             func.sum(Transaction.amount_cents).label("total"),
             func.count(Transaction.id).label("cnt"),
         )
         .where(and_(*filters))
-        .group_by(Transaction.category_id, Transaction.account_id)
+        .group_by(Transaction.category_id, Transaction.account_id, "month")
     )).all()
 
-    today = date.today()
     cat_totals: dict[int | None, int] = defaultdict(int)
     cat_counts: dict[int | None, int] = defaultdict(int)
     for r in txn_rows:
         ccy = acc_ccys.get(r.account_id, "EUR")
-        converted = await convert_cents(db, r.total, ccy, base_ccy, today)
+        converted = await convert_cents(db, r.total, ccy, base_ccy, _month_end(r.month))
         cat_totals[r.category_id] += converted
         cat_counts[r.category_id] += r.cnt
 
@@ -310,13 +316,12 @@ async def spending_trends(
         .group_by(Transaction.category_id, Transaction.account_id, "month")
     )).all()
 
-    today = date.today()
     data: dict = defaultdict(lambda: defaultdict(int))
     all_months: set = set()
     cat_ids_set: set = set()
     for r in txn_rows:
         ccy = acc_ccys.get(r.account_id, "EUR")
-        converted = await convert_cents(db, r.total, ccy, base_ccy, today)
+        converted = await convert_cents(db, r.total, ccy, base_ccy, _month_end(r.month))
         data[r.category_id][r.month] += converted
         all_months.add(r.month)
         if r.category_id is not None:
@@ -390,11 +395,10 @@ async def cash_flow(
         .group_by("month", Transaction.account_id, Transaction.is_debit)
     )).all()
 
-    today = date.today()
     monthly: dict = defaultdict(lambda: {"income": 0, "expenses": 0})
     for r in txn_rows:
         ccy = acc_ccys.get(r.account_id, "EUR")
-        converted = await convert_cents(db, r.total, ccy, base_ccy, today)
+        converted = await convert_cents(db, r.total, ccy, base_ccy, _month_end(r.month))
         if r.is_debit:
             monthly[r.month]["expenses"] += converted
         else:
@@ -518,7 +522,7 @@ async def net_worth_history(
             if not acc:
                 continue
             acc_ccy = acc.currency or "EUR"
-            converted = await convert_cents(db, balance, acc_ccy, base_ccy, today)
+            converted = await convert_cents(db, balance, acc_ccy, base_ccy, _month_end(month))
             entry[acc.name] = converted
             entry[f"{acc.name}_native"] = balance
             entry["total"] += converted

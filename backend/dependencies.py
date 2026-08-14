@@ -13,13 +13,16 @@ async def current_profile_id(
 ) -> int:
     """Resolve the active profile from the X-Profile-Id header.
 
-    Falls back to the default profile when the header is absent or invalid, so
-    the app keeps working for clients that don't send it yet.
+    An absent header falls back to the default profile (so clients that don't send
+    it yet keep working). A header that names a *non-existent* profile is rejected
+    with 404 — it's the only data-isolation boundary, so it must fail closed rather
+    than silently serving another profile's data.
     """
     if x_profile_id is not None:
         prof = await db.get(Profile, x_profile_id)
         if prof:
             return prof.id
+        raise HTTPException(404, "Profil introuvable")
     default = (await db.execute(
         select(Profile).where(Profile.is_default == True).limit(1)  # noqa: E712
     )).scalar_one_or_none()

@@ -12,7 +12,7 @@ from schemas import (
     CategoryRuleCreate, CategoryRuleUpdate, CategoryRuleOut,
     RuleCondition, TransactionOut,
 )
-from services.categorizer import categorize, evaluate_conditions
+from services.categorizer import evaluate_conditions
 
 router = APIRouter()
 
@@ -324,23 +324,31 @@ async def rescan_categories(
     transactions that have no category yet — it never rewrites already-categorised
     history (the ledger stays intact). `scope="all"` re-applies to every
     non-manually-reviewed transaction and may change past categorisations."""
+    from services.categorizer import categorize_batch
+
     filters = [Transaction.is_manually_reviewed == False, Transaction.profile_id == pid]  # noqa: E712
     if scope != "all":
         filters.append(Transaction.category_id == None)  # noqa: E711
     result = await db.execute(select(Transaction).where(*filters))
     transactions = result.scalars().all()
 
-    updated = 0
-    for txn in transactions:
-        txn_dict = {
+    # Evaluate the ruleset ONCE for every transaction (categorize_batch loads the
+    # rules a single time) instead of re-querying rules per row.
+    txn_dicts = [
+        {
             "description": txn.description,
             "amount_cents": txn.amount_cents,
             "date": txn.date,
             "is_debit": txn.is_debit,
             "currency": txn.currency,
-            "account_id": txn.account_id
+            "account_id": txn.account_id,
         }
-        new_cat_id, _ = await categorize(txn_dict, db, pid)
+        for txn in transactions
+    ]
+    cat_results = await categorize_batch(txn_dicts, db, pid)
+
+    updated = 0
+    for txn, (new_cat_id, _) in zip(transactions, cat_results):
         if new_cat_id != txn.category_id:
             txn.category_id = new_cat_id
             updated += 1

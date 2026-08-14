@@ -1,6 +1,6 @@
 "use client";
 
-import { Landmark, TrendingUp, TrendingDown, Scale, PieChart as PieIcon, Inbox, Upload, Wallet, Table2, ArrowRight } from "lucide-react";
+import { Landmark, TrendingUp, TrendingDown, Scale, PieChart as PieIcon, Inbox, Upload, Wallet, Table2, ArrowRight, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -76,6 +76,13 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-5">
+      {s?.fx_incomplete && (
+        <div className="flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          <AlertTriangle className="size-4 shrink-0" />
+          <span>Taux de change indisponibles pour certains montants — les totaux multidevises sont provisoires.</span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {kpis.map((k, i) => (
           <motion.div key={k.label} variants={fade} initial="hidden" animate="show" custom={i}>

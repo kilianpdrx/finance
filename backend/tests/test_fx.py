@@ -2,7 +2,8 @@ import pytest
 import pytest_asyncio
 from datetime import date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from services.fx import get_rate, convert_cents, backfill_range, refresh_latest
+from services import fx as fxmod
+from services.fx import get_rate, convert_cents, convert_cents_checked, backfill_range, refresh_latest
 from models import ExchangeRate
 
 pytestmark = pytest.mark.asyncio
@@ -36,6 +37,24 @@ async def test_convert_cents_cached(db_session: AsyncSession, fx_data):
     res = await convert_cents(db_session, 1000, "USD", "EUR", date(2026, 7, 20))
     # 1000 * 0.90 = 900
     assert res == 900
+
+async def test_convert_cents_checked_ok(db_session: AsyncSession, fx_data):
+    cents, ok = await convert_cents_checked(db_session, 1000, "USD", "EUR", date(2026, 7, 20))
+    assert (cents, ok) == (900, True)
+
+
+async def test_convert_cents_checked_same_currency(db_session: AsyncSession):
+    cents, ok = await convert_cents_checked(db_session, 1000, "EUR", "EUR", date.today())
+    assert (cents, ok) == (1000, True)
+
+
+async def test_convert_cents_checked_missing_rate(db_session: AsyncSession):
+    # Pre-mark the pair failed so no network call is made; a missing rate returns
+    # the amount unconverted with ok=False (drives fx_incomplete).
+    fxmod._mark_pair_failed("GBP", "EUR")
+    cents, ok = await convert_cents_checked(db_session, 1000, "GBP", "EUR", date(2026, 7, 20))
+    assert cents == 1000 and ok is False
+
 
 async def test_backfill_same_currency(db_session: AsyncSession):
     res = await backfill_range(db_session, "EUR", "EUR", date(2026, 7, 1), date(2026, 7, 10))
