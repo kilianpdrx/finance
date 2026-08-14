@@ -260,7 +260,7 @@ export default function TransactionsPage() {
                   </TableCell>
                   <TableCell className="pr-2">
                     <Button variant="ghost" size="icon" className="size-8 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
-                      title="Modifier la transaction" onClick={() => openEdit(t)}>
+                      title="Modifier la transaction" aria-label="Modifier la transaction" onClick={() => openEdit(t)}>
                       <Pencil className="size-4" />
                     </Button>
                   </TableCell>

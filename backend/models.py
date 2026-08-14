@@ -161,6 +161,9 @@ class Transaction(Base):
         Index("ix_transactions_date", "date"),
         Index("ix_transactions_account_date", "account_id", "date"),
         Index("ix_transactions_category", "category_id"),
+        # Every user-data query filters on profile_id; the indexes above all lead
+        # with another column, so none of them can serve that predicate.
+        Index("ix_transactions_profile_date", "profile_id", "date"),
     )
 
 

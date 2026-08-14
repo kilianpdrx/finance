@@ -118,6 +118,44 @@ async def convert_cents(
     return converted
 
 
+class RateCache:
+    """Memoizes ``get_rate`` for the lifetime of one request.
+
+    Analytics converts per ``(currency, month)`` bucket, and the same pair-date
+    recurs across every category/account in a response — without this each
+    repetition is a fresh DB round-trip. Scope one instance per request; never
+    share it across requests (rates would go stale).
+    """
+
+    def __init__(self) -> None:
+        self._rates: dict[tuple[str, str, date], Optional[float]] = {}
+
+    async def rate(self, db: AsyncSession, base: str, target: str, on_date: date) -> Optional[float]:
+        if base == target:
+            return 1.0
+        key = (base, target, on_date)
+        if key not in self._rates:
+            self._rates[key] = await get_rate(db, base, target, on_date)
+        return self._rates[key]
+
+    async def convert_checked(
+        self, db: AsyncSession, amount_cents: int, from_ccy: str, to_ccy: str, on_date: date
+    ) -> tuple[int, bool]:
+        """Cached equivalent of :func:`convert_cents_checked`."""
+        if from_ccy == to_ccy:
+            return amount_cents, True
+        r = await self.rate(db, from_ccy, to_ccy, on_date)
+        if r is None:
+            return amount_cents, False
+        return round(amount_cents * r), True
+
+    async def convert(
+        self, db: AsyncSession, amount_cents: int, from_ccy: str, to_ccy: str, on_date: date
+    ) -> int:
+        converted, _ = await self.convert_checked(db, amount_cents, from_ccy, to_ccy, on_date)
+        return converted
+
+
 async def backfill_range(
     db: AsyncSession,
     base: str,

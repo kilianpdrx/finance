@@ -63,3 +63,35 @@ async def test_backfill_same_currency(db_session: AsyncSession):
 async def test_refresh_same_currency(db_session: AsyncSession):
     # This shouldn't crash or insert anything
     await refresh_latest(db_session, ["EUR"], "EUR")
+
+
+async def test_rate_cache_matches_uncached_and_queries_once(db_session: AsyncSession, fx_data, monkeypatch):
+    """RateCache must return identical values to the plain path, but hit get_rate
+    once per distinct (pair, date) — analytics repeats the same bucket many times."""
+    from services.fx import RateCache
+    import services.fx as fxmod
+
+    calls: list[tuple] = []
+    real = fxmod.get_rate
+
+    async def counting(db, base, target, on_date):
+        calls.append((base, target, on_date))
+        return await real(db, base, target, on_date)
+
+    monkeypatch.setattr(fxmod, "get_rate", counting)
+
+    cache = RateCache()
+    d = date(2026, 7, 20)
+    results = [await cache.convert(db_session, 1000, "USD", "EUR", d) for _ in range(5)]
+
+    assert results == [900] * 5                       # same as convert_cents
+    assert len(calls) == 1                            # ...but one lookup
+    # A different date is a different bucket.
+    await cache.convert(db_session, 1000, "USD", "EUR", date(2026, 7, 21))
+    assert len(calls) == 2
+
+
+async def test_rate_cache_same_currency_never_queries(db_session: AsyncSession):
+    from services.fx import RateCache
+    cents, ok = await RateCache().convert_checked(db_session, 500, "EUR", "EUR", date.today())
+    assert (cents, ok) == (500, True)

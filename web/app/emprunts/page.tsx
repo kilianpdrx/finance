@@ -169,11 +169,11 @@ export default function LoansPage() {
                   )}
                   <div className="ml-auto flex gap-1">
                     {account && (
-                      <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" onClick={() => setEditAccount(account)}>
+                      <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label="Modifier l'emprunt" onClick={() => setEditAccount(account)}>
                         <Pencil className="size-4" />
                       </Button>
                     )}
-                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative"
+                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative" aria-label="Supprimer l'emprunt"
                       onClick={() => removeLoan(loan)}>
                       <Trash2 className="size-4" />
                     </Button>

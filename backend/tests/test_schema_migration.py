@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 import database
 from models import Base
 
-HEAD = "010_category_archived"
+HEAD = "011_txn_profile_index"
 
 
 @pytest.fixture

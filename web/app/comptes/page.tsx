@@ -79,9 +79,9 @@ export default function ComptesPage() {
           </div>
         </div>
         <div className="flex gap-0.5">
-          <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-brand" title="Soldes manuels" onClick={() => setSnapshotAccount(acc)}><Plus className="size-4" /></Button>
-          <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" onClick={() => openEdit(acc)}><Pencil className="size-4" /></Button>
-          <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative" onClick={() => onDelete(acc)}><Trash2 className="size-4" /></Button>
+          <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-brand" title="Soldes manuels" aria-label="Soldes manuels" onClick={() => setSnapshotAccount(acc)}><Plus className="size-4" /></Button>
+          <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label="Modifier le compte" onClick={() => openEdit(acc)}><Pencil className="size-4" /></Button>
+          <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative" aria-label="Clôturer le compte" onClick={() => onDelete(acc)}><Trash2 className="size-4" /></Button>
         </div>
       </div>
       <div className="mt-4 flex items-center justify-between">

@@ -78,11 +78,11 @@ export default function GoalsPage() {
                   {isCompleted ? <Check className="size-5" /> : <Target className="size-5" />}
                 </div>
                 <div className="flex space-x-1 opacity-0 transition-opacity group-hover:opacity-100">
-                  <Button variant="ghost" size="icon" className="size-8"
+                  <Button variant="ghost" size="icon" className="size-8" aria-label="Modifier l'objectif"
                     onClick={(e) => { e.stopPropagation(); openEdit(goal); }}>
                     <Pencil className="size-4" />
                   </Button>
-                  <Button variant="ghost" size="icon" className="size-8"
+                  <Button variant="ghost" size="icon" className="size-8" aria-label="Supprimer l'objectif"
                     onClick={(e) => { e.stopPropagation(); removeGoal(goal); }}>
                     <Trash2 className="size-4 text-destructive" />
                   </Button>

@@ -142,8 +142,8 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
                     {r.conditions.map((c) => `${c.field} ${c.operator} "${c.value}"`).join(` ${r.logic_operator} `)}
                   </span>
                   <Switch checked={r.is_active} onCheckedChange={(v) => update.mutate({ ruleId: r.id, body: { is_active: v } })} />
-                  <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" onClick={() => openEdit(r)}><Pencil className="size-4" /></Button>
-                  <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative" onClick={() => remove.mutate(r.id)}><Trash2 className="size-4" /></Button>
+                  <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label="Modifier la règle" onClick={() => openEdit(r)}><Pencil className="size-4" /></Button>
+                  <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative" aria-label="Supprimer la règle" onClick={() => remove.mutate(r.id)}><Trash2 className="size-4" /></Button>
                 </div>
               ))}
             </Card>

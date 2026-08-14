@@ -15,7 +15,29 @@ router = APIRouter()
 _APP_PORTS = (3000, 8000)
 
 
+# Only processes whose command line looks like this app's own servers may be
+# signalled. Without this check a stray dev server (or anything else) that happens
+# to hold port 3000/8000 would be SIGKILLed by the Quit button.
+_OWN_PROCESS_MARKERS = ("uvicorn", "main:app", "next", "node")
+
+
+def _is_app_process(pid: int) -> bool:
+    """True when `pid`'s command line identifies it as this app's frontend/backend."""
+    try:
+        out = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True, text=True, timeout=5,
+        )
+    except Exception:
+        return False
+    cmd = out.stdout.strip().lower()
+    if not cmd:
+        return False
+    return any(marker in cmd for marker in _OWN_PROCESS_MARKERS)
+
+
 def _pids_on_port(port: int) -> set[int]:
+    """PIDs listening on `port` that are recognisably ours (see _is_app_process)."""
     try:
         out = subprocess.run(
             ["lsof", "-ti", f"tcp:{port}"],
@@ -26,9 +48,13 @@ def _pids_on_port(port: int) -> set[int]:
     pids = set()
     for line in out.stdout.split():
         try:
-            pids.add(int(line))
+            pid = int(line)
         except ValueError:
-            pass
+            continue
+        if _is_app_process(pid):
+            pids.add(pid)
+        else:
+            logger.info("Shutdown: leaving unrelated process %s on a shared port alone", pid)
     return pids
 
 
@@ -54,11 +80,12 @@ def _shutdown_worker() -> None:
 
     time.sleep(1.5)
 
-    # Force-kill anything still holding a port.
+    # Force-kill anything of ours still holding a port.
     remaining: set[int] = set()
     for port in _APP_PORTS:
         remaining |= _pids_on_port(port)
     remaining.add(os.getpid())
+    remaining.discard(0)
     for pid in remaining:
         try:
             os.kill(pid, signal.SIGKILL)
@@ -98,6 +125,24 @@ from utils import csv_safe_cell
 # Upper bound on an uploaded restore file (defensive: avoids reading an
 # unbounded upload fully into memory).
 MAX_RESTORE_BYTES = 200 * 1024 * 1024  # 200 MB
+
+# Each restore snapshots the database it replaces. Keep a few for safety, but
+# don't let full DB copies pile up next to the live file forever.
+PRE_RESTORE_KEEP = 3
+
+
+def _prune_pre_restore_snapshots(keep: int = PRE_RESTORE_KEEP) -> None:
+    """Delete all but the newest `keep` finance.pre-restore-*.db snapshots.
+
+    The filenames are timestamped (…-YYYYmmdd-HHMMSS.db), so sorting by name is
+    chronological. Best-effort: a failure here must never fail the restore."""
+    try:
+        snaps = sorted(DB_PATH.parent.glob("finance.pre-restore-*.db"))
+        for old in snaps[:-keep] if keep > 0 else snaps:
+            old.unlink(missing_ok=True)
+            logger.info("Pruned old pre-restore snapshot %s", old.name)
+    except Exception as e:
+        logger.warning("Could not prune pre-restore snapshots: %s", e)
 
 
 @router.get("/backup")
@@ -190,6 +235,7 @@ async def restore_backup(
             prev = DB_PATH.with_name(f"finance.pre-restore-{datetime.now():%Y%m%d-%H%M%S}.db")
             shutil.copy2(DB_PATH, prev)
             logger.info("Saved pre-restore snapshot to %s", prev.name)
+            _prune_pre_restore_snapshots()
         # Drop the temp file's integrity-check sidecars before swapping it in.
         for suffix in ("-wal", "-shm"):
             Path(f"{tmp_path}{suffix}").unlink(missing_ok=True)

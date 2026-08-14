@@ -42,3 +42,20 @@ async def test_update_profile_modules(client, seed_data):
     res_reset = await client.put(f"/api/profiles/{pid}", json=reset_body)
     assert res_reset.status_code == 200
     assert res_reset.json()["enabled_modules"] == ["banking", "budgeting", "investments"]
+
+
+@pytest.mark.asyncio
+async def test_base_currency_setting_is_validated(client, seed_data):
+    """A typo'd base currency silently breaks every FX conversion in the app, so
+    it must be rejected rather than stored."""
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+
+    bad = await client.put("/api/settings/base_currency", json={"value": "EURO"}, headers=h)
+    assert bad.status_code == 400
+
+    ok = await client.put("/api/settings/base_currency", json={"value": "chf"}, headers=h)
+    assert ok.status_code == 200 and ok.json()["value"] == "CHF"  # normalised
+
+    # Non-currency settings are still free-form.
+    other = await client.put("/api/settings/some_flag", json={"value": "anything"}, headers=h)
+    assert other.status_code == 200

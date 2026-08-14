@@ -15,7 +15,7 @@ from schemas import (
     BudgetSectionRow, BudgetFullResponse,
     cents_to_display,
 )
-from services.fx import convert_cents, convert_cents_checked
+from services.fx import RateCache
 
 router = APIRouter()
 
@@ -72,6 +72,7 @@ async def summary(
     parsed_ids = _parse_account_ids(account_ids)
     base_ccy = await _get_base_currency(db, pid)
     acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
+    rates = RateCache()  # memoize rate lookups for this request
 
     filters = _date_filters(date_from, date_to)
     filters.append(Transaction.is_internal_transfer == False)
@@ -97,7 +98,7 @@ async def summary(
     total_expenses = 0
     for r in txn_rows:
         ccy = acc_ccys.get(r.account_id, "EUR")
-        converted, ok = await convert_cents_checked(db, r.total, ccy, base_ccy, _month_end(r.month))
+        converted, ok = await rates.convert_checked(db, r.total, ccy, base_ccy, _month_end(r.month))
         if not ok:
             fx_incomplete = True
         if r.is_debit:
@@ -181,7 +182,7 @@ async def summary(
             hv = await account_holdings_value_cents(db, acc_id, acc_ccy)
             if hv:
                 balance = hv
-        converted, ok = await convert_cents_checked(db, balance, acc_ccy, base_ccy, today)
+        converted, ok = await rates.convert_checked(db, balance, acc_ccy, base_ccy, today)
         if not ok:
             fx_incomplete = True
         net_worth += converted
@@ -233,6 +234,7 @@ async def by_category(
     parsed_ids = _parse_account_ids(account_ids)
     base_ccy = await _get_base_currency(db, pid)
     acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
+    rates = RateCache()  # memoize rate lookups for this request
 
     filters = _date_filters(date_from, date_to)
     filters.append(Transaction.is_debit == (not income))
@@ -257,7 +259,7 @@ async def by_category(
     cat_counts: dict[int | None, int] = defaultdict(int)
     for r in txn_rows:
         ccy = acc_ccys.get(r.account_id, "EUR")
-        converted = await convert_cents(db, r.total, ccy, base_ccy, _month_end(r.month))
+        converted = await rates.convert(db, r.total, ccy, base_ccy, _month_end(r.month))
         cat_totals[r.category_id] += converted
         cat_counts[r.category_id] += r.cnt
 
@@ -297,6 +299,7 @@ async def spending_trends(
     parsed_ids = _parse_account_ids(account_ids)
     base_ccy = await _get_base_currency(db, pid)
     acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
+    rates = RateCache()  # memoize rate lookups for this request
 
     filters = _date_filters(date_from, date_to)
     filters.append(Transaction.is_debit == (not income))
@@ -321,7 +324,7 @@ async def spending_trends(
     cat_ids_set: set = set()
     for r in txn_rows:
         ccy = acc_ccys.get(r.account_id, "EUR")
-        converted = await convert_cents(db, r.total, ccy, base_ccy, _month_end(r.month))
+        converted = await rates.convert(db, r.total, ccy, base_ccy, _month_end(r.month))
         data[r.category_id][r.month] += converted
         all_months.add(r.month)
         if r.category_id is not None:
@@ -376,6 +379,7 @@ async def cash_flow(
     parsed_ids = _parse_account_ids(account_ids)
     base_ccy = await _get_base_currency(db, pid)
     acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
+    rates = RateCache()  # memoize rate lookups for this request
 
     filters = _date_filters(date_from, date_to)
     filters.append(Transaction.is_internal_transfer == False)
@@ -398,7 +402,7 @@ async def cash_flow(
     monthly: dict = defaultdict(lambda: {"income": 0, "expenses": 0})
     for r in txn_rows:
         ccy = acc_ccys.get(r.account_id, "EUR")
-        converted = await convert_cents(db, r.total, ccy, base_ccy, _month_end(r.month))
+        converted = await rates.convert(db, r.total, ccy, base_ccy, _month_end(r.month))
         if r.is_debit:
             monthly[r.month]["expenses"] += converted
         else:
@@ -425,6 +429,7 @@ async def net_worth_history(
 ):
     parsed_ids = _parse_account_ids(account_ids)
     base_ccy = await _get_base_currency(db, pid)
+    rates = RateCache()  # memoize rate lookups for this request
 
     filters = _date_filters(date_from, date_to)
     filters.append(Transaction.profile_id == pid)
@@ -522,7 +527,7 @@ async def net_worth_history(
             if not acc:
                 continue
             acc_ccy = acc.currency or "EUR"
-            converted = await convert_cents(db, balance, acc_ccy, base_ccy, _month_end(month))
+            converted = await rates.convert(db, balance, acc_ccy, base_ccy, _month_end(month))
             entry[acc.name] = converted
             entry[f"{acc.name}_native"] = balance
             entry["total"] += converted

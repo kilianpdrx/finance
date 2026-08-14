@@ -180,12 +180,12 @@ export function CategoriesTab() {
                       </span>
                     )}
                     {!child && (
-                      <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-brand" title="Ajouter une sous-catégorie" onClick={() => openAddSub(c)}><Plus className="size-4" /></Button>
+                      <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-brand" title="Ajouter une sous-catégorie" aria-label="Ajouter une sous-catégorie" onClick={() => openAddSub(c)}><Plus className="size-4" /></Button>
                     )}
-                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-foreground" title="Archiver" onClick={() => onArchive(c)}><Archive className="size-4" /></Button>
-                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-foreground" title="Archiver et remplacer" onClick={() => onArchiveReplace(c)}><Replace className="size-4" /></Button>
-                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" onClick={() => openEdit(c)}><Pencil className="size-4" /></Button>
-                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative" onClick={() => onDelete(c)}><Trash2 className="size-4" /></Button>
+                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-foreground" title="Archiver" aria-label="Archiver la catégorie" onClick={() => onArchive(c)}><Archive className="size-4" /></Button>
+                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-foreground" title="Archiver et remplacer" aria-label="Archiver et remplacer la catégorie" onClick={() => onArchiveReplace(c)}><Replace className="size-4" /></Button>
+                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label="Modifier la catégorie" onClick={() => openEdit(c)}><Pencil className="size-4" /></Button>
+                    <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative" aria-label="Supprimer la catégorie" onClick={() => onDelete(c)}><Trash2 className="size-4" /></Button>
                   </div>
                 );
               })}
