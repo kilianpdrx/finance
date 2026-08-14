@@ -44,9 +44,12 @@ export default function DashboardPage() {
   const showGoals = modules.includes("goals");
   const showLoans = modules.includes("loans");
 
-  const loading = summary.isLoading || cashFlow.isLoading || byCategory.isLoading || netWorth.isLoading;
+  // Only blank the page on a genuine first paint (nothing resolved yet). Each card
+  // then handles its own pending state, so one slow query can't hide the fast ones.
+  const initialLoading =
+    summary.isLoading && cashFlow.isLoading && byCategory.isLoading && netWorth.isLoading;
 
-  if (loading) return <DashboardSkeleton />;
+  if (initialLoading) return <DashboardSkeleton />;
 
   if (accounts.length === 0) {
     return <GettingStarted showBudget={modules.includes("budgeting")} />;
@@ -99,7 +102,9 @@ export default function DashboardPage() {
               <CardDescription>Solde net cumulé par mois</CardDescription>
             </CardHeader>
             <CardContent className="flex min-h-0 flex-1 flex-col pt-2">
-              {nw.length ? (
+              {netWorth.isLoading ? (
+                <Skeleton className="min-h-[280px] flex-1 rounded-xl" />
+              ) : nw.length ? (
                 <div className="min-h-[280px] flex-1">
                   <NetworthArea data={nw} currency={currency} height="100%" />
                 </div>
@@ -117,7 +122,9 @@ export default function DashboardPage() {
               <CardDescription>Par type de compte</CardDescription>
             </CardHeader>
             <CardContent>
-              {Object.keys(patrimoine).length ? (
+              {netWorth.isLoading ? (
+                <Skeleton className="mx-auto size-44 rounded-full" />
+              ) : Object.keys(patrimoine).length ? (
                 <PatrimoineDonut byType={patrimoine} currency={currency} />
               ) : (
                 <EmptyState icon={PieIcon} title="Aucun patrimoine" />
@@ -166,7 +173,9 @@ export default function DashboardPage() {
               <CardDescription>Par catégorie</CardDescription>
             </CardHeader>
             <CardContent>
-              {byCategory.data?.length ? (
+              {byCategory.isLoading ? (
+                <Skeleton className="mx-auto size-44 rounded-full" />
+              ) : byCategory.data?.length ? (
                 <SpendingDonut data={byCategory.data} currency={currency} />
               ) : (
                 <EmptyState icon={PieIcon} title="Aucune dépense" />
@@ -195,7 +204,9 @@ export default function DashboardPage() {
             <CardDescription>Flux mensuels et solde net</CardDescription>
           </CardHeader>
           <CardContent className="pt-2">
-            {cashFlow.data?.length ? (
+            {cashFlow.isLoading ? (
+              <Skeleton className="h-[260px] w-full rounded-xl" />
+            ) : cashFlow.data?.length ? (
               <CashflowChart data={cashFlow.data} currency={currency} />
             ) : (
               <EmptyState icon={Inbox} title="Pas encore de données" />

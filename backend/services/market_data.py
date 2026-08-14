@@ -650,3 +650,24 @@ async def fetch_historical_prices(ticker: str, period: str = "1y") -> list[dict]
     except Exception as e:
         logger.warning("Historical price fetch failed for %s: %s", ticker, e)
         return []
+
+
+async def warm_history_cache(db: AsyncSession, period: str = "2y") -> int:
+    """Pre-fetch price history for every auto-priced holding, concurrently.
+
+    `_history_cache` is in-memory with a 1h TTL, so without this the first request
+    that needs history (the dashboard's net-worth chart) pays the full fetch — once
+    per hour and after every restart. Called from the background startup task and
+    the periodic price-refresh job so user requests find the cache warm.
+    """
+    tickers = sorted({
+        h.ticker for h in (await db.execute(
+            select(Holding).where(Holding.price_locked != True)  # noqa: E712
+        )).scalars().all()
+        if h.ticker
+    })
+    if not tickers:
+        return 0
+    await asyncio.gather(*(fetch_historical_prices(t, period) for t in tickers))
+    logger.info("Warmed price history for %d ticker(s)", len(tickers))
+    return len(tickers)

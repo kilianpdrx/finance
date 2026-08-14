@@ -104,12 +104,18 @@ async def lifespan(app: FastAPI):
         # One-shot holdings price refresh (only if investments module is enabled for at least 1 profile)
         if has_investment_profiles:
             async with AsyncSessionLocal() as db:
-                from services.market_data import refresh_all_prices
+                from services.market_data import refresh_all_prices, warm_history_cache
                 try:
                     n = await refresh_all_prices(db)
                     logger.info("Startup price refresh complete (%d prices)", n)
                 except Exception as e:
                     logger.warning("Startup price refresh failed: %s", e)
+                # Pre-fetch price history so the dashboard's net-worth chart doesn't
+                # pay a per-holding network fetch on the first (cold) request.
+                try:
+                    await warm_history_cache(db)
+                except Exception as e:
+                    logger.warning("Startup history warm failed: %s", e)
 
         # IBKR Flex positions sync (silent; only profiles with ibkr_auto_sync=true & investments enabled)
         if has_investment_profiles:
@@ -154,11 +160,16 @@ async def lifespan(app: FastAPI):
 
     async def periodic_price_refresh():
         async with AsyncSessionLocal() as db:
-            from services.market_data import refresh_all_prices
+            from services.market_data import refresh_all_prices, warm_history_cache
             try:
                 await refresh_all_prices(db)
             except Exception as e:
                 logger.warning("Scheduled price refresh failed: %s", e)
+            # Keep the 1h-TTL history cache warm so requests never pay the fetch.
+            try:
+                await warm_history_cache(db)
+            except Exception as e:
+                logger.warning("Scheduled history warm failed: %s", e)
 
     scheduler.add_job(daily_fx_refresh, "cron", hour=7, minute=0, id="daily_fx")
     scheduler.add_job(periodic_price_refresh, "interval", minutes=15, id="price_refresh")

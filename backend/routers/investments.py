@@ -1,3 +1,4 @@
+import asyncio
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy import select, and_, delete, text, func
@@ -419,9 +420,10 @@ async def account_performance(
 
     # Per-holding date→close (scaled to the account currency at today's FX rate so
     # mixed-currency accounts weight each position correctly).
+    # Fetched concurrently — one round-trip wall-clock instead of one per holding.
+    raws = await asyncio.gather(*(fetch_historical_prices(h.ticker, period) for h in holdings))
     histories: list[tuple[float, dict[str, float]]] = []  # (quantity, {date: close})
-    for h in holdings:
-        raw = await fetch_historical_prices(h.ticker, period)
+    for h, raw in zip(holdings, raws):
         if not raw:
             continue
         rate = 1.0
@@ -998,12 +1000,17 @@ async def _holdings_monthly_values(db: AsyncSession, account_id: int, acc_ccy: s
     if not holdings:
         return []
 
+    # price_locked holdings are manual-priced (e.g. a fund Yahoo can't fetch) — no history.
+    eligible = [h for h in holdings if not h.price_locked]
+    if not eligible:
+        return []
+    # Fetch every holding's history CONCURRENTLY. Sequentially this was one blocking
+    # network round-trip per holding on the dashboard's critical path (~4s for 17).
+    raws = await asyncio.gather(*(fetch_historical_prices(h.ticker, "2y") for h in eligible))
+
     # Per-holding {date: close} scaled to the account currency.
     histories: list[tuple[float, dict[str, float]]] = []
-    for h in holdings:
-        if h.price_locked:
-            continue  # manual-priced (e.g. a fund Yahoo can't fetch) — skip history
-        raw = await fetch_historical_prices(h.ticker, "2y")
+    for h, raw in zip(eligible, raws):
         if not raw:
             continue
         rate = 1.0
