@@ -21,8 +21,20 @@ async def lifespan(app: FastAPI):
 
     # ── Seed default data if empty ───────────────────────────────────────────────
     async with AsyncSessionLocal() as db:
+        from sqlalchemy import text
+
+        # The default profile MUST exist before seeding: every read is scoped by
+        # profile_id, so categories/rules written without one are invisible to the
+        # entire app (a fresh install would show no categories and never
+        # auto-categorise an import).
+        existing = (await db.execute(text("SELECT id FROM profiles WHERE is_default = 1 LIMIT 1"))).first()
+        if not existing:
+            await db.execute(text("INSERT INTO profiles (name, color, is_default) VALUES ('Principal', '#6366f1', 1)"))
+            await db.commit()
+        default_pid = (await db.execute(text("SELECT id FROM profiles WHERE is_default = 1 LIMIT 1"))).scalar()
+
         from seed import seed_if_empty
-        await seed_if_empty(db)
+        await seed_if_empty(db, default_pid)
 
         # Ensure every parent category is grouping-only (has an "Autre {parent}"
         # leaf and holds no transactions directly). Idempotent.
@@ -31,13 +43,6 @@ async def lifespan(app: FastAPI):
             await normalize_parent_groups(db)
         except Exception as e:
             logger.warning("Parent-group normalization failed: %s", e)
-
-        from sqlalchemy import text
-        existing = (await db.execute(text("SELECT id FROM profiles WHERE is_default = 1 LIMIT 1"))).first()
-        if not existing:
-            await db.execute(text("INSERT INTO profiles (name, color, is_default) VALUES ('Principal', '#6366f1', 1)"))
-            await db.commit()
-        default_pid = (await db.execute(text("SELECT id FROM profiles WHERE is_default = 1 LIMIT 1"))).scalar()
 
         # Ensure base_currency setting exists
         await db.execute(text(

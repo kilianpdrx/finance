@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 import database
 from models import Base
 
-HEAD = "011_txn_profile_index"
+HEAD = "012_adopt_orphan_profile_rows"
 
 
 @pytest.fixture

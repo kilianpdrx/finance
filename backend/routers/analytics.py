@@ -111,7 +111,7 @@ async def summary(
 
     from sqlalchemy.orm import selectinload
     from models import AccountType, LoanExtraPayment
-    from routers.investments import account_holdings_value_cents
+    from routers.investments import holdings_value_by_account
     from services.loans import compute_amortization
 
     acc_q2 = (
@@ -122,6 +122,9 @@ async def summary(
     if parsed_ids:
         acc_q2 = acc_q2.where(Account.id.in_(parsed_ids))
     all_acc = (await db.execute(acc_q2)).scalars().all()
+    # Value every account's holdings in one pass — doing it inside the loop below
+    # re-queried and re-enriched holdings once per account.
+    holdings_values = await holdings_value_by_account(db, {a.id: (a.currency or "EUR") for a in all_acc})
     net_worth = 0
     total_loans = 0  # outstanding loan debt, in base currency (positive)
     by_ccy: dict[str, dict] = {}  # per native currency: {native_cents, converted_cents}
@@ -179,7 +182,7 @@ async def summary(
         else:
             # Holdings-priced investment accounts carry their value in positions,
             # which SUPERSEDES the snapshot/transaction balance (avoids double-count).
-            hv = await account_holdings_value_cents(db, acc_id, acc_ccy)
+            hv = holdings_values.get(acc_id, 0)
             if hv:
                 balance = hv
         converted, ok = await rates.convert_checked(db, balance, acc_ccy, base_ccy, today)

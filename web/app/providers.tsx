@@ -16,7 +16,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
             staleTime: 30_000,
             refetchOnWindowFocus: false,
             retry: 1,
+            // The backend runs on this machine, so "offline" is meaningless here.
+            // With the default networkMode "online", TanStack PAUSES fetches when
+            // it believes there's no connection: queries sit in fetchStatus
+            // "paused" forever and never surface an error — the UI then renders
+            // empty states instead of telling the user anything. Always attempt
+            // the request and let real failures become errors.
+            networkMode: "always",
           },
+          mutations: { networkMode: "always" },
         },
       }),
   );
@@ -31,7 +39,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
           theme="system"
           richColors
         />
-        <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
+        {/* Dev-only: the floating devtools button is confusing in a shipped app. */}
+        {process.env.NODE_ENV !== "production" && (
+          <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
+        )}
       </QueryClientProvider>
     </ThemeProvider>
   );

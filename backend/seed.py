@@ -118,7 +118,31 @@ DEFAULT_RULES = [
 
 
 
-async def seed_if_empty(db: AsyncSession):
+def build_default_rule(rule_data: dict, category_id: int, profile_id: int) -> CategoryRule:
+    """Turn a DEFAULT_RULES entry into a CategoryRule for one profile.
+
+    Takes a copy so the module-level DEFAULT_RULES dicts are never mutated —
+    seeding twice (fresh install, then the Paramètres "règles standard" button)
+    must produce the same result.
+    """
+    data = dict(rule_data)
+    data.pop("category", None)
+    conditions = [{
+        "field": "description",
+        "operator": data.pop("match_type"),
+        "value": data.pop("keyword"),
+    }]
+    return CategoryRule(category_id=category_id, conditions=conditions, profile_id=profile_id, **data)
+
+
+async def seed_if_empty(db: AsyncSession, profile_id: int):
+    """Seed default categories + rules for `profile_id`.
+
+    `profile_id` is REQUIRED: every read filters on it, so rows written without
+    one are invisible to the whole app (the user would see no categories and get
+    no auto-categorisation at all). The caller must create the default profile
+    before calling this.
+    """
     result = await db.execute(select(func.count(Category.id)))
     count = result.scalar()
     if count and count > 0:
@@ -127,21 +151,16 @@ async def seed_if_empty(db: AsyncSession):
     # Insert categories
     cat_map = {}
     for cat_data in DEFAULT_CATEGORIES:
-        cat = Category(**cat_data)
+        cat = Category(**cat_data, profile_id=profile_id)
         db.add(cat)
         await db.flush()
         cat_map[cat.name] = cat.id
 
     # Insert rules
     for rule_data in DEFAULT_RULES:
-        cat_name = rule_data.pop("category")
-        cat_id = cat_map.get(cat_name)
+        cat_id = cat_map.get(rule_data["category"])
         if cat_id:
-            kw = rule_data.pop("keyword")
-            mt = rule_data.pop("match_type")
-            conditions = [{"field": "description", "operator": mt, "value": kw}]
-            rule = CategoryRule(category_id=cat_id, conditions=conditions, **rule_data)
-            db.add(rule)
+            db.add(build_default_rule(rule_data, cat_id, profile_id))
 
     await db.commit()
-    print(f"Seeded {len(DEFAULT_CATEGORIES)} categories, {len(DEFAULT_RULES)} rules.")
+    print(f"Seeded {len(DEFAULT_CATEGORIES)} categories, {len(DEFAULT_RULES)} rules for profile {profile_id}.")

@@ -1,3 +1,8 @@
+# The app has NO authentication: anyone who can reach a published port has full
+# read/write access to every profile's financial data. Ports are therefore bound
+# to 127.0.0.1 so they are reachable from this machine only — never from the
+# local network (shared flat, café or campus wifi). Do not change these to a
+# bare "3000:3000", which Docker publishes on 0.0.0.0.
 services:
   backend:
     build:
@@ -5,8 +10,11 @@ services:
       dockerfile: Dockerfile
     container_name: finance-backend
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    # Deliberately NOT published to the host: `web` reaches the API over the
+    # internal Docker network (BACKEND_URL below), so exposing 8000 would only
+    # widen the attack surface. Use `docker compose exec` for debugging.
+    expose:
+      - "8000"
     volumes:
       - ./backend/data:/app/data
     environment:
@@ -19,7 +27,7 @@ services:
     container_name: finance-web
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - BACKEND_URL=http://backend:8000
     depends_on:

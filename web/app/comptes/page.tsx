@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Wallet, ChevronDown, ChevronRight, Undo2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Wallet, ChevronDown, ChevronRight, Undo2, PlugZap } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,7 +20,7 @@ import { deleteWithUndo } from "@/lib/undo";
 import { formatCents } from "@/lib/format";
 
 export default function ComptesPage() {
-  const { data: accounts = [], isLoading } = useAccounts();
+  const { data: accounts = [], isLoading, isError } = useAccounts();
   const { data: allAccounts = [] } = useAllAccounts();
   const { data: netWorth = [] } = useNetWorth({});
   const { remove, update } = useAccountMutations();
@@ -131,7 +131,11 @@ export default function ComptesPage() {
         </div>
       )}
 
-      {accounts.length === 0 ? (
+      {isError ? (
+        // Never claim "no accounts" when we simply couldn't load them.
+        <Card><EmptyState icon={PlugZap} title="Comptes indisponibles"
+          description="Impossible de contacter le serveur. Vos comptes ne sont pas perdus — ils n'ont pas pu être chargés." /></Card>
+      ) : accounts.length === 0 ? (
         <Card><EmptyState icon={Wallet} title="Aucun compte" description="Créez un compte pour commencer à suivre vos finances." action={<Button onClick={openCreate}><Plus className="size-4" /> Nouveau compte</Button>} /></Card>
       ) : useTabs ? (
         <Tabs defaultValue="__all__">

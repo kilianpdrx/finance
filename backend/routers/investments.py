@@ -203,6 +203,35 @@ async def account_holdings_value_cents(db: AsyncSession, account_id: int, accoun
     return sum(eh.get("value_in_account_ccy_cents") or 0 for eh in enriched)
 
 
+async def holdings_value_by_account(db: AsyncSession, ccy_by_account: dict[int, str]) -> dict[int, int]:
+    """Holdings value for MANY accounts at once, each in its own currency.
+
+    Calling ``account_holdings_value_cents`` per account re-queries and re-enriches
+    holdings every time (the analytics summary did this inside its account loop).
+    Here holdings are fetched once and enriched one batch per distinct currency —
+    typically one or two batches instead of one per account.
+    """
+    if not ccy_by_account:
+        return {}
+    holdings = (await db.execute(
+        select(Holding).where(Holding.account_id.in_(list(ccy_by_account)))
+    )).scalars().all()
+    if not holdings:
+        return {}
+
+    # enrich_holdings_batch converts into a single target currency, so group the
+    # accounts by theirs and run one batch per currency.
+    by_ccy: dict[str, list] = {}
+    for h in holdings:
+        by_ccy.setdefault(ccy_by_account.get(h.account_id, "EUR"), []).append(h)
+
+    totals: dict[int, int] = {}
+    for ccy, group in by_ccy.items():
+        for h, eh in zip(group, await enrich_holdings_batch(db, group, ccy)):
+            totals[h.account_id] = totals.get(h.account_id, 0) + (eh.get("value_in_account_ccy_cents") or 0)
+    return totals
+
+
 # ── Holdings CRUD ─────────────────────────────────────────────────────────────
 
 @router.get("/accounts/{account_id}/holdings")

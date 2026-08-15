@@ -431,8 +431,11 @@ export interface paths {
         put?: never;
         /**
          * Seed Default Categories
-         * @description Create the standard categories for the active profile, skipping names that
-         *     already exist. Returns how many were created.
+         * @description Create the standard categories **and their auto-categorisation rules** for
+         *     the active profile, skipping anything that already exists.
+         *
+         *     Rules matter as much as the categories: without them an import lands entirely
+         *     uncategorised. Idempotent — safe to press twice.
          */
         post: operations["seed_default_categories_api_categories_seed_defaults_post"];
         delete?: never;
@@ -1386,6 +1389,10 @@ export interface paths {
          *
          *     Spawns a background thread so this request can return before the process
          *     is killed; the client uses the response to show a "stopped" state.
+         *
+         *     Under Docker this would just kill PID 1 and the `restart: unless-stopped`
+         *     policy would immediately bring the container back, so the button would look
+         *     broken. Report that instead of pretending to stop.
          */
         post: operations["shutdown_api_system_shutdown_post"];
         delete?: never;

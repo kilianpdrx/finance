@@ -93,13 +93,36 @@ def _shutdown_worker() -> None:
             pass
 
 
+def _in_container() -> bool:
+    """True when running inside Docker (compose sets `restart: unless-stopped`)."""
+    if os.path.exists("/.dockerenv"):
+        return True
+    try:
+        with open("/proc/1/cgroup", "rt") as fh:
+            return any(m in fh.read() for m in ("docker", "containerd", "kubepods"))
+    except OSError:
+        return False
+
+
 @router.post("/shutdown")
 async def shutdown():
     """Stop both servers cleanly and free ports 3000/8000.
 
     Spawns a background thread so this request can return before the process
     is killed; the client uses the response to show a "stopped" state.
+
+    Under Docker this would just kill PID 1 and the `restart: unless-stopped`
+    policy would immediately bring the container back, so the button would look
+    broken. Report that instead of pretending to stop.
     """
+    if _in_container():
+        logger.info("Shutdown requested but running in a container — refusing (restart policy would revive it).")
+        return {
+            "stopping": False,
+            "reason": "container",
+            "detail": "L'application tourne dans Docker. Arrêtez-la avec « docker compose down ».",
+            "ports": list(_APP_PORTS),
+        }
     logger.info("Shutdown requested via API — stopping servers and freeing ports.")
     threading.Thread(target=_shutdown_worker, daemon=True).start()
     return {"stopping": True, "ports": list(_APP_PORTS)}

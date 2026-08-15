@@ -34,7 +34,7 @@ const fade = {
 };
 
 export default function DashboardPage() {
-  const { query, currency, accounts } = useAnalyticsContext();
+  const { query, currency, accounts, accountsLoaded } = useAnalyticsContext();
   const summary = useSummary(query);
   const cashFlow = useCashFlow(query);
   const byCategory = useByCategory(query);
@@ -51,7 +51,11 @@ export default function DashboardPage() {
 
   if (initialLoading) return <DashboardSkeleton />;
 
-  if (accounts.length === 0) {
+  // Only offer first-run onboarding once we KNOW the account list is empty. If the
+  // backend is unreachable the query fails and `accounts` is [] — showing the
+  // wizard then tells an existing user their data is gone. The ConnectionBanner
+  // explains the real problem instead.
+  if (accountsLoaded && accounts.length === 0) {
     return <GettingStarted showBudget={modules.includes("budgeting")} />;
   }
 

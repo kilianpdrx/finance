@@ -20,6 +20,26 @@ router = APIRouter()
 
 SQLITE_VAR_LIMIT = 900  # SQLite max variable number is 999; stay safely below
 
+# A bank statement is a few hundred KB at most. Cap the upload so a mistaken
+# drop (a video, a disk image) can't be read entirely into memory.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+
+
+async def _read_capped(file: UploadFile) -> bytes:
+    """Read an upload in chunks, rejecting anything over MAX_UPLOAD_BYTES."""
+    buf = bytearray()
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        buf += chunk
+        if len(buf) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Fichier trop volumineux (max {MAX_UPLOAD_BYTES // (1024 * 1024)} Mo).",
+            )
+    return bytes(buf)
+
 
 async def _find_existing_hashes(db: AsyncSession, all_hashes: list, pid: int) -> set:
     """Query existing import_hashes (within the profile) in chunks."""
@@ -98,7 +118,7 @@ async def detect(
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
-    file_bytes = await file.read()
+    file_bytes = await _read_capped(file)
     filename = file.filename or ""
     logger.info("Detect request for file: %s (%d bytes)", filename, len(file_bytes))
 
@@ -158,7 +178,7 @@ async def parse_preview(
     pid: int = Depends(current_profile_id),
 ):
     """Parse CSV and return all transactions with auto-assigned categories for review."""
-    file_bytes = await file.read()
+    file_bytes = await _read_capped(file)
     logger.info("parse-preview: file=%s profile_id=%s", file.filename, profile_id)
 
     if profile_id:
@@ -297,7 +317,7 @@ async def confirm(
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
-    file_bytes = await file.read()
+    file_bytes = await _read_capped(file)
     logger.info("confirm: file=%s account_id=%s profile_id=%s", file.filename, account_id, profile_id)
 
     overrides: dict = {}

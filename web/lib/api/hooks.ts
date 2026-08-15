@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "./client";
 import type { components } from "./schema";
@@ -140,7 +141,7 @@ export interface TransactionFilters {
 export function useAnalyticsContext() {
   const { dateFrom, dateTo } = useDateRangeStore();
   const { selectedAccountIds } = useSelectedAccountsStore();
-  const { data: accounts = [] } = useAccounts();
+  const { data: accounts = [], isSuccess: accountsLoaded } = useAccounts();
   const baseCurrency = useBaseCurrency();
 
   const query: AnalyticsQuery = {
@@ -148,7 +149,63 @@ export function useAnalyticsContext() {
     date_to: dateTo || undefined,
     account_ids: selectedAccountIds ? selectedAccountIds.join(",") : undefined,
   };
-  return { query, currency: baseCurrency, accounts, selectedAccountIds };
+  // `accountsLoaded` distinguishes "you genuinely have no accounts" from "we
+  // couldn't reach the backend" — without it a failed fetch looks like an empty
+  // account list and the app shows first-run onboarding to an existing user.
+  return { query, currency: baseCurrency, accounts, accountsLoaded, selectedAccountIds };
+}
+
+/** Polls the backend so the shell can tell the user the server is unreachable
+ *  instead of every page silently rendering as "empty".
+ *
+ *  Deliberately plain React rather than TanStack Query: this is the one signal
+ *  that must NEVER be suppressed, and Query's networkMode can park a failing
+ *  request in fetchStatus "paused" — it then never reports an error and the
+ *  banner would stay hidden exactly when it's needed. A bare fetch loop has no
+ *  such semantics. Polls every 5s while down, every 30s while healthy.
+ */
+export function useBackendHealth() {
+  const [reachable, setReachable] = useState<boolean | null>(null);
+  const [checking, setChecking] = useState(false);
+  const qc = useQueryClient();
+  const wasDown = useRef(false);
+
+  const check = useCallback(async () => {
+    setChecking(true);
+    try {
+      const r = await fetch("/api/health", { cache: "no-store" });
+      setReachable(r.ok);
+      // Coming back from an outage: every query that failed while the server was
+      // down is sitting on stale/empty data. Refetch everything so the app
+      // repopulates itself instead of showing zeros until the user reloads.
+      if (r.ok && wasDown.current) qc.invalidateQueries();
+      wasDown.current = !r.ok;
+      return r.ok;
+    } catch {
+      setReachable(false);
+      wasDown.current = true;
+      return false;
+    } finally {
+      setChecking(false);
+    }
+  }, [qc]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const loop = async () => {
+      const ok = await check();
+      if (cancelled) return;
+      timer = setTimeout(loop, ok ? 30_000 : 5_000);
+    };
+    loop();
+    const onFocus = () => { void check(); };
+    window.addEventListener("focus", onFocus);
+    return () => { cancelled = true; clearTimeout(timer); window.removeEventListener("focus", onFocus); };
+  }, [check]);
+
+  // `null` = first check still in flight; don't flash the banner on startup.
+  return { isError: reachable === false, isFetching: checking, refetch: check };
 }
 
 // ── Queries ───────────────────────────────────────────────────────────────────

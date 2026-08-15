@@ -77,11 +77,15 @@ This installs the dependencies and launches both parts of the app. Open
 
 ## Good to know
 
-- **It's local and single-user.** There's no password because it only listens on
-  your own computer. **Don't expose it to the internet** — anyone who could reach
-  it would see all the data. To share with friends, each person runs their own
-  copy (above) and, if they want, exchanges data via the backup file.
-- **Ports:** the app uses `3000` (the site) and `8000` (its data service). If
-  something else is already using those, stop that first.
+- **It's local and single-user, with no password.** Both install options bind the
+  app to `127.0.0.1`, so it answers only on your own computer — not to others on
+  your wifi. Anyone who *can* reach it has full access to all the data, so
+  **don't publish it to your network or the internet**: don't change the
+  `127.0.0.1:` prefix in `docker-compose.yml`, don't add a port-forward, and
+  don't put it behind a public tunnel. To share with friends, each person runs
+  their own copy (above) and, if they want, exchanges data via the backup file.
+- **Ports:** the site runs on `3000`. (The data service listens on `8000` inside
+  Docker but isn't published to your machine.) If something else already uses
+  `3000`, stop it first.
 - **Import your bank data:** once open, go to **Importer** and drop in a CSV
   export from your bank to get started.

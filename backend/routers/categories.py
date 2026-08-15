@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -230,9 +231,13 @@ async def create_category(payload: CategoryCreate, db: AsyncSession = Depends(ge
 
 @router.post("/seed-defaults", status_code=201)
 async def seed_default_categories(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
-    """Create the standard categories for the active profile, skipping names that
-    already exist. Returns how many were created."""
-    from seed import DEFAULT_CATEGORIES
+    """Create the standard categories **and their auto-categorisation rules** for
+    the active profile, skipping anything that already exists.
+
+    Rules matter as much as the categories: without them an import lands entirely
+    uncategorised. Idempotent — safe to press twice."""
+    from seed import DEFAULT_CATEGORIES, DEFAULT_RULES, build_default_rule
+
     existing = {name for (name,) in (await db.execute(
         select(Category.name).where(Category.profile_id == pid)
     )).all()}
@@ -242,8 +247,34 @@ async def seed_default_categories(db: AsyncSession = Depends(get_db), pid: int =
             continue
         db.add(Category(**cat_data, profile_id=pid))
         created += 1
+    await db.flush()
+
+    # Map every default category name to this profile's id (newly created above
+    # or pre-existing), then add only the rules that aren't already present.
+    cat_ids = {
+        name: cid for cid, name in (await db.execute(
+            select(Category.id, Category.name).where(Category.profile_id == pid)
+        )).all()
+    }
+    existing_rules = {
+        (r.category_id, json.dumps(r.conditions, sort_keys=True))
+        for r in (await db.execute(
+            select(CategoryRule).where(CategoryRule.profile_id == pid)
+        )).scalars().all()
+    }
+    rules_created = 0
+    for rule_data in DEFAULT_RULES:
+        cid = cat_ids.get(rule_data["category"])
+        if cid is None:
+            continue
+        rule = build_default_rule(rule_data, cid, pid)
+        if (cid, json.dumps(rule.conditions, sort_keys=True)) in existing_rules:
+            continue
+        db.add(rule)
+        rules_created += 1
+
     await db.commit()
-    return {"created": created}
+    return {"created": created, "rules_created": rules_created}
 
 
 @router.put("/{category_id}", response_model=CategoryOut)

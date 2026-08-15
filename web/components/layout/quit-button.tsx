@@ -17,15 +17,25 @@ export function QuitButton() {
   const [stopped, setStopped] = useState(false);
   const [pending, setPending] = useState(false);
 
+  const [containerNote, setContainerNote] = useState("");
+
   const quit = async () => {
     setPending(true);
     try {
       // Backend frees ports 3000/8000 then terminates; the request may
       // not resolve cleanly because the server is killed — that's expected.
-      await fetch("/api/system/shutdown", { method: "POST" }).catch(() => {});
+      const res = await fetch("/api/system/shutdown", { method: "POST" }).catch(() => null);
+      // Under Docker the backend refuses: killing PID 1 would just trigger the
+      // restart policy. Tell the user the real way to stop it.
+      const body = res ? await res.json().catch(() => null) : null;
+      if (body && body.stopping === false) {
+        setContainerNote(body.detail || "Arrêtez l'application depuis Docker.");
+        setPending(false);
+        return;
+      }
+      setStopped(true);
     } finally {
       setConfirmOpen(false);
-      setStopped(true);
     }
   };
 
@@ -59,6 +69,18 @@ export function QuitButton() {
             <Button variant="destructive" onClick={quit} disabled={pending}>
               {pending ? "Arrêt…" : "Quitter"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!containerNote} onOpenChange={(o) => !o && setContainerNote("")}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Arrêt impossible depuis l&apos;application</DialogTitle>
+            <DialogDescription>{containerNote}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setContainerNote("")}>Compris</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

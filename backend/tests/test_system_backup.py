@@ -57,3 +57,18 @@ def test_is_app_process_rejects_unrelated_pid(monkeypatch):
 
     monkeypatch.setattr(sp, "run", lambda *a, **k: _R("python -m uvicorn main:app --port 8000\n"))
     assert system._is_app_process(4242) is True
+
+
+@pytest.mark.asyncio
+async def test_shutdown_refuses_inside_container(client, monkeypatch):
+    """In Docker, killing PID 1 just triggers `restart: unless-stopped` and the app
+    comes straight back — so the button must explain instead of pretending."""
+    from routers import system
+
+    monkeypatch.setattr(system, "_in_container", lambda: True)
+    res = await client.post("/api/system/shutdown")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["stopping"] is False
+    assert body["reason"] == "container"
+    assert "docker compose down" in body["detail"]

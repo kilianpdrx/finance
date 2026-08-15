@@ -57,9 +57,15 @@ doesn't appear, **hard-reload the page** before assuming the code is wrong.
    *Known exception:* `budget_entries`' unique constraint omits `profile_id`. Changing it
    would need a full SQLite table rebuild and `category_id` is already profile-specific, so
    it's deliberately left alone.
-5. **No auth by design.** Servers bind to `127.0.0.1` only (see the comments in
-   `start.sh`). Anyone who can reach the port has full read/write to every profile. Never
-   change the bind address or add a public listener.
+5. **No auth by design.** Servers bind to `127.0.0.1` only — `start.sh` for local runs,
+   and `docker-compose.yml` publishes `127.0.0.1:3000:3000` (the backend port is *not*
+   published; `web` reaches it over the internal Docker network). Anyone who can reach a
+   published port has full read/write to every profile. Never drop the `127.0.0.1:`
+   prefix, publish 8000, or add a public listener.
+6. **Seeding is profile-scoped.** `seed_if_empty(db, profile_id)` REQUIRES a profile, and
+   `main.py` creates the default profile *before* calling it. Rows written with
+   `profile_id = NULL` are invisible to every query — a fresh install would show no
+   categories and never auto-categorise. Migration `012` adopts any pre-existing orphans.
 
 ---
 
@@ -140,6 +146,11 @@ net worth (avoids double-counting) — this assumes such accounts hold no loose 
 - Frontend data access goes through `web/lib/api/hooks.ts` (TanStack Query). Query keys are
   arrays like `["analytics", "summary", query]`, `["categories"]`. `client.ts` patches
   `window.fetch` to inject `X-Profile-Id` on every `/api/*` call.
+- **An unreachable backend must never look like empty data.** `ConnectionBanner`
+  (`useBackendHealth`, plain `fetch` — *not* TanStack, whose `networkMode` can park a
+  failing query in `fetchStatus: "paused"` so it never reports an error) shows a banner on
+  every page and refetches everything once the server returns. Gate first-run/empty UI on
+  a *successful* load (`accountsLoaded`), never on `length === 0` alone.
 - Types are generated: after changing a Pydantic schema, regenerate `schema.d.ts` and run
   `typecheck`. A field with a default becomes **required** in the generated TS type — that's
   why output-only fields belong on `*Out` models, not on shared bases.
