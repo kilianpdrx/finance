@@ -82,3 +82,34 @@ async def test_seed_defaults_endpoint_restores_categories_and_rules(client, seed
     # Pressing it again must not duplicate anything.
     again = (await client.post("/api/categories/seed-defaults", headers=h)).json()
     assert again["created"] == 0 and again["rules_created"] == 0
+
+
+@pytest.mark.asyncio
+async def test_profile_with_null_modules_does_not_500(client, db_session):
+    """A profile row whose enabled_modules is NULL (raw-SQL insert bypasses the
+    ORM default) must still serialise — otherwise /api/profiles 500s and the
+    profile switcher breaks for every brand-new install."""
+    from sqlalchemy import text
+    from schemas import DEFAULT_MODULES
+
+    await db_session.execute(text(
+        "INSERT INTO profiles (name, color, is_default, enabled_modules) "
+        "VALUES ('Principal', '#6366f1', 1, NULL)"
+    ))
+    await db_session.commit()
+
+    res = await client.get("/api/profiles")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body[0]["enabled_modules"] == DEFAULT_MODULES
+
+
+@pytest.mark.asyncio
+async def test_orm_created_profile_has_modules(db_session):
+    """The default profile must be created through the ORM so its modules default
+    is applied (a raw INSERT leaves the column NULL)."""
+    p = Profile(name="Principal", color="#6366f1", is_default=True)
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+    assert p.enabled_modules  # not None, not empty

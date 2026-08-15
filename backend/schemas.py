@@ -2,7 +2,7 @@ from __future__ import annotations
 import datetime as _dt
 from datetime import date, datetime
 from typing import Optional, List
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 CURRENCY_SYMBOLS = {
@@ -29,6 +29,18 @@ class ProfileOut(BaseModel):
     color: str
     is_default: bool
     enabled_modules: List[str] = DEFAULT_MODULES
+
+    @field_validator("enabled_modules", mode="before")
+    @classmethod
+    def _default_when_null(cls, v):
+        """A stored NULL must not 500 the endpoint.
+
+        Pydantic only applies a field default when the attribute is *absent*, not
+        when it's None — so a profile row whose enabled_modules is NULL (e.g. one
+        inserted by raw SQL, which bypasses the ORM-level default) would fail
+        validation and take the whole /api/profiles response down with it.
+        """
+        return DEFAULT_MODULES if v is None else v
 
 
 def cents_to_display(cents: int, currency: str = "EUR") -> str:

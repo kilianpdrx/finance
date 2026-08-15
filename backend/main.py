@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -29,9 +30,22 @@ async def lifespan(app: FastAPI):
         # auto-categorise an import).
         existing = (await db.execute(text("SELECT id FROM profiles WHERE is_default = 1 LIMIT 1"))).first()
         if not existing:
-            await db.execute(text("INSERT INTO profiles (name, color, is_default) VALUES ('Principal', '#6366f1', 1)"))
+            # Insert via the ORM, not raw SQL: SQLAlchemy column defaults (notably
+            # Profile.enabled_modules) are applied on the Python side, so a raw
+            # INSERT leaves them NULL — which then fails ProfileOut validation and
+            # 500s /api/profiles for every brand-new install.
+            from models import Profile as ProfileModel
+            db.add(ProfileModel(name="Principal", color="#6366f1", is_default=True))
             await db.commit()
+        from schemas import DEFAULT_MODULES
         default_pid = (await db.execute(text("SELECT id FROM profiles WHERE is_default = 1 LIMIT 1"))).scalar()
+
+        # Repair any profile already stored with NULL modules (older installs, or
+        # one created by the previous raw-SQL path).
+        await db.execute(text(
+            "UPDATE profiles SET enabled_modules = :m WHERE enabled_modules IS NULL"
+        ), {"m": json.dumps(DEFAULT_MODULES)})
+        await db.commit()
 
         from seed import seed_if_empty
         await seed_if_empty(db, default_pid)
