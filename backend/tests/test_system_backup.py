@@ -71,4 +71,22 @@ async def test_shutdown_refuses_inside_container(client, monkeypatch):
     body = res.json()
     assert body["stopping"] is False
     assert body["reason"] == "container"
-    assert "docker compose down" in body["detail"]
+    assert "Arreter" in body["detail"]
+
+
+@pytest.mark.asyncio
+async def test_version_endpoint_reports_build(client, monkeypatch):
+    """Bug reports need a version to name; CI stamps APP_VERSION into the image."""
+    monkeypatch.setenv("APP_VERSION", "v1.2.3")
+    res = await client.get("/api/system/version")
+    assert res.status_code == 200
+    assert res.json()["version"] == "v1.2.3"
+
+
+@pytest.mark.asyncio
+async def test_version_defaults_to_dev(client, monkeypatch):
+    """A source run must report 'dev', not a fabricated release number."""
+    monkeypatch.delenv("APP_VERSION", raising=False)
+    res = await client.get("/api/system/version")
+    assert res.json()["version"] == "dev"
+    assert "is_container" in res.json()

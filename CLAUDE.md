@@ -163,6 +163,20 @@ net worth (avoids double-counting) — this assumes such accounts hold no loose 
 
 ---
 
+## Shipping to end users
+
+- Friends get `release/` (compose that **pulls** GHCR images + double-click launchers +
+  French `LISEZMOI.md`), never the source — a hand-made zip of the project folder would
+  carry `backend/data/` and `csv files/`.
+- **Updating = relaunching**: `Finance.command`/`.bat` runs `docker compose pull` before
+  `up -d`, so there is no separate update step to explain.
+- `APP_VERSION` is a **build arg** stamped from the git tag by
+  `.github/workflows/release.yml`; a source run reports `dev`. Surfaced at
+  `GET /api/system/version` and in Paramètres → Général → À propos.
+- Images must stay **multi-arch** (`linux/amd64,linux/arm64`) — an ARM-only build won't
+  start on a friend's Intel/Windows machine.
+- Release steps and the pre-tag migration check live in `RELEASING.md`.
+
 ## Data & safety
 
 - Everything lives in `backend/data/finance.db` (gitignored, WAL mode).

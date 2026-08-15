@@ -104,6 +104,17 @@ def _in_container() -> bool:
         return False
 
 
+@router.get("/version")
+async def version():
+    """Which build is running, so a bug report can name a version.
+
+    `APP_VERSION` is baked into the image by CI from the git tag; a source run
+    reports "dev". `is_container` lets the UI tailor its update instructions
+    (relaunch the app vs. restart start.sh).
+    """
+    return {"version": os.getenv("APP_VERSION", "dev"), "is_container": _in_container()}
+
+
 @router.post("/shutdown")
 async def shutdown():
     """Stop both servers cleanly and free ports 3000/8000.
@@ -120,7 +131,8 @@ async def shutdown():
         return {
             "stopping": False,
             "reason": "container",
-            "detail": "L'application tourne dans Docker. Arrêtez-la avec « docker compose down ».",
+            "detail": "Pour fermer l'application, double-cliquez sur « Arreter » "
+                      "(le fichier situé à côté de « Finance »).",
             "ports": list(_APP_PORTS),
         }
     logger.info("Shutdown requested via API — stopping servers and freeing ports.")

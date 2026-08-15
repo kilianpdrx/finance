@@ -14,6 +14,11 @@ COPY . .
 
 RUN mkdir -p /app/data
 
+# Stamped by CI from the git tag (see .github/workflows/release.yml). Local and
+# source runs report "dev", which is honest rather than a fake version number.
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
+
 EXPOSE 8000
 
 CMD ["sh", "-c", "python -m alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]

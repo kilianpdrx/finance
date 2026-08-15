@@ -1,91 +1,87 @@
-# Installing the Finance app
+# Installation
 
-This is a personal finance dashboard that runs **entirely on your own computer**.
-There is no online account and no sign-up — your data never leaves your machine
-(it lives in a single file on your disk). Each person runs their own copy.
-
-You have two ways to install it. **Docker is the easiest** and is recommended.
+Ce projet a **deux publics**. Choisissez la section qui vous concerne.
 
 ---
 
-## Option A — Docker (recommended, ~5 minutes)
+# 1. Vous voulez juste utiliser l'application
 
-### 1. Install Docker Desktop
-Download and install it for your system, then open it once so it's running:
-- **Mac / Windows:** https://www.docker.com/products/docker-desktop/
-- **Linux:** install Docker Engine + the Compose plugin from your package manager.
+**Ne clonez pas ce dépôt.** Téléchargez le fichier `finance-app.zip` de la dernière
+version depuis la page **Releases** du projet, décompressez-le, et suivez le
+`LISEZMOI.md` qu'il contient.
 
-You'll know it's ready when the Docker icon says "Docker Desktop is running".
+Il tient en trois étapes :
 
-### 2. Get the app's files
-Either:
-- Download the project as a ZIP (green **Code → Download ZIP** button) and unzip it, **or**
-- If you know git: `git clone <the repository URL>`
+1. Installer **Docker Desktop** (gratuit) — https://www.docker.com/products/docker-desktop/
+2. Double-cliquer sur **Finance** (Mac) ou **Finance.bat** (Windows)
+3. L'application s'ouvre dans le navigateur sur http://127.0.0.1:3000
 
-### 3. Start it
-Open a terminal (Mac: *Terminal*, Windows: *PowerShell*), go into the project
-folder, and run:
+**Mises à jour** : relancez simplement *Finance*. La dernière version est téléchargée
+automatiquement au démarrage — il n'y a rien d'autre à faire.
 
-```bash
-docker compose up -d
-```
-
-The first run takes a few minutes while it downloads and builds. When it's done,
-open your browser to:
-
-**http://localhost:3000**
-
-That's it. 🎉
-
-### Everyday use
-- **Stop the app:** `docker compose down`
-- **Start it again:** `docker compose up -d`
-- **Update to a newer version:** pull/download the new files, then
-  `docker compose up -d --build`
+**Sauvegardes** : Paramètres → *Sauvegarde & Données*. **Faites-en une avant chaque mise
+à jour** : les migrations de base de données ne s'annulent pas.
 
 ---
 
-## Option B — Run it manually (no Docker)
+# 2. Vous voulez développer / modifier le code
 
-Use this only if you'd rather not install Docker. You'll need:
-- **Python 3.11+** — https://www.python.org/downloads/
-- **Node.js 20+** — https://nodejs.org/
+### Prérequis
+- **Python 3.11+** et **Node.js 20+**
+- (optionnel) conda — `start.sh` active un environnement nommé `finenv` s'il existe
 
-Then, from the project folder:
-
+### Lancer en développement
 ```bash
 ./start.sh
 ```
+Démarre l'API sur `127.0.0.1:8000` (avec `--reload`) et l'interface sur
+`127.0.0.1:3000`. `MODE=prod ./start.sh` fait un build de production.
 
-This installs the dependencies and launches both parts of the app. Open
-**http://localhost:3000** when it says both servers have started. Press
-`Ctrl+C` in the terminal to stop.
+### Lancer la version conteneurisée depuis les sources
+```bash
+docker compose up -d --build
+```
+Construit les images localement et sert l'application sur http://127.0.0.1:3000.
 
-> On Windows, run the manual option inside **WSL** or **Git Bash** (the script is
-> a bash script). If in doubt, use Docker (Option A) instead.
+### Tests
+```bash
+cd backend && python -m pytest        # 145 tests
+cd web && npx tsc --noEmit && npx vitest run
+```
+
+### Publier une version
+Voir **[RELEASING.md](RELEASING.md)**.
 
 ---
 
-## Your data & backups
+## ⚠️ Ne distribuez jamais une archive faite à la main
 
-- Everything is stored in one file: **`backend/data/finance.db`**.
-- To save a copy or move your data to another computer, use the app:
-  **Paramètres → Sauvegarde** → *Télécharger la sauvegarde (.sqlite)*.
-- To load it back (or import a friend's export), use **Restaurer** on the same
-  screen and pick the `.sqlite` file. A safety copy of your current data is kept
-  automatically before it's replaced.
+Le dossier du projet contient **vos données personnelles** :
 
-## Good to know
+| Dossier | Contenu |
+|---|---|
+| `backend/data/` | Votre base de données complète (comptes, transactions) |
+| `csv files/` | Vos relevés bancaires |
+| `autre/` | Notes de travail |
 
-- **It's local and single-user, with no password.** Both install options bind the
-  app to `127.0.0.1`, so it answers only on your own computer — not to others on
-  your wifi. Anyone who *can* reach it has full access to all the data, so
-  **don't publish it to your network or the internet**: don't change the
-  `127.0.0.1:` prefix in `docker-compose.yml`, don't add a port-forward, and
-  don't put it behind a public tunnel. To share with friends, each person runs
-  their own copy (above) and, if they want, exchanges data via the backup file.
-- **Ports:** the site runs on `3000`. (The data service listens on `8000` inside
-  Docker but isn't published to your machine.) If something else already uses
-  `3000`, stop it first.
-- **Import your bank data:** once open, go to **Importer** and drop in a CSV
-  export from your bank to get started.
+Ces dossiers sont ignorés par git : un `git clone` ou un ZIP téléchargé depuis GitHub est
+**propre**. En revanche, compresser vous-même le dossier depuis le Finder/l'Explorateur
+**inclurait tout cela**.
+
+➡️ Pour partager l'application, envoyez le **`finance-app.zip` de la page Releases**
+(ou le dossier `release/`, qui ne contient aucune donnée).
+
+---
+
+## Sécurité — à lire une fois
+
+L'application **n'a pas de mot de passe**, par conception : elle n'écoute que sur
+`127.0.0.1`, c'est-à-dire uniquement votre propre machine.
+
+- `start.sh` lance les serveurs sur `127.0.0.1` explicitement.
+- `docker-compose.yml` publie `127.0.0.1:3000:3000` — et **ne publie pas** le port 8000,
+  l'interface joignant l'API par le réseau interne de Docker.
+
+Quiconque peut atteindre un port publié a un accès complet en lecture **et en écriture** à
+tous les profils. Ne retirez donc jamais le préfixe `127.0.0.1:`, n'exposez pas le port
+8000, et ne placez pas l'application derrière un tunnel public.

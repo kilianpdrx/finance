@@ -5,10 +5,10 @@ import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useSettings, useSettingMutation, useActiveProfile, useProfileMutations } from "@/lib/api/hooks";
+import { useSettings, useSettingMutation, useActiveProfile, useProfileMutations, useAppVersion } from "@/lib/api/hooks";
 import { CURRENCIES } from "@/lib/format";
 import { DEFAULT_MODULES } from "@/lib/nav";
-import { TrendingUp, Wallet, Check, Target, BadgeMinus, type LucideIcon } from "lucide-react";
+import { TrendingUp, Wallet, Check, Target, BadgeMinus, Info, ShieldAlert, type LucideIcon } from "lucide-react";
 
 const TOGGLEABLE_MODULES: { key: string; icon: LucideIcon; title: string; description: string }[] = [
   { key: "budgeting", icon: Wallet, title: "Budget & Prévisions", description: "Budgets mensuels par catégorie et suivi des dépenses récurrentes." },
@@ -130,7 +130,68 @@ export function GeneralTab() {
           </CardContent>
         </Card>
       )}
+
+      {/* ── Section 3: À propos ─────────────────────────────────────────── */}
+      <AboutCard />
     </div>
+  );
+}
+
+/** Version + how to update. Gives a bug report something to name, and puts the
+ *  "sauvegardez d'abord" reminder where the update instructions are — the
+ *  migrations only run forwards, so a backup is the only way back. */
+function AboutCard() {
+  const { data: info } = useAppVersion();
+  const version = info?.version ?? "…";
+  const isContainer = info?.is_container ?? false;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>À propos</CardTitle>
+        <CardDescription>Version installée et mise à jour.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-brand/10 text-brand">
+            <Info className="size-4" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold">
+              Version <span className="font-mono">{version}</span>
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {version === "dev"
+                ? "Version de développement (lancée depuis les sources)."
+                : "Indiquez ce numéro si vous signalez un problème."}
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-muted/30 p-4">
+          <p className="text-sm font-semibold">Mettre à jour</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {isContainer ? (
+              <>
+                Fermez l&apos;application (<span className="font-mono">Arrêter</span>), puis
+                relancez-la avec <span className="font-mono">Finance</span>. La dernière
+                version est téléchargée automatiquement au démarrage.
+              </>
+            ) : (
+              <>
+                Récupérez la dernière version des sources, puis relancez{" "}
+                <span className="font-mono">./start.sh</span>.
+              </>
+            )}
+          </p>
+          <p className="mt-2 flex items-start gap-1.5 text-xs text-warning">
+            <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
+            Faites une sauvegarde avant chaque mise à jour (onglet « Sauvegarde &amp;
+            Données ») : une mise à jour ne peut pas être annulée.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

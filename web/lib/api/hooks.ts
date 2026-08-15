@@ -367,6 +367,20 @@ export function useDividendCalendar(months = 12) {
     },
   });
 }
+/** Which build is running (stamped into the image by CI). `is_container` tells the
+ *  UI whether updating means relaunching the app or restarting start.sh. */
+export function useAppVersion() {
+  return useQuery({
+    queryKey: ["system", "version"],
+    queryFn: async () => {
+      const res = await fetch("/api/system/version");
+      if (!res.ok) throw new Error("Failed to fetch version");
+      return res.json() as Promise<{ version: string; is_container: boolean }>;
+    },
+    staleTime: Infinity,
+  });
+}
+
 export function useSettings() {
   return useQuery({
     queryKey: ["settings"],

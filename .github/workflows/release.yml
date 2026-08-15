@@ -1,0 +1,88 @@
+name: Release
+
+# Publie les images Docker quand un tag « v… » est poussé.
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# Les images sont construites pour amd64 ET arm64 : sans cela, une image
+# construite sur un Mac Apple Silicon ne démarre pas sur un PC Windows/Intel.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version à publier (ex. v1.0.0)"
+        required: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # requis pour pousser sur GHCR
+
+    strategy:
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+          - name: web
+            context: ./web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: v
+        run: echo "version=${{ github.event.inputs.version || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Le nom du dépôt sert de préfixe d'image : ghcr.io/<owner>/<repo>-backend.
+      # C'est ce que release/docker-compose.yml attend (IMAGE_PREFIX).
+      - name: Compute image name
+        id: img
+        run: echo "name=${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.name }}" | tr '[:upper:]' '[:lower:]' >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            APP_VERSION=${{ steps.v.outputs.version }}
+          tags: |
+            ${{ steps.img.outputs.name }}:${{ steps.v.outputs.version }}
+            ${{ steps.img.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  bundle:
+    # Attache le dossier release/ à la Release GitHub, pour que les proches
+    # téléchargent 4 fichiers au lieu de cloner le dépôt.
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zip the bundle
+        run: zip -r finance-app.zip release
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: finance-app.zip
+          generate_release_notes: true
