@@ -1,12 +1,37 @@
+import sqlite3
+
 import pytest
 
 
 @pytest.mark.asyncio
-async def test_download_backup(client, seed_data):
+async def test_download_backup(client, seed_data, tmp_path, monkeypatch):
+    """Streams the database file.
+
+    `DB_PATH` is pointed at a temp file: the endpoint reads the module-level path
+    directly (not the test session), so without this the test only passes on a
+    machine that happens to have a real backend/data/finance.db — and 444s on a
+    fresh clone or in CI.
+    """
+    from routers import system
+
+    db_file = tmp_path / "finance.db"
+    sqlite3.connect(db_file).close()  # a genuine (empty) SQLite file
+    monkeypatch.setattr(system, "DB_PATH", db_file)
+
     res = await client.get("/api/system/backup")
     assert res.status_code == 200
     assert res.headers["content-type"] in ("application/x-sqlite3", "application/octet-stream")
     assert "finance-backup-" in res.headers.get("content-disposition", "")
+
+
+@pytest.mark.asyncio
+async def test_download_backup_without_database(client, tmp_path, monkeypatch):
+    """No database yet → a clear error rather than an empty download."""
+    from routers import system
+
+    monkeypatch.setattr(system, "DB_PATH", tmp_path / "does-not-exist.db")
+    res = await client.get("/api/system/backup")
+    assert res.status_code == 444
 
 
 @pytest.mark.asyncio

@@ -34,7 +34,7 @@ jobs:
             context: ./web
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Determine version
         id: v
@@ -78,7 +78,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Zip the bundle
         run: zip -r finance-app.zip release
       - name: Attach to the release
