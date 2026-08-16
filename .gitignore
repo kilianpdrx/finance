@@ -36,3 +36,6 @@ web/*.tsbuildinfo
 # IDE
 .vscode/
 .idea/
+
+autre/
+
