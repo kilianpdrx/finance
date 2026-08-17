@@ -21,6 +21,9 @@ env:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Un build sain prend ~10 min. Sans plafond, un build qui s'emballe consomme
+    # les 6 h de la limite GitHub avant d'échouer (c'est arrivé sur v1.0.0).
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write   # requis pour pousser sur GHCR
@@ -79,10 +82,16 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
+      - name: Determine version
+        id: v
+        run: echo "version=${{ github.event.inputs.version || github.ref_name }}" >> "$GITHUB_OUTPUT"
       - name: Zip the bundle
         run: zip -r finance-app.zip release
       - name: Attach to the release
         uses: softprops/action-gh-release@v2
         with:
+          # Explicite, pour que « workflow_dispatch » fonctionne aussi (sans tag
+          # dans le contexte, l'action ne saurait pas où attacher le zip).
+          tag_name: ${{ steps.v.outputs.version }}
           files: finance-app.zip
           generate_release_notes: true
