@@ -25,6 +25,8 @@ web/.next/
 web/test-results/
 web/playwright-report/
 web/*.tsbuildinfo
+# Next artefacts égarés hors de web/ (un build lancé depuis le mauvais dossier)
+.next/
 
 # Environment
 .env
@@ -37,5 +39,7 @@ web/*.tsbuildinfo
 .vscode/
 .idea/
 
+# Notes de travail (personnelles, non versionnées)
 autre/
+CLAUDE.md
 

@@ -1,8 +1,11 @@
+# Ce qui ne doit jamais entrer dans une image : historique, outillage, artefacts
+# de build — et surtout les données personnelles.
 .git
 .github
 .vscode
 .gemini
 .claude
+CLAUDE.md
 node_modules
 .next
 dist
@@ -14,5 +17,9 @@ __pycache__
 .pytest_cache
 web/.next
 web/node_modules
-frontend/node_modules
+
+# Données personnelles : la base est montée en volume, jamais copiée dans l'image.
+backend/data
+csv files
+autre
 

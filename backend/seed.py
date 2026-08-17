@@ -24,115 +24,103 @@ DEFAULT_CATEGORIES = [
     {"name": "Virements internes", "color": "#64748b", "icon": "arrows-right-left", "is_income": False},
 ]
 
+# One rule per (category, priority) instead of one rule per keyword: the keywords
+# are combined with OR, so 77 single-keyword rules collapse into ~24 readable ones.
+#
+# Why priority still splits a category: rules are evaluated by ascending priority
+# and the FIRST match wins, so the numbers encode deliberate tie-breaks between
+# categories. Two examples that would break if every category were flattened to a
+# single rule:
+#   • "amazon prime" (45) must beat "amazon" (50, Shopping), or a Prime
+#     subscription lands in Shopping.
+#   • deliberately vague keywords are pushed late so they can't hijack a better
+#     match: "eau" (60) would otherwise catch BEAUTE/NOUVEAU/BUREAU, and "free"
+#     (70) would catch FREELANCE.
+# Keep a keyword in the priority bucket it belongs to rather than merging buckets.
 DEFAULT_RULES = [
-    # Revenus
-    {"keyword": "salaire", "match_type": "contains", "category": "Revenus", "priority": 10},
-    {"keyword": "virement recu", "match_type": "contains", "category": "Revenus", "priority": 20},
-    {"keyword": "remboursement", "match_type": "contains", "category": "Revenus", "priority": 30},
-    {"keyword": "allocation", "match_type": "contains", "category": "Revenus", "priority": 30},
-    {"keyword": "prime", "match_type": "contains", "category": "Revenus", "priority": 30},
-    # Alimentation
-    {"keyword": "carrefour", "match_type": "contains", "category": "Alimentation", "priority": 50},
-    {"keyword": "leclerc", "match_type": "contains", "category": "Alimentation", "priority": 50},
-    {"keyword": "auchan", "match_type": "contains", "category": "Alimentation", "priority": 50},
-    {"keyword": "lidl", "match_type": "contains", "category": "Alimentation", "priority": 50},
-    {"keyword": "monoprix", "match_type": "contains", "category": "Alimentation", "priority": 50},
-    {"keyword": "intermarche", "match_type": "contains", "category": "Alimentation", "priority": 50},
-    {"keyword": "franprix", "match_type": "contains", "category": "Alimentation", "priority": 50},
-    {"keyword": "supermarche", "match_type": "contains", "category": "Alimentation", "priority": 50},
-    {"keyword": "epicerie", "match_type": "contains", "category": "Alimentation", "priority": 50},
-    {"keyword": "boucherie", "match_type": "contains", "category": "Alimentation", "priority": 50},
-    {"keyword": "boulangerie", "match_type": "contains", "category": "Alimentation", "priority": 50},
-    # Transport
-    {"keyword": "sncf", "match_type": "contains", "category": "Transport", "priority": 50},
-    {"keyword": "ratp", "match_type": "contains", "category": "Transport", "priority": 50},
-    {"keyword": "navigo", "match_type": "contains", "category": "Transport", "priority": 50},
-    {"keyword": "uber", "match_type": "contains", "category": "Transport", "priority": 50},
-    {"keyword": "blablacar", "match_type": "contains", "category": "Transport", "priority": 50},
-    {"keyword": "total energies", "match_type": "contains", "category": "Transport", "priority": 50},
-    {"keyword": "essence", "match_type": "contains", "category": "Transport", "priority": 50},
-    {"keyword": "station service", "match_type": "contains", "category": "Transport", "priority": 50},
-    # Logement
-    {"keyword": "loyer", "match_type": "contains", "category": "Logement", "priority": 40},
-    {"keyword": "edf", "match_type": "contains", "category": "Logement", "priority": 50},
-    {"keyword": "engie", "match_type": "contains", "category": "Logement", "priority": 50},
-    {"keyword": "eau", "match_type": "contains", "category": "Logement", "priority": 60},
-    {"keyword": "electricite", "match_type": "contains", "category": "Logement", "priority": 50},
-    {"keyword": "charges copro", "match_type": "contains", "category": "Logement", "priority": 40},
-    {"keyword": "assurance habitation", "match_type": "contains", "category": "Logement", "priority": 40},
-    # Santé
-    {"keyword": "pharmacie", "match_type": "contains", "category": "Santé", "priority": 50},
-    {"keyword": "medecin", "match_type": "contains", "category": "Santé", "priority": 50},
-    {"keyword": "hopital", "match_type": "contains", "category": "Santé", "priority": 50},
-    {"keyword": "mutuelle", "match_type": "contains", "category": "Santé", "priority": 40},
-    {"keyword": "dentiste", "match_type": "contains", "category": "Santé", "priority": 50},
-    # Restaurants
-    {"keyword": "restaurant", "match_type": "contains", "category": "Restaurants", "priority": 50},
-    {"keyword": "brasserie", "match_type": "contains", "category": "Restaurants", "priority": 50},
-    {"keyword": "mcdonald", "match_type": "contains", "category": "Restaurants", "priority": 50},
-    {"keyword": "burger king", "match_type": "contains", "category": "Restaurants", "priority": 50},
-    {"keyword": "deliveroo", "match_type": "contains", "category": "Restaurants", "priority": 50},
-    {"keyword": "uber eats", "match_type": "contains", "category": "Restaurants", "priority": 50},
-    {"keyword": "just eat", "match_type": "contains", "category": "Restaurants", "priority": 50},
-    # Shopping
-    {"keyword": "amazon", "match_type": "contains", "category": "Shopping", "priority": 50},
-    {"keyword": "fnac", "match_type": "contains", "category": "Shopping", "priority": 50},
-    {"keyword": "decathlon", "match_type": "contains", "category": "Shopping", "priority": 50},
-    {"keyword": "h&m", "match_type": "contains", "category": "Shopping", "priority": 50},
-    {"keyword": "zara", "match_type": "contains", "category": "Shopping", "priority": 50},
-    {"keyword": "zalando", "match_type": "contains", "category": "Shopping", "priority": 50},
-    {"keyword": "ikea", "match_type": "contains", "category": "Shopping", "priority": 50},
-    # Abonnements
-    {"keyword": "netflix", "match_type": "contains", "category": "Abonnements", "priority": 50},
-    {"keyword": "spotify", "match_type": "contains", "category": "Abonnements", "priority": 50},
-    {"keyword": "amazon prime", "match_type": "contains", "category": "Abonnements", "priority": 45},
-    {"keyword": "canal+", "match_type": "contains", "category": "Abonnements", "priority": 50},
-    {"keyword": "orange", "match_type": "contains", "category": "Abonnements", "priority": 60},
-    {"keyword": "sfr", "match_type": "contains", "category": "Abonnements", "priority": 60},
-    {"keyword": "free", "match_type": "contains", "category": "Abonnements", "priority": 70},
-    {"keyword": "bouygues", "match_type": "contains", "category": "Abonnements", "priority": 60},
-    # Banque
-    {"keyword": "frais", "match_type": "contains", "category": "Banque & Finances", "priority": 80},
-    {"keyword": "agios", "match_type": "contains", "category": "Banque & Finances", "priority": 50},
-    {"keyword": "cotisation", "match_type": "contains", "category": "Banque & Finances", "priority": 70},
-    {"keyword": "assurance vie", "match_type": "contains", "category": "Banque & Finances", "priority": 50},
-    # Voyages
-    {"keyword": "hotel", "match_type": "contains", "category": "Voyages", "priority": 50},
-    {"keyword": "airbnb", "match_type": "contains", "category": "Voyages", "priority": 50},
-    {"keyword": "booking", "match_type": "contains", "category": "Voyages", "priority": 50},
-    {"keyword": "air france", "match_type": "contains", "category": "Voyages", "priority": 50},
-    {"keyword": "easyjet", "match_type": "contains", "category": "Voyages", "priority": 50},
-    {"keyword": "ryanair", "match_type": "contains", "category": "Voyages", "priority": 50},
-    # Loisirs
-    {"keyword": "cinema", "match_type": "contains", "category": "Loisirs", "priority": 50},
-    {"keyword": "theatre", "match_type": "contains", "category": "Loisirs", "priority": 50},
-    {"keyword": "concert", "match_type": "contains", "category": "Loisirs", "priority": 50},
-    {"keyword": "sport", "match_type": "contains", "category": "Loisirs", "priority": 60},
-    {"keyword": "salle de sport", "match_type": "contains", "category": "Loisirs", "priority": 50},
-    # Éducation
-    {"keyword": "universite", "match_type": "contains", "category": "Éducation", "priority": 50},
-    {"keyword": "ecole", "match_type": "contains", "category": "Éducation", "priority": 60},
-    {"keyword": "formation", "match_type": "contains", "category": "Éducation", "priority": 50},
-    {"keyword": "librairie", "match_type": "contains", "category": "Éducation", "priority": 60},
+    # ── Revenus ──────────────────────────────────────────────────────────────
+    {"category": "Revenus", "priority": 10, "keywords": ["salaire"]},
+    {"category": "Revenus", "priority": 20, "keywords": ["virement recu"]},
+    {"category": "Revenus", "priority": 30, "keywords": ["remboursement", "allocation"]},
+    # "prime" est ambigu (AMAZON PRIME, PRIMEUR…) et classait des dépenses en
+    # revenu : évalué après les correspondances plus précises.
+    {"category": "Revenus", "priority": 55, "keywords": ["prime"]},
+
+    # ── Dépenses courantes ───────────────────────────────────────────────────
+    {"category": "Alimentation", "priority": 50, "keywords": [
+        "carrefour", "leclerc", "auchan", "lidl", "monoprix", "intermarche",
+        "franprix", "supermarche", "epicerie", "boucherie", "boulangerie",
+    ]},
+    {"category": "Transport", "priority": 50, "keywords": [
+        "sncf", "ratp", "navigo", "uber", "blablacar", "total energies",
+        "essence", "station service",
+    ]},
+    # "uber eats" doit passer avant "uber" (Transport, 50), sinon une commande
+    # de repas est classée en transport.
+    {"category": "Restaurants", "priority": 45, "keywords": ["uber eats"]},
+    {"category": "Restaurants", "priority": 50, "keywords": [
+        "restaurant", "brasserie", "mcdonald", "burger king", "deliveroo", "just eat",
+    ]},
+    {"category": "Shopping", "priority": 50, "keywords": [
+        "amazon", "fnac", "decathlon", "h&m", "zara", "zalando", "ikea",
+    ]},
+    {"category": "Voyages", "priority": 50, "keywords": [
+        "hotel", "airbnb", "booking", "air france", "easyjet", "ryanair",
+    ]},
+
+    # ── Logement (charges fixes avant fournisseurs, "eau" en dernier) ─────────
+    {"category": "Logement", "priority": 40, "keywords": [
+        "loyer", "charges copro", "assurance habitation",
+    ]},
+    {"category": "Logement", "priority": 50, "keywords": ["edf", "engie", "electricite"]},
+    {"category": "Logement", "priority": 60, "keywords": ["eau"]},
+
+    # ── Santé ────────────────────────────────────────────────────────────────
+    {"category": "Santé", "priority": 40, "keywords": ["mutuelle"]},
+    {"category": "Santé", "priority": 50, "keywords": [
+        "pharmacie", "medecin", "hopital", "dentiste",
+    ]},
+
+    # ── Abonnements ("amazon prime" avant "amazon", "free" en dernier) ───────
+    {"category": "Abonnements", "priority": 45, "keywords": ["amazon prime"]},
+    {"category": "Abonnements", "priority": 50, "keywords": ["netflix", "spotify", "canal+"]},
+    {"category": "Abonnements", "priority": 60, "keywords": ["orange", "sfr", "bouygues"]},
+    {"category": "Abonnements", "priority": 70, "keywords": ["free"]},
+
+    # ── Banque ("frais" est très générique : évalué en dernier) ──────────────
+    {"category": "Banque & Finances", "priority": 50, "keywords": ["agios", "assurance vie"]},
+    {"category": "Banque & Finances", "priority": 70, "keywords": ["cotisation"]},
+    {"category": "Banque & Finances", "priority": 80, "keywords": ["frais"]},
+
+    # ── Loisirs & Éducation ──────────────────────────────────────────────────
+    {"category": "Loisirs", "priority": 50, "keywords": [
+        "cinema", "theatre", "concert", "salle de sport",
+    ]},
+    {"category": "Loisirs", "priority": 60, "keywords": ["sport"]},
+    {"category": "Éducation", "priority": 50, "keywords": ["universite", "formation"]},
+    {"category": "Éducation", "priority": 60, "keywords": ["ecole", "librairie"]},
 ]
 
 
 
 def build_default_rule(rule_data: dict, category_id: int, profile_id: int) -> CategoryRule:
-    """Turn a DEFAULT_RULES entry into a CategoryRule for one profile.
+    """Turn a DEFAULT_RULES entry (a keyword group) into one CategoryRule.
 
-    Takes a copy so the module-level DEFAULT_RULES dicts are never mutated —
-    seeding twice (fresh install, then the Paramètres "règles standard" button)
-    must produce the same result.
+    The keywords are OR-ed: a description matching ANY of them classifies into the
+    category. Reads the entry without mutating it, so seeding twice (fresh install,
+    then the Paramètres "catégories standard" button) produces the same result.
     """
-    data = dict(rule_data)
-    data.pop("category", None)
-    conditions = [{
-        "field": "description",
-        "operator": data.pop("match_type"),
-        "value": data.pop("keyword"),
-    }]
-    return CategoryRule(category_id=category_id, conditions=conditions, profile_id=profile_id, **data)
+    operator = rule_data.get("match_type", "contains")
+    return CategoryRule(
+        category_id=category_id,
+        profile_id=profile_id,
+        priority=rule_data["priority"],
+        logic_operator="OR",
+        conditions=[
+            {"field": "description", "operator": operator, "value": kw}
+            for kw in rule_data["keywords"]
+        ],
+    )
 
 
 async def seed_if_empty(db: AsyncSession, profile_id: int):

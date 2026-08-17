@@ -113,3 +113,53 @@ async def test_orm_created_profile_has_modules(db_session):
     await db_session.commit()
     await db_session.refresh(p)
     assert p.enabled_modules  # not None, not empty
+
+
+@pytest.mark.asyncio
+async def test_seeded_rules_are_grouped_with_or_logic(db_session):
+    """Keywords are merged per (category, priority) into OR rules. With AND a
+    description would have to contain every keyword at once — i.e. never match."""
+    profile = Profile(name="Principal", color="#6366f1", is_default=True)
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+    await seed_if_empty(db_session, profile.id)
+
+    rules = (await db_session.execute(select(CategoryRule))).scalars().all()
+    assert len(rules) == len(DEFAULT_RULES)
+    assert all(r.logic_operator == "OR" for r in rules)
+    # Grouping is the point: at least one rule must carry several keywords.
+    assert max(len(r.conditions) for r in rules) > 1
+    # Every keyword survived the merge.
+    seeded = sum(len(r.conditions) for r in rules)
+    assert seeded == sum(len(g["keywords"]) for g in DEFAULT_RULES)
+
+
+@pytest.mark.asyncio
+async def test_priority_tiebreaks_survive_the_merge(db_session):
+    """The priority numbers encode deliberate cross-category tie-breaks. Flattening
+    each category into a single rule would silently break these."""
+    from services.categorizer import categorize
+
+    profile = Profile(name="Principal", color="#6366f1", is_default=True)
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+    await seed_if_empty(db_session, profile.id)
+
+    names = {c.id: c.name for c in (await db_session.execute(select(Category))).scalars().all()}
+
+    async def classify(description: str):
+        cat_id, _ = await categorize(
+            {"description": description, "amount_cents": 1000, "date": "2026-07-01",
+             "is_debit": True, "currency": "EUR", "account_id": 1},
+            db_session, profile.id,
+        )
+        return names.get(cat_id)
+
+    # "amazon prime" (45) must win over "amazon" (50, Shopping).
+    assert await classify("PAIEMENT CB AMAZON PRIME VIDEO") == "Abonnements"
+    assert await classify("ACHAT AMAZON.FR") == "Shopping"
+    # Vague keywords are deliberately late so they can't hijack a better match.
+    assert await classify("SALLE DE SPORT BASIC FIT") == "Loisirs"
+    assert await classify("UBER EATS COMMANDE") == "Restaurants"
