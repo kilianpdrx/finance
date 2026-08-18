@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -11,6 +12,65 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import Holding, PriceCache, DividendCache
 
 _history_cache: TTLCache = TTLCache(maxsize=200, ttl=3600)
+
+# ── Politeness towards the data providers ────────────────────────────────────
+# yfinance and CoinGecko are free, unauthenticated and rate-limited. Every
+# install polls them on a timer, so with several users sharing an IP range (or
+# one user leaving the app open) it is easy to get throttled or blocked. Three
+# guards, cheapest first:
+#   1. PRICE_TTL     — don't refetch prices that are still fresh at all.
+#   2. _throttle()   — minimum spacing between calls to the same provider.
+#   3. _Backoff      — after repeated failures, stop trying for a while
+#                      (exponential, capped), like fx.py's _fail_cache.
+PRICE_TTL = timedelta(minutes=20)
+
+_PROVIDER_MIN_INTERVAL = {"yahoo": 0.35, "coingecko": 1.2, "openfigi": 0.5}
+_last_call: dict[str, float] = {}
+_throttle_lock = asyncio.Lock()
+
+
+async def _throttle(provider: str) -> None:
+    """Space out calls to `provider` by at least its minimum interval."""
+    gap = _PROVIDER_MIN_INTERVAL.get(provider, 0.3)
+    async with _throttle_lock:
+        now = time.monotonic()
+        wait = gap - (now - _last_call.get(provider, 0.0))
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_call[provider] = time.monotonic()
+
+
+class _Backoff:
+    """Exponential backoff per provider, so a blocked API isn't hammered.
+
+    After a failure the provider is skipped for an increasing delay (30s, 60s,
+    120s … capped at 30 min). Any success resets it immediately.
+    """
+
+    _BASE = 30.0
+    _CAP = 1800.0
+
+    def __init__(self) -> None:
+        self._fails: dict[str, int] = {}
+        self._until: dict[str, float] = {}
+
+    def blocked(self, provider: str) -> bool:
+        return time.monotonic() < self._until.get(provider, 0.0)
+
+    def record_failure(self, provider: str) -> None:
+        n = self._fails.get(provider, 0) + 1
+        self._fails[provider] = n
+        delay = min(self._BASE * (2 ** (n - 1)), self._CAP)
+        self._until[provider] = time.monotonic() + delay
+        logger.warning("%s failing (%d in a row) — pausing calls for %.0fs", provider, n, delay)
+
+    def record_success(self, provider: str) -> None:
+        if self._fails.pop(provider, None):
+            self._until.pop(provider, None)
+            logger.info("%s recovered", provider)
+
+
+_backoff = _Backoff()
 
 # isin -> resolved Yahoo symbol (validated against broker price). Persists for the
 # process lifetime so repeated imports/refreshes don't re-hit the search API.
@@ -32,6 +92,11 @@ _REF_DEVIATION_TOL = 0.35
 
 async def _fetch_stock_prices(tickers: list[str]) -> dict[str, tuple[float, str]]:
     """Fetch current prices for stocks/ETFs via yfinance (runs in executor)."""
+
+    if _backoff.blocked("yahoo"):
+        logger.info("Skipping yahoo call — backing off after repeated failures")
+        return {}
+    await _throttle("yahoo")
     if not tickers:
         return {}
 
@@ -69,9 +134,14 @@ async def _fetch_stock_prices(tickers: list[str]) -> dict[str, tuple[float, str]
         return result
 
     try:
-        return await asyncio.get_event_loop().run_in_executor(None, _sync_fetch)
+        out = await asyncio.get_event_loop().run_in_executor(None, _sync_fetch)
+        # An empty result for a non-empty request means the provider gave us
+        # nothing — treat it as a failure so repeated blocks trigger backoff.
+        _backoff.record_success("yahoo") if out else _backoff.record_failure("yahoo")
+        return out
     except Exception as e:
         logger.warning("yfinance batch fetch failed: %s", e)
+        _backoff.record_failure("yahoo")
         return {}
 
 
@@ -131,6 +201,11 @@ def _compute_dividend_growth_rate(dividends_series) -> float | None:
 
 async def _fetch_dividend_details(tickers: list[str]) -> dict[str, dict]:
     """Fetch dividend info (yield, rate, ex-date, frequency, payout, sector, history) via yfinance."""
+
+    if _backoff.blocked("yahoo"):
+        logger.info("Skipping yahoo call — backing off after repeated failures")
+        return {}
+    await _throttle("yahoo")
     if not tickers:
         return {}
 
@@ -249,6 +324,11 @@ async def _fetch_dividend_details(tickers: list[str]) -> dict[str, dict]:
 
 async def _fetch_crypto_prices(ids: list[str]) -> dict[str, tuple[float, str]]:
     """Fetch current prices for crypto via CoinGecko free API."""
+
+    if _backoff.blocked("coingecko"):
+        logger.info("Skipping coingecko call — backing off after repeated failures")
+        return {}
+    await _throttle("coingecko")
     if not ids:
         return {}
     try:
@@ -267,11 +347,17 @@ async def _fetch_crypto_prices(ids: list[str]) -> dict[str, tuple[float, str]]:
         return result
     except Exception as e:
         logger.warning("CoinGecko fetch failed: %s", e)
+        _backoff.record_failure("coingecko")
         return {}
 
 
 async def fetch_isin_for_ticker(ticker: str) -> Optional[str]:
     """Look up a ticker's ISIN via yfinance (e.g. to backfill IBKR positions)."""
+
+    if _backoff.blocked("yahoo"):
+        logger.info("Skipping yahoo call — backing off after repeated failures")
+        return None
+    await _throttle("yahoo")
     if not ticker:
         return None
 
@@ -293,6 +379,11 @@ async def fetch_isin_for_ticker(ticker: str) -> Optional[str]:
 
 async def _yahoo_search_symbols(isin: str) -> list[str]:
     """Resolve candidate Yahoo symbols for an ISIN via the public search endpoint."""
+
+    if _backoff.blocked("yahoo"):
+        logger.info("Skipping yahoo call — backing off after repeated failures")
+        return []
+    await _throttle("yahoo")
     try:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
             resp = await client.get(
@@ -342,6 +433,11 @@ _FIGI_SUFFIX: dict[str, str] = {
 
 async def _openfigi_candidates(isin: str) -> list[str]:
     """Resolve candidate Yahoo symbols for an ISIN via OpenFIGI (ISIN→ticker+exchange)."""
+
+    if _backoff.blocked("openfigi"):
+        logger.info("Skipping openfigi call — backing off after repeated failures")
+        return []
+    await _throttle("openfigi")
     import os
     headers = {"Content-Type": "application/json"}
     key = os.environ.get("OPENFIGI_API_KEY")
@@ -463,7 +559,7 @@ async def resolve_yahoo_symbol(
     return fallback_ticker, False
 
 
-async def refresh_all_prices(db: AsyncSession) -> int:
+async def refresh_all_prices(db: AsyncSession, force: bool = False) -> int:
     """Fetch current prices for all holdings and update price_cache."""
     holdings = (await db.execute(select(Holding))).scalars().all()
     if not holdings:
@@ -481,6 +577,28 @@ async def refresh_all_prices(db: AsyncSession) -> int:
 
     stock_tickers = list(set(stock_tickers))
     crypto_ids = list(set(crypto_ids))
+
+    # Skip tickers whose cached price is still fresh. The scheduler fires every
+    # 15 min and the user can also refresh by hand; without this every trigger
+    # re-hits the provider for prices that have not meaningfully moved.
+    if not force:
+        fresh_rows = (await db.execute(text("SELECT ticker, fetched_at FROM price_cache"))).all()
+        cutoff = datetime.utcnow() - PRICE_TTL
+        fresh: set[str] = set()
+        for tkr, ts in fresh_rows:
+            try:
+                last = ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts))
+            except (ValueError, TypeError):
+                continue
+            if last >= cutoff:
+                fresh.add(tkr)
+        skipped = len([t for t in stock_tickers if t in fresh]) + len([c for c in crypto_ids if c in fresh])
+        stock_tickers = [t for t in stock_tickers if t not in fresh]
+        crypto_ids = [c for c in crypto_ids if c not in fresh]
+        if skipped:
+            logger.info("Price refresh: %d ticker(s) still fresh, skipped", skipped)
+        if not stock_tickers and not crypto_ids:
+            return 0
 
     stock_prices = await _fetch_stock_prices(stock_tickers)
     crypto_prices = await _fetch_crypto_prices(crypto_ids)
@@ -623,6 +741,12 @@ async def fetch_historical_prices(ticker: str, period: str = "1y") -> list[dict]
     cache_key = f"{ticker}:{period}"
     if cache_key in _history_cache:
         return _history_cache[cache_key]
+    # Guard placed after the cache lookup: a cached series is still worth serving
+    # while the provider is being given a rest.
+    if _backoff.blocked("yahoo"):
+        logger.info("Skipping yahoo history call — backing off after repeated failures")
+        return []
+    await _throttle("yahoo")
 
     def _sync_fetch():
         import yfinance as yf
@@ -646,9 +770,11 @@ async def fetch_historical_prices(ticker: str, period: str = "1y") -> list[dict]
     try:
         result = await asyncio.get_event_loop().run_in_executor(None, _sync_fetch)
         _history_cache[cache_key] = result
+        _backoff.record_success("yahoo")
         return result
     except Exception as e:
         logger.warning("Historical price fetch failed for %s: %s", ticker, e)
+        _backoff.record_failure("yahoo")
         return []
 
 

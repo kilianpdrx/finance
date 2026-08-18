@@ -226,9 +226,12 @@ async def lifespan(app: FastAPI):
                 logger.warning("Scheduled history warm failed: %s", e)
 
     scheduler.add_job(daily_fx_refresh, "cron", hour=7, minute=0, id="daily_fx")
-    scheduler.add_job(periodic_price_refresh, "interval", minutes=15, id="price_refresh")
+    # 30 min, not 15: prices are cached with PRICE_TTL anyway, and these are free
+    # unauthenticated APIs shared by every install. Halving the poll rate halves
+    # the standing load for no meaningful loss of freshness on a personal dashboard.
+    scheduler.add_job(periodic_price_refresh, "interval", minutes=30, id="price_refresh")
     scheduler.start()
-    logger.info("Scheduler started (FX daily at 07:00, prices every 15min)")
+    logger.info("Scheduler started (FX daily at 07:00, prices every 30min)")
 
     yield
 

@@ -332,17 +332,28 @@ def _decode(raw: bytes) -> str:
 
 
 def _parse_number(s: str) -> float:
+    """English-style number. Unparseable input degrades to 0.0 rather than
+    raising: a single malformed cell must not abort a whole broker import."""
     s = s.strip().replace(",", "").replace("\xa0", "")
     if not s or s == "-":
         return 0.0
-    return float(s)
+    try:
+        return float(s)
+    except ValueError:
+        logger.warning("Unparseable number in holdings import: %r", s)
+        return 0.0
 
 
 def _parse_french_number(s: str) -> float:
+    """French-style number (decimal comma). Same no-raise contract as above."""
     s = s.strip().replace("\xa0", "").replace(" ", "").replace(",", ".")
     if not s or s == "-":
         return 0.0
-    return float(s)
+    try:
+        return float(s)
+    except ValueError:
+        logger.warning("Unparseable French number in holdings import: %r", s)
+        return 0.0
 
 
 def _parse_smart_number(s: str) -> float:

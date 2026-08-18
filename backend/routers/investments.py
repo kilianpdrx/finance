@@ -332,7 +332,8 @@ async def delete_holding(holding_id: int, db: AsyncSession = Depends(get_db), pi
 
 @router.post("/refresh-prices")
 async def trigger_price_refresh(db: AsyncSession = Depends(get_db)):
-    count = await refresh_all_prices(db)
+    # Explicit user action: bypass PRICE_TTL, they asked for fresh numbers.
+    count = await refresh_all_prices(db, force=True)
     return {"refreshed": count}
 
 
@@ -371,7 +372,8 @@ async def resolve_tickers(db: AsyncSession = Depends(get_db), pid: int = Depends
             resolved += 1
     await db.commit()
     try:
-        await refresh_all_prices(db)
+        # Tickers just changed, so the cached prices are for the old symbols.
+        await refresh_all_prices(db, force=True)
     except Exception:
         pass
     return {"resolved": resolved}
