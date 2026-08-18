@@ -12,6 +12,39 @@ from routers import bank_profiles, investments, settings, system, profiles, goal
 logger = logging.getLogger(__name__)
 
 
+def _configure_logging() -> None:
+    """Log to a rotating file inside the data volume, as well as stdout.
+
+    Container stdout is lost on every restart, so when a user reports a problem
+    there is nothing to look at. The file lives next to the database so it
+    survives restarts and is included in the diagnostics export.
+    """
+    from logging.handlers import RotatingFileHandler
+    from database import DATA_DIR
+
+    root = logging.getLogger()
+    if any(isinstance(h, RotatingFileHandler) for h in root.handlers):
+        return  # already configured (e.g. uvicorn --reload re-importing)
+    root.setLevel(logging.INFO)
+
+    fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+    try:
+        log_dir = DATA_DIR / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        fh = RotatingFileHandler(log_dir / "finance.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+    except OSError as e:  # read-only volume: keep running, just without a file log
+        logging.getLogger(__name__).warning("File logging unavailable: %s", e)
+    if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
+        sh = logging.StreamHandler()
+        sh.setFormatter(fmt)
+        root.addHandler(sh)
+
+
+_configure_logging()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()

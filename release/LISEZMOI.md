@@ -44,6 +44,9 @@ L'adresse est toujours **http://127.0.0.1:3000** — vous pouvez la mettre en fa
 
 - Tout est dans le dossier **`data`**, juste à côté de ce fichier. C'est le seul dossier
   qui compte.
+- **Une sauvegarde est créée automatiquement à chaque lancement**, avant toute mise à
+  jour, dans `data/backups` (les 5 dernières sont conservées). C'est votre filet de
+  sécurité si une mise à jour se passe mal.
 - **Sauvegarde** : dans l'application, allez dans **Paramètres → Sauvegarde & Données** et
   cliquez sur *Télécharger la sauvegarde*. Rangez le fichier `.sqlite` en lieu sûr.
 - **Restauration** : même écran, bouton *Restaurer*. Une copie de sécurité de vos données
@@ -78,4 +81,4 @@ L'adresse est toujours **http://127.0.0.1:3000** — vous pouvez la mettre en fa
 | « Docker ne répond pas » | Ouvrez Docker Desktop, attendez « running », relancez |
 | Le port 3000 est occupé | Fermez l'autre programme qui l'utilise, ou redémarrez l'ordinateur |
 | Bandeau rouge « Serveur inaccessible » | Vos données sont intactes. Double-cliquez sur **Arreter**, puis sur **Finance** |
-| Autre | Notez le **numéro de version** (Paramètres → Général → À propos) et signalez-le |
+| Autre | Paramètres → **Sauvegarde & Données** → *Rapport de diagnostic*, et envoyez le fichier |

@@ -161,6 +161,89 @@ from utils import csv_safe_cell
 # unbounded upload fully into memory).
 MAX_RESTORE_BYTES = 200 * 1024 * 1024  # 200 MB
 
+
+@router.get("/diagnostics")
+async def diagnostics(db: AsyncSession = Depends(get_db)):
+    """Technical snapshot to attach to a bug report.
+
+    Deliberately contains NO financial content: only row counts, schema version,
+    cache freshness and recent log lines — never descriptions, amounts, account
+    names or category names. That is what makes it safe to send to someone else.
+    """
+    import platform
+    import sys
+    from datetime import datetime as _dt
+
+    out: dict = {
+        "generated_at": _dt.now().isoformat(timespec="seconds"),
+        "version": os.getenv("APP_VERSION", "dev"),
+        "is_container": _in_container(),
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+    }
+
+    # Schema revision + database size.
+    try:
+        out["schema_revision"] = (await db.execute(
+            text("SELECT version_num FROM alembic_version LIMIT 1")
+        )).scalar()
+    except Exception:
+        out["schema_revision"] = None
+    out["database_bytes"] = DB_PATH.stat().st_size if DB_PATH.exists() else 0
+
+    # Row counts only — the shape of the data, never its content.
+    counts: dict = {}
+    for table in (
+        "profiles", "accounts", "transactions", "categories", "category_rules",
+        "budget_entries", "planned_expenses", "goals", "holdings",
+        "account_balance_snapshots", "bank_profiles", "exchange_rates", "import_batches",
+    ):
+        try:
+            counts[table] = (await db.execute(text(f"SELECT COUNT(*) FROM {table}"))).scalar()
+        except Exception:
+            counts[table] = None
+    out["row_counts"] = counts
+
+    # Per-profile shape (no names): how much data each holds, which modules are on.
+    try:
+        rows = (await db.execute(text(
+            "SELECT p.id, p.enabled_modules, "
+            "(SELECT COUNT(*) FROM accounts a WHERE a.profile_id = p.id), "
+            "(SELECT COUNT(*) FROM transactions t WHERE t.profile_id = p.id) "
+            "FROM profiles p ORDER BY p.id"
+        ))).all()
+        out["profiles"] = [
+            {"id": r[0], "enabled_modules": r[1], "accounts": r[2], "transactions": r[3]}
+            for r in rows
+        ]
+    except Exception:
+        out["profiles"] = None
+
+    # Freshness of the network-backed caches — the usual suspects when figures look wrong.
+    async def _scalar(sql: str):
+        try:
+            return (await db.execute(text(sql))).scalar()
+        except Exception:
+            return None
+
+    out["caches"] = {
+        "latest_exchange_rate": str(await _scalar("SELECT MAX(date) FROM exchange_rates") or ""),
+        "price_cache_rows": await _scalar("SELECT COUNT(*) FROM price_cache"),
+        "price_cache_last_fetch": str(await _scalar("SELECT MAX(fetched_at) FROM price_cache") or ""),
+        "dividend_cache_rows": await _scalar("SELECT COUNT(*) FROM dividend_cache"),
+    }
+
+    # Tail of the log file (technical messages; may include imported file names).
+    log_file = DB_PATH.parent / "logs" / "finance.log"
+    try:
+        lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        out["recent_logs"] = lines[-200:]
+    except OSError:
+        out["recent_logs"] = []
+
+    return out
+
+
 # Each restore snapshots the database it replaces. Keep a few for safety, but
 # don't let full DB copies pile up next to the live file forever.
 PRE_RESTORE_KEEP = 3

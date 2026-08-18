@@ -7,6 +7,7 @@ from sqlalchemy import select, update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
+from ownership import require_account, require_category
 from models import Category, CategoryRule, Transaction
 from schemas import (
     CategoryCreate, CategoryUpdate, CategoryOut,
@@ -488,6 +489,8 @@ async def _reject_archived_target(db: AsyncSession, pid: int, category_id: Optio
 
 @router.post("/{category_id}/rules", response_model=CategoryRuleOut, status_code=201)
 async def create_rule(category_id: int, payload: CategoryRuleCreate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    await require_category(db, pid, category_id)
+    await require_account(db, pid, payload.account_id)
     await _reject_archived_target(db, pid, category_id)
     rule = CategoryRule(**payload.model_dump(), profile_id=pid)
     rule.category_id = category_id
@@ -504,7 +507,10 @@ async def update_rule(rule_id: int, payload: CategoryRuleUpdate, db: AsyncSessio
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
     updates = payload.model_dump(exclude_none=True)
+    if "account_id" in updates:
+        await require_account(db, pid, updates["account_id"])
     if "category_id" in updates:
+        await require_category(db, pid, updates["category_id"])
         await _reject_archived_target(db, pid, updates["category_id"])
     for field, value in updates.items():
         setattr(rule, field, value)

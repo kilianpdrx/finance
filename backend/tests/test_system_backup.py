@@ -115,3 +115,32 @@ async def test_version_defaults_to_dev(client, monkeypatch):
     res = await client.get("/api/system/version")
     assert res.json()["version"] == "dev"
     assert "is_container" in res.json()
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_has_shape_but_no_financial_content(client, seed_data, db_session):
+    """The export is meant to be sent to someone else, so it must describe the
+    shape of the data (counts, versions, cache freshness) and never its content."""
+    from datetime import date
+    from models import Transaction
+
+    db_session.add(Transaction(
+        profile_id=seed_data["profile"].id, account_id=seed_data["account_courant"].id,
+        date=date(2026, 2, 3), description="LOYER APPARTEMENT RUE SECRETE",
+        amount_cents=123456, is_debit=True, import_hash="diag1"))
+    await db_session.commit()
+
+    res = await client.get("/api/system/diagnostics")
+    assert res.status_code == 200
+    body = res.json()
+
+    for key in ("version", "schema_revision", "row_counts", "profiles", "caches", "recent_logs"):
+        assert key in body, key
+    assert body["row_counts"]["transactions"] >= 1
+    assert body["profiles"][0]["transactions"] >= 1
+
+    # Nothing identifying may appear anywhere in the payload.
+    blob = res.text
+    for secret in ("LOYER APPARTEMENT", "RUE SECRETE", "123456",
+                   seed_data["account_courant"].name, seed_data["cat_courses"].name):
+        assert secret not in blob, f"diagnostics leaked {secret!r}"

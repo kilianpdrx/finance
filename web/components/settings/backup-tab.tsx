@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Upload, FileSpreadsheet, FileText, Database, AlertTriangle } from "lucide-react";
+import { Download, Upload, FileSpreadsheet, FileText, Database, AlertTriangle, LifeBuoy } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,29 @@ const fmtDate = (d: Date) =>
 
 export function BackupTab() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [diagBusy, setDiagBusy] = useState(false);
+
+  /** Download the technical report as a file the user can attach to a message. */
+  const downloadDiagnostics = async () => {
+    setDiagBusy(true);
+    try {
+      const res = await fetch("/api/system/diagnostics");
+      if (!res.ok) throw new Error(`Erreur ${res.status}`);
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `diagnostic-${fmtDate(new Date())}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Rapport de diagnostic téléchargé");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Impossible de générer le rapport");
+    } finally {
+      setDiagBusy(false);
+    }
+  };
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [exporting, setExporting] = useState<null | "csv" | "xlsx" | "pdf">(null);
   const [dateFrom, setDateFrom] = useState(() => fmtDate(new Date(new Date().getFullYear() - 1, new Date().getMonth(), 1)));
@@ -243,6 +266,35 @@ export function BackupTab() {
           </div>
         </div>
       )}
+      {/* ── Diagnostic ────────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-start gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-brand/10 text-brand">
+              <LifeBuoy className="size-5" />
+            </div>
+            <div>
+              <CardTitle>Signaler un problème</CardTitle>
+              <CardDescription>
+                Téléchargez un rapport technique à joindre à votre message.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground">
+            Il contient la version, l&apos;état de la base (nombre de lignes) et les
+            derniers messages techniques.{" "}
+            <strong className="text-foreground">
+              Aucun montant, libellé, nom de compte ou de catégorie n&apos;y figure.
+            </strong>
+          </p>
+          <Button variant="outline" className="shrink-0" onClick={downloadDiagnostics} disabled={diagBusy}>
+            <LifeBuoy className="size-4" /> {diagBusy ? "Préparation…" : "Rapport de diagnostic"}
+          </Button>
+        </CardContent>
+      </Card>
+
     </div>
   );
 }

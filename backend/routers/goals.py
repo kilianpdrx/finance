@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies import current_profile_id
+from ownership import require_account
 from models import Goal, GoalContribution, Account, Transaction
 from schemas import (
     GoalCreate, GoalUpdate, GoalOut,
@@ -168,7 +169,12 @@ async def update_goal(goal_id: int, payload: GoalUpdate, db: AsyncSession = Depe
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
     # exclude_unset (not exclude_none) so the client CAN clear deadline / linked account by sending null.
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    # Same check as create_goal: without it a goal can be re-pointed at another
+    # profile's account and would then display that account's balance.
+    if "linked_account_id" in updates:
+        await require_account(db, pid, updates["linked_account_id"])
+    for field, value in updates.items():
         setattr(goal, field, value)
     await db.commit()
     await db.refresh(goal)

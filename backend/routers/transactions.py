@@ -12,6 +12,7 @@ from database import get_db
 from dependencies import current_profile_id
 from models import Transaction, Account, Category, ImportBatch
 from schemas import TransactionOut, TransactionUpdate, TransactionMeta, TransactionCreateManual
+from ownership import require_account, require_category
 from utils import generate_import_hash, csv_safe_cell
 
 router = APIRouter()
@@ -318,6 +319,9 @@ async def create_transaction(
     pid: int = Depends(current_profile_id),
 ):
     """Create a manual transaction."""
+    await require_account(db, pid, payload.account_id)
+    await require_category(db, pid, payload.category_id)
+    await _reject_grouping_category(db, payload.category_id)
     # Generate a unique hash since this is manual
     import_hash = generate_import_hash(
         payload.date,
@@ -427,6 +431,7 @@ async def bulk_update_category(
     """Update category for multiple transactions at once."""
     if not payload.ids:
         return {"updated": 0}
+    await require_category(db, pid, payload.category_id)
     await _reject_grouping_category(db, payload.category_id)
     from sqlalchemy import update
     for chunk in _chunks(payload.ids):
@@ -515,7 +520,10 @@ async def update_transaction(
     # Editing one of these core fields (vs. just recategorizing) marks the row edited.
     CORE_FIELDS = {"account_id", "date", "description", "amount_cents", "currency", "is_debit"}
     updates = payload.model_dump(exclude_unset=True)
+    if "account_id" in updates:
+        await require_account(db, pid, updates["account_id"])
     if "category_id" in updates:
+        await require_category(db, pid, updates["category_id"])
         await _reject_grouping_category(db, updates["category_id"])
     for field, value in updates.items():
         if field in CORE_FIELDS and getattr(txn, field) != value:

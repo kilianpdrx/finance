@@ -44,18 +44,38 @@ if ! docker info >/dev/null 2>&1; then
     "puis double-cliquez à nouveau sur Finance."
 fi
 
-# 3. Dernière version (c'est le mécanisme de mise à jour).
+# 3. Sauvegarde automatique AVANT toute mise à jour.
+# L'application est d'abord arrêtée proprement : SQLite écrit alors son journal
+# (-wal) dans la base, donc la copie est cohérente. Une mise à jour modifie la
+# structure de la base et ne peut pas être annulée : cette copie est le seul
+# retour en arrière possible.
+if [ -f data/finance.db ]; then
+  docker compose down >/dev/null 2>&1 || true
+  mkdir -p data/backups
+  STAMP=$(date +%Y%m%d-%H%M%S)
+  if cp data/finance.db "data/backups/finance-$STAMP.db" 2>/dev/null; then
+    say "${DIM}Sauvegarde créée : data/backups/finance-$STAMP.db${RESET}"
+    # Ne garder que les 5 plus récentes (les noms sont horodatés donc triables).
+    ls -1t data/backups/finance-*.db 2>/dev/null | tail -n +6 | while read -r old; do
+      rm -f "$old"
+    done
+  else
+    say "${DIM}(Sauvegarde impossible — démarrage quand même.)${RESET}"
+  fi
+fi
+
+# 4. Dernière version (c'est le mécanisme de mise à jour).
 say "${DIM}Recherche d'une mise à jour…${RESET}"
 docker compose pull --quiet 2>/dev/null || docker compose pull || \
   say "${DIM}(Téléchargement impossible — démarrage avec la version déjà installée.)${RESET}"
 
-# 4. Démarrage.
+# 5. Démarrage.
 if ! docker compose up -d; then
   fail "L'application n'a pas pu démarrer." \
        "Si le port 3000 est déjà utilisé par un autre programme, fermez-le puis réessayez."
 fi
 
-# 5. Attendre que ce soit réellement prêt avant d'ouvrir le navigateur.
+# 6. Attendre que ce soit réellement prêt avant d'ouvrir le navigateur.
 say "${DIM}Préparation…${RESET}"
 for _ in $(seq 1 60); do
   if curl -fs -m 2 http://127.0.0.1:3000/api/health >/dev/null 2>&1; then

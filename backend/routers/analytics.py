@@ -15,6 +15,7 @@ from schemas import (
     BudgetSectionRow, BudgetFullResponse,
     cents_to_display,
 )
+from ownership import require_account, require_category
 from services.fx import RateCache
 
 router = APIRouter()
@@ -782,6 +783,8 @@ async def upsert_budget_entry(
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
+    await require_category(db, pid, category_id)
+    await require_account(db, pid, account_id)
     base = [
         BudgetEntry.category_id == category_id,
         BudgetEntry.month == month,
