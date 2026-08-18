@@ -10,6 +10,17 @@ from schemas import BankProfileBase, BankProfileCreate, BankProfileUpdate, BankP
 router = APIRouter()
 
 
+@router.get("/presets")
+async def list_presets():
+    """Verified column mappings for known banks, for the importer's one-click setup.
+
+    Static and profile-independent: a mapping is a list of column names, not user
+    data, so it needs no scoping.
+    """
+    from bank_presets import BANK_PRESETS
+    return BANK_PRESETS
+
+
 @router.get("", response_model=List[BankProfileOut])
 async def list_bank_profiles(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     result = await db.execute(select(BankProfile).where(BankProfile.profile_id == pid).order_by(BankProfile.name))

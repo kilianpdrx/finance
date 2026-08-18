@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
 from ownership import require_account, require_category
-from models import Category, CategoryRule, Transaction
+from models import Account, Category, CategoryRule, Transaction
 from schemas import (
     CategoryCreate, CategoryUpdate, CategoryOut,
     CategoryRuleCreate, CategoryRuleUpdate, CategoryRuleOut,
@@ -395,6 +395,91 @@ class RulePreviewRequest(BaseModel):
     conditions: List[RuleCondition]
     account_id: Optional[int] = None
     logic_operator: str = "AND"
+
+
+class RuleTestRequest(BaseModel):
+    description: str
+    amount_cents: int = 0
+    is_debit: bool = True
+    account_id: Optional[int] = None
+
+
+@router.post("/rules/test")
+async def test_rules(
+    payload: RuleTestRequest,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Answer "which rule would classify this?" for a typed description.
+
+    Rules are evaluated by ascending priority and the FIRST match wins, so when
+    several match the losers are invisible in the UI — which is exactly what makes
+    a mis-ordered rule impossible to diagnose by staring at the list. Returns the
+    winner AND every other match, in evaluation order.
+    """
+    from models import CategoryRule as Rule
+
+    rules = (await db.execute(
+        select(Rule).where(Rule.profile_id == pid, Rule.is_active == True)  # noqa: E712
+        .order_by(Rule.priority, Rule.id)
+    )).scalars().all()
+
+    cat_names = {
+        cid: name for cid, name in (await db.execute(
+            select(Category.id, Category.name).where(Category.profile_id == pid)
+        )).all()
+    }
+
+    txn = {
+        "description": payload.description,
+        "amount_cents": payload.amount_cents,
+        "date": str(datetime.utcnow().date()),
+        "is_debit": payload.is_debit,
+        "currency": "",
+        "account_id": payload.account_id if payload.account_id is not None else "",
+    }
+
+    acc_names = {
+        aid: name for aid, name in (await db.execute(
+            select(Account.id, Account.name).where(Account.profile_id == pid)
+        )).all()
+    }
+
+    matches = []
+    for r in rules:
+        if not r.conditions:
+            continue
+        # An account-scoped rule only fires on its own account. When the user
+        # hasn't picked one we evaluate it anyway and flag it, rather than hiding
+        # it: most rules here are account-scoped, so filtering them out silently
+        # would make the tester answer "no rule matches" for descriptions that
+        # very much do match.
+        scoped_elsewhere = False
+        if r.account_id is not None:
+            if payload.account_id is None:
+                scoped_elsewhere = True
+            elif r.account_id != payload.account_id:
+                continue
+        if evaluate_conditions(txn, r.conditions, r.logic_operator or "AND"):
+            matches.append({
+                "rule_id": r.id,
+                "priority": r.priority,
+                "category_id": r.category_id,
+                "category_name": cat_names.get(r.category_id, f"#{r.category_id}"),
+                "logic_operator": r.logic_operator or "AND",
+                "conditions": r.conditions,
+                "account_id": r.account_id,
+                "account_name": acc_names.get(r.account_id) if r.account_id else None,
+                # True when this rule would only fire on its own account and the
+                # caller didn't say which account they're testing.
+                "account_scoped_unverified": scoped_elsewhere,
+            })
+
+    return {
+        "matched": matches[0] if matches else None,
+        "all_matches": matches,
+        "rules_evaluated": len(rules),
+    }
 
 
 @router.post("/rules/preview", response_model=List[TransactionOut])

@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Wallet } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Wallet, Landmark, Download, Upload } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -9,6 +9,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AccountSelect } from "@/components/accounts/account-select";
 import type { Account } from "@/lib/api/hooks";
+import { toast } from "sonner";
+
+interface BankPreset {
+  name: string;
+  column_mapping: Record<string, string>;
+  date_format?: string;
+  encoding?: string;
+  delimiter?: string;
+}
 
 const FIELD_OPTIONS = [
   { value: "", label: "-- Choisir --" },
@@ -63,6 +72,69 @@ export function ColumnMappingStep({
   const [encoding, setEncoding] = useState("utf-8");
   const [delimiter, setDelimiter] = useState(";");
   const [saveProfile, setSaveProfile] = useState(false);
+  const [presets, setPresets] = useState<BankPreset[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Column mapping is where a non-technical user gets stuck. A preset (or a
+  // mapping a friend already worked out) answers it in one click.
+  useEffect(() => {
+    fetch("/api/bank-profiles/presets")
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setPresets)
+      .catch(() => setPresets([]));
+  }, []);
+
+  /** Apply a saved mapping by matching its column NAMES against this file's headers. */
+  const applyMapping = (preset: BankPreset) => {
+    const next: Record<number, string> = {};
+    let hits = 0;
+    for (const [role, header] of Object.entries(preset.column_mapping)) {
+      const idx = rawHeaders.findIndex((h) => h.trim() === String(header).trim());
+      if (idx >= 0) { next[idx] = role; hits++; }
+    }
+    if (hits === 0) {
+      toast.error("Aucune colonne de ce modèle ne correspond à ce fichier.");
+      return;
+    }
+    setMapping(next);
+    setDateFormat(preset.date_format || "%d/%m/%Y");
+    setEncoding(preset.encoding || "utf-8");
+    setDelimiter(preset.delimiter || ";");
+    const total = Object.keys(preset.column_mapping).length;
+    toast.success(
+      hits === total
+        ? `Modèle « ${preset.name} » appliqué`
+        : `Modèle « ${preset.name} » appliqué (${hits}/${total} colonnes trouvées)`,
+    );
+  };
+
+  /** Download the current mapping so it can be sent to someone with the same bank. */
+  const exportMapping = () => {
+    const preset: BankPreset = {
+      name: accounts.find((a) => String(a.id) === selectedAccount)?.bank_name || "Mon modèle",
+      column_mapping: buildMapping(),
+      date_format: dateFormat,
+      encoding,
+      delimiter,
+    };
+    const blob = new Blob([JSON.stringify(preset, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `modele-${preset.name.replace(/\s+/g, "-").toLowerCase()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importMapping = async (file: File) => {
+    try {
+      const preset = JSON.parse(await file.text()) as BankPreset;
+      if (!preset?.column_mapping) throw new Error("Fichier de modèle invalide");
+      applyMapping(preset);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Modèle illisible");
+    }
+  };
 
   const localPreview = useMemo(() => buildLocalPreview(rawPreview, mapping), [rawPreview, mapping]);
 
@@ -87,6 +159,38 @@ export function ColumnMappingStep({
         </div>
         <Button variant="ghost" size="sm" onClick={onBack}>← Recommencer</Button>
       </div>
+
+      {/* Presets & sharing — the shortcut past the hardest step of the import. */}
+      <Card className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+        <Label className="flex shrink-0 items-center gap-2 whitespace-nowrap text-muted-foreground">
+          <Landmark className="size-4" /> Modèle
+        </Label>
+        <Select onValueChange={(v) => { const p = presets.find((x) => x.name === v); if (p) applyMapping(p); }}>
+          <SelectTrigger className="h-9 sm:w-64">
+            <SelectValue placeholder={presets.length ? "Choisir une banque connue…" : "Aucun modèle disponible"} />
+          </SelectTrigger>
+          <SelectContent>
+            {presets.map((p) => (
+              <SelectItem key={p.name} value={p.name}>{p.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="flex gap-2 sm:ml-auto">
+          <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+            <Upload className="size-4" /> Importer un modèle
+          </Button>
+          <Button variant="outline" size="sm" onClick={exportMapping} disabled={!mapped.length}>
+            <Download className="size-4" /> Exporter
+          </Button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) importMapping(f); e.target.value = ""; }}
+          />
+        </div>
+      </Card>
 
       <Card className="space-y-4 p-4">
         <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-4">

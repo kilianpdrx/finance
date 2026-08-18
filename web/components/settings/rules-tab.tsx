@@ -12,6 +12,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { useAllRules, useCategories, useRuleMutations, useCategoryMutations, type CategoryRule, type Account } from "@/lib/api/hooks";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { RuleDialog } from "@/components/settings/rule-dialog";
+import { RuleTester } from "@/components/settings/rule-tester";
 import { ArchivedBadge } from "@/components/transactions/category-select";
 
 export function RulesTab({ accounts }: { accounts: Account[] }) {
@@ -126,6 +127,8 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
           <Button size="sm" onClick={openCreate}><Plus className="size-4" /> Règle</Button>
         </div>
       </div>
+
+      <RuleTester />
 
       <div className="space-y-5">
         {groups.map((g) => (
