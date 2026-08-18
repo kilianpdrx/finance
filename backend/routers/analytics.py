@@ -11,7 +11,7 @@ from dependencies import current_profile_id
 from models import Transaction, Account, Category, BudgetEntry, AccountBalanceSnapshot, Setting
 from schemas import (
     AnalyticsSummary, CashFlowMonth, CategoryBreakdown, CurrencyBalance,
-    RecurringTransaction, BudgetTableResponse, BudgetTableRow, BudgetTableCell,
+    RecurringTransaction, BudgetTableRow, BudgetTableCell,
     BudgetSectionRow, BudgetFullResponse,
     cents_to_display,
 )
@@ -658,120 +658,6 @@ async def recurring_uncovered(
         if len(out) >= 50:
             break
     return out
-
-
-@router.get("/budget", response_model=BudgetTableResponse)
-async def budget_table(
-    months: int = Query(default=13, le=24),
-    db: AsyncSession = Depends(get_db),
-    pid: int = Depends(current_profile_id),
-):
-    from datetime import date as date_type
-    import calendar
-
-    today = date_type.today()
-
-    month_list = []
-    start_y = today.year
-    start_m = today.month - 3
-    if start_m <= 0:
-        start_m += 12
-        start_y -= 1
-    for i in range(12):
-        y = start_y
-        m = start_m + i
-        if m > 12:
-            m -= 12
-            y += 1
-        month_list.append(f"{y:04d}-{m:02d}")
-
-    date_from = f"{month_list[0]}-01"
-    last_month = month_list[-1]
-    last_day = calendar.monthrange(int(last_month[:4]), int(last_month[5:7]))[1]
-    date_to = f"{last_month}-{last_day:02d}"
-
-    rows = await db.execute(
-        select(
-            func.strftime("%Y-%m", Transaction.date).label("month"),
-            Transaction.category_id,
-            func.sum(Transaction.amount_cents).label("total"),
-        )
-        .where(
-            and_(
-                Transaction.date >= date_from,
-                Transaction.date <= date_to,
-                Transaction.is_debit == True,
-                Transaction.is_internal_transfer == False,
-                Transaction.profile_id == pid,
-            )
-        )
-        .group_by("month", Transaction.category_id)
-    )
-    actuals: dict = defaultdict(lambda: defaultdict(int))
-    for r in rows:
-        actuals[r.category_id][r.month] = r.total
-
-    budget_rows = await db.execute(
-        select(BudgetEntry).where(BudgetEntry.month.in_(month_list), BudgetEntry.profile_id == pid)
-    )
-    budgets: dict = defaultdict(lambda: defaultdict(int))
-    for b in budget_rows.scalars():
-        budgets[b.category_id][b.month] = b.expected_amount_cents
-
-    all_cat_ids = set()
-    cat_map: dict = {}
-    cats = await db.execute(select(Category).where(Category.profile_id == pid))
-    for c in cats.scalars():
-        all_cat_ids.add(c.id)
-        cat_map[c.id] = c
-
-    table_rows = []
-    for cat_id in sorted(all_cat_ids, key=lambda x: cat_map[x].name if cat_map.get(x) else 'zzz'):
-        cat = cat_map.get(cat_id)
-        cells = []
-        total_actual = 0
-        total_expected = 0
-        for month in month_list:
-            actual = actuals[cat_id][month]
-            expected = budgets[cat_id][month]
-            cells.append(BudgetTableCell(month=month, actual_cents=actual, expected_cents=expected))
-            total_actual += actual
-            total_expected += expected
-        table_rows.append(BudgetTableRow(
-            category_id=cat_id,
-            category_name=cat.name if cat else "Non catégorisé",
-            category_color=cat.color if cat else "#94a3b8",
-            cells=cells,
-            total_actual_cents=total_actual,
-            total_expected_cents=total_expected,
-        ))
-
-    none_actuals = actuals.get(None, {})
-    if none_actuals:
-        cells = []
-        total_actual = 0
-        for month in month_list:
-            actual = none_actuals.get(month, 0)
-            cells.append(BudgetTableCell(month=month, actual_cents=actual, expected_cents=0))
-            total_actual += actual
-        table_rows.append(BudgetTableRow(
-            category_id=None,
-            category_name="Non catégorisé",
-            category_color="#94a3b8",
-            cells=cells,
-            total_actual_cents=total_actual,
-            total_expected_cents=0,
-        ))
-
-    col_totals_actual = [sum(row.cells[i].actual_cents for row in table_rows) for i in range(len(month_list))]
-    col_totals_expected = [sum(row.cells[i].expected_cents for row in table_rows) for i in range(len(month_list))]
-
-    return BudgetTableResponse(
-        months=month_list,
-        rows=table_rows,
-        column_totals_actual=col_totals_actual,
-        column_totals_expected=col_totals_expected,
-    )
 
 
 @router.put("/budget")

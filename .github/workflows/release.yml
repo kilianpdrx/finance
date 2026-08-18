@@ -67,17 +67,45 @@ jobs:
           push: true
           build-args: |
             APP_VERSION=${{ steps.v.outputs.version }}
-          tags: |
-            ${{ steps.img.outputs.name }}:${{ steps.v.outputs.version }}
-            ${{ steps.img.outputs.name }}:latest
+          # Only the immutable version tag here. `latest` is moved later, once
+          # BOTH images have built (see the `promote` job) — otherwise a failed
+          # web build leaves backend:latest ahead of web:latest and a user who
+          # relaunches mid-release pulls a mismatched pair. That happened on v1.0.0.
+          tags: ${{ steps.img.outputs.name }}:${{ steps.v.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  promote:
+    # Move `latest` only after every image built. Re-tags the existing manifests
+    # (no rebuild), so both architectures are preserved.
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      packages: write
+    steps:
+      - name: Determine version
+        id: v
+        run: echo "version=${{ github.event.inputs.version || github.ref_name }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Point :latest at this version
+        run: |
+          repo=$(echo "${{ env.REGISTRY }}/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          for img in backend web; do
+            docker buildx imagetools create \
+              --tag "$repo-$img:latest" \
+              "$repo-$img:${{ steps.v.outputs.version }}"
+          done
 
   bundle:
     # Attache le dossier release/ à la Release GitHub, pour que les proches
     # téléchargent 4 fichiers au lieu de cloner le dépôt.
     runs-on: ubuntu-latest
-    needs: publish
+    needs: promote
     permissions:
       contents: write
     steps:

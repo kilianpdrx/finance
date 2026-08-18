@@ -144,3 +144,42 @@ async def test_diagnostics_has_shape_but_no_financial_content(client, seed_data,
     for secret in ("LOYER APPARTEMENT", "RUE SECRETE", "123456",
                    seed_data["account_courant"].name, seed_data["cat_courses"].name):
         assert secret not in blob, f"diagnostics leaked {secret!r}"
+
+
+@pytest.mark.asyncio
+async def test_unhandled_error_returns_french_message_and_reference(test_engine):
+    """A crash must be actionable: a French message plus a reference that also
+    appears in the log, instead of FastAPI's bare 'Internal Server Error'.
+
+    Uses its own client with `raise_app_exceptions=False`: Starlette's 500 handler
+    builds the response and then re-raises so the server can log it, and httpx's
+    default transport surfaces that re-raise instead of the response.
+    """
+    from httpx import AsyncClient, ASGITransport
+    import main
+
+    @main.app.get("/api/_boom_test")
+    async def _boom():
+        raise RuntimeError("boom")
+
+    try:
+        transport = ASGITransport(app=main.app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.get("/api/_boom_test")
+        assert res.status_code == 500
+        body = res.json()
+        assert "erreur inattendue" in body["detail"].lower()
+        assert body["reference"] and body["reference"] in body["detail"]
+    finally:
+        main.app.router.routes = [
+            r for r in main.app.router.routes
+            if getattr(r, "path", None) != "/api/_boom_test"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_removed_legacy_budget_endpoint_is_gone(client, seed_data):
+    """GET /analytics/budget was dead code carrying the pre-archive behaviour."""
+    res = await client.get("/api/analytics/budget",
+                           headers={"X-Profile-Id": str(seed_data["profile"].id)})
+    assert res.status_code == 405  # only PUT remains on that path

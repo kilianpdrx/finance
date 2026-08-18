@@ -1,8 +1,10 @@
 import asyncio
 import json
 import logging
+import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import init_db, AsyncSessionLocal, sync_schema
@@ -239,6 +241,28 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Turn an unexpected crash into something a user can act on.
+
+    FastAPI's default is a bare "Internal Server Error" with nothing to go on.
+    Here the traceback is logged with a short reference that is ALSO returned to
+    the user, so the message they read and the line in the log file (and in the
+    diagnostics export) can be matched up.
+    """
+    ref = uuid.uuid4().hex[:8]
+    logger.exception("Unhandled error [%s] on %s %s", ref, request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"Une erreur inattendue s'est produite (référence {ref}). "
+                      "Vous pouvez joindre le rapport de diagnostic "
+                      "(Paramètres → Sauvegarde & Données) à votre signalement.",
+            "reference": ref,
+        },
+    )
+
 
 app.add_middleware(
     CORSMiddleware,
