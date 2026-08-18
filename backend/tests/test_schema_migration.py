@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 import database
 from models import Base
 
-HEAD = "012_adopt_orphan_profile_rows"
+HEAD = "013_txn_original_currency"
 
 
 @pytest.fixture

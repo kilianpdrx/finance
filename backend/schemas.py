@@ -196,6 +196,9 @@ class TransactionBase(BaseModel):
 
 class TransactionCreate(TransactionBase):
     import_hash: str
+    # Foreign amount as charged, when the statement provides one.
+    original_amount_cents: Optional[int] = None
+    original_currency: Optional[str] = None
 
 class TransactionCreateManual(TransactionBase):
     pass
@@ -231,6 +234,8 @@ class TransactionOut(TransactionBase):
     created_at: datetime
     amount_display: Optional[str] = None
     account_name: Optional[str] = None
+    original_amount_cents: Optional[int] = None
+    original_currency: Optional[str] = None
 
     @classmethod
     def from_orm_with_display(cls, obj) -> "TransactionOut":

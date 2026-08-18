@@ -764,8 +764,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Budget Table */
-        get: operations["budget_table_api_analytics_budget_get"];
+        get?: never;
         /** Upsert Budget Entry */
         put: operations["upsert_budget_entry_api_analytics_budget_put"];
         post?: never;
@@ -1374,6 +1373,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Version
+         * @description Which build is running, so a bug report can name a version.
+         *
+         *     `APP_VERSION` is baked into the image by CI from the git tag; a source run
+         *     reports "dev". `is_container` lets the UI tailor its update instructions
+         *     (relaunch the app vs. restart start.sh).
+         */
+        get: operations["version_api_system_version_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system/shutdown": {
         parameters: {
             query?: never;
@@ -1395,6 +1418,30 @@ export interface paths {
          *     broken. Report that instead of pretending to stop.
          */
         post: operations["shutdown_api_system_shutdown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Diagnostics
+         * @description Technical snapshot to attach to a bug report.
+         *
+         *     Deliberately contains NO financial content: only row counts, schema version,
+         *     cache freshness and recent log lines — never descriptions, amounts, account
+         *     names or category names. That is what makes it safe to send to someone else.
+         */
+        get: operations["diagnostics_api_system_diagnostics_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1913,17 +1960,6 @@ export interface components {
             planned_matched: boolean;
             /** Planned Id */
             planned_id?: number | null;
-        };
-        /** BudgetTableResponse */
-        BudgetTableResponse: {
-            /** Months */
-            months: string[];
-            /** Rows */
-            rows: components["schemas"]["BudgetTableRow"][];
-            /** Column Totals Actual */
-            column_totals_actual: number[];
-            /** Column Totals Expected */
-            column_totals_expected: number[];
         };
         /** BudgetTableRow */
         BudgetTableRow: {
@@ -2796,6 +2832,10 @@ export interface components {
             amount_display?: string | null;
             /** Account Name */
             account_name?: string | null;
+            /** Original Amount Cents */
+            original_amount_cents?: number | null;
+            /** Original Currency */
+            original_currency?: string | null;
         };
         /** TransactionUpdate */
         TransactionUpdate: {
@@ -4617,39 +4657,6 @@ export interface operations {
             };
         };
     };
-    budget_table_api_analytics_budget_get: {
-        parameters: {
-            query?: {
-                months?: number;
-            };
-            header?: {
-                "X-Profile-Id"?: number | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BudgetTableResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     upsert_budget_entry_api_analytics_budget_put: {
         parameters: {
             query: {
@@ -6170,7 +6177,47 @@ export interface operations {
             };
         };
     };
+    version_api_system_version_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     shutdown_api_system_shutdown_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    diagnostics_api_system_diagnostics_get: {
         parameters: {
             query?: never;
             header?: never;

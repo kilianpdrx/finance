@@ -442,6 +442,18 @@ async def confirm(
             balance_after_cents=t.balance_after_cents,
             import_batch_id=batch.id,
             import_hash=final_hash,
+            # Keep the foreign amount only when it really is foreign; storing the
+            # account currency again would just be noise on every row.
+            original_amount_cents=(
+                t.original_amount_cents
+                if t.original_currency and t.original_currency != account_currency
+                else None
+            ),
+            original_currency=(
+                t.original_currency
+                if t.original_currency and t.original_currency != account_currency
+                else None
+            ),
         )
         db.add(txn)
         existing_hashes.add(final_hash)

@@ -18,6 +18,8 @@ const FIELD_OPTIONS = [
   { value: "debit", label: "Débit" },
   { value: "credit", label: "Crédit" },
   { value: "balance", label: "Solde" },
+  { value: "currency", label: "Devise d'origine (optionnel)" },
+  { value: "original_amount", label: "Montant d'origine (optionnel)" },
   { value: "_ignore", label: "Ignorer" },
 ];
 

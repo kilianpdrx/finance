@@ -193,6 +193,11 @@ def parse_csv(file_bytes: bytes, profile: BankProfile) -> tuple[list[Transaction
     debit_col = mapping.get("debit")
     credit_col = mapping.get("credit")
     balance_col = mapping.get("balance")
+    # Optional: what the bank actually charged abroad. `currency` alone is enough
+    # when the statement shows the foreign amount in the same column; otherwise
+    # `original_amount` carries it separately.
+    currency_col = mapping.get("currency")
+    orig_amount_col = mapping.get("original_amount")
 
     # Verify required columns exist
     missing = []
@@ -288,6 +293,23 @@ def parse_csv(file_bytes: bytes, profile: BankProfile) -> tuple[list[Transaction
             if raw_balance and raw_balance.lower() != "nan":
                 balance_after = _parse_amount(row[balance_col])  # None if unreadable
 
+        # Original (foreign) amount, when the statement provides one. Only kept
+        # when it actually differs from the account currency — otherwise it is
+        # noise. The account currency is applied by the upload router.
+        original_currency = None
+        original_amount_cents = None
+        if currency_col and currency_col in df.columns:
+            raw_ccy = str(row[currency_col]).strip().upper()
+            if raw_ccy and raw_ccy.lower() != "nan" and len(raw_ccy) <= 4:
+                original_currency = raw_ccy
+        if orig_amount_col and orig_amount_col in df.columns:
+            oa = _parse_amount(row[orig_amount_col])
+            if oa is not None:
+                original_amount_cents = abs(oa)
+        if original_currency and original_amount_cents is None:
+            # Same column carried both: the parsed amount IS the foreign amount.
+            original_amount_cents = amount_cents
+
         import_hash = _compute_hash(str(parsed_date), description, amount_cents, is_debit)
 
         transactions.append(TransactionCreate(
@@ -299,6 +321,8 @@ def parse_csv(file_bytes: bytes, profile: BankProfile) -> tuple[list[Transaction
             is_debit=is_debit,
             balance_after_cents=balance_after,
             import_hash=import_hash,
+            original_amount_cents=original_amount_cents,
+            original_currency=original_currency,
         ))
 
     logger.info("Parsed %d transactions (skipped %d: %s)", len(transactions), report.total, report.as_dict())

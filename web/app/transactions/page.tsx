@@ -257,6 +257,13 @@ export default function TransactionsPage() {
                   </TableCell>
                   <TableCell className={`nums blurable text-right font-semibold ${t.is_debit ? "text-negative" : "text-positive"}`}>
                     {t.is_debit ? "−" : "+"}{formatCents(t.amount_cents, t.currency, { decimals: 2 })}
+                    {/* What the bank actually charged abroad. Shown under the
+                        account-currency figure, which is what every total uses. */}
+                    {t.original_currency && t.original_amount_cents != null && (
+                      <span className="block text-[11px] font-normal text-muted-foreground">
+                        {formatCents(t.original_amount_cents, t.original_currency, { decimals: 2 })}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="pr-2">
                     <Button variant="ghost" size="icon" className="size-8 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"

@@ -144,6 +144,12 @@ class Transaction(Base):
     is_debit = Column(Boolean, nullable=False)
     balance_after_cents = Column(Integer, nullable=True)
     notes = Column(String, nullable=True)
+    # What the bank actually charged, when it differs from the account currency
+    # (a foreign purchase on a EUR card). `amount_cents`/`currency` remain the
+    # account-currency figures every total is built from; these two are the
+    # original, kept for display only so the information isn't lost on import.
+    original_amount_cents = Column(Integer, nullable=True)
+    original_currency = Column(String, nullable=True)
     is_manually_reviewed = Column(Boolean, default=False)
     is_manually_edited = Column(Boolean, default=False)  # a core field was hand-corrected
     is_internal_transfer = Column(Boolean, default=False)

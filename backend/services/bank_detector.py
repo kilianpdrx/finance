@@ -25,11 +25,12 @@ _ROLE_KEYWORDS = {
     "credit": ["credit", "versement", "deposit", "recette", "entree"],
     "amount": ["montant", "amount", "betrag", "valeur", "value"],
     "balance": ["solde", "balance", "saldo"],
+    "currency": ["devise", "currency", "monnaie", "waehrung", "ccy"],
     "description": ["description", "libelle", "label", "wording", "nature", "motif",
                     "detail", "communication", "name", "payee", "memo", "narrative", "objet"],
 }
 # More specific roles first so e.g. a "Débit" column isn't stolen by "amount".
-_ROLE_PRIORITY = ["date", "debit", "credit", "amount", "balance", "description"]
+_ROLE_PRIORITY = ["date", "debit", "credit", "amount", "balance", "currency", "description"]
 
 
 def guess_columns(headers: list[str]) -> dict[str, str]:
