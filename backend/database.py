@@ -4,8 +4,13 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 
-DATA_DIR = Path(__file__).parent / "data"
-DATA_DIR.mkdir(exist_ok=True)
+# Where the database, backups and logs live. Relocatable via FINANCE_DATA_DIR so
+# a process can be pointed at a throwaway directory — the test suite does this
+# before importing `main`, which otherwise appends every pytest run to the real
+# data/logs/finance.log and crowds out the diagnostics export. `alembic/env.py`
+# reads DB_PATH from here, so it follows the override too.
+DATA_DIR = Path(os.environ.get("FINANCE_DATA_DIR") or Path(__file__).parent / "data")
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "finance.db"
 
 DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
@@ -56,6 +61,8 @@ def _sync_schema_blocking() -> None:
     log = logging.getLogger(__name__)
     try:
         cfg = Config(str(Path(__file__).parent / "alembic.ini"))
+        # Keep the app's logging setup — see the note in alembic/env.py.
+        cfg.attributes["embedded"] = True
         sync_engine = create_engine(f"sqlite:///{DB_PATH}")
         try:
             with sync_engine.connect() as conn:

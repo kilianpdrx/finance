@@ -446,6 +446,12 @@ async def account_performance(
     holdings = (await db.execute(
         select(Holding).where(Holding.account_id == account_id, Holding.profile_id == pid)
     )).scalars().all()
+    # price_locked holdings are manual-priced (a fund Yahoo cannot quote) — same
+    # exclusion as `_holdings_monthly_values`. Their history comes back empty
+    # anyway, and a retired symbol logs a 404 on every chart load. Filtered in
+    # Python rather than SQL because `price_locked != True` would also drop rows
+    # where the column is NULL (the default is applied by the ORM, not the DB).
+    holdings = [h for h in holdings if not h.price_locked]
     if not holdings:
         return {"account_id": account_id, "name": acc.name, "data": []}
 

@@ -786,11 +786,12 @@ async def warm_history_cache(db: AsyncSession, period: str = "2y") -> int:
     per hour and after every restart. Called from the background startup task and
     the periodic price-refresh job so user requests find the cache warm.
     """
+    # `price_locked != True` in SQL would also discard rows where the column is
+    # NULL (the default is ORM-side), silently skipping a real holding — so the
+    # lock is tested in Python, like everywhere else.
     tickers = sorted({
-        h.ticker for h in (await db.execute(
-            select(Holding).where(Holding.price_locked != True)  # noqa: E712
-        )).scalars().all()
-        if h.ticker
+        h.ticker for h in (await db.execute(select(Holding))).scalars().all()
+        if h.ticker and not h.price_locked
     })
     if not tickers:
         return 0

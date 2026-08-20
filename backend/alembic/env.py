@@ -15,7 +15,13 @@ from models import Base
 
 config = context.config
 
-if config.config_file_name:
+# `fileConfig` replaces the root logger's handlers with alembic.ini's console-only
+# one, pins root to WARN and disables every existing logger. That is what you want
+# from the `alembic` CLI — but the app also runs migrations in-process at startup
+# (`database.sync_schema`), where it would tear out the RotatingFileHandler that
+# `main._configure_logging()` just installed and silence the app for the rest of
+# the run. Programmatic callers set `embedded` to keep their own configuration.
+if config.config_file_name and not config.attributes.get("embedded"):
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata

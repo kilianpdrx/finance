@@ -43,6 +43,20 @@ def _configure_logging() -> None:
         sh.setFormatter(fmt)
         root.addHandler(sh)
 
+    # uvicorn installs its own handlers and sets propagate=False, so its startup,
+    # shutdown, bind-failure and access lines never reach the file — precisely
+    # what is missing when someone reports "it won't open". Hand them to root.
+    # This runs at import of `main`, i.e. after uvicorn's own dictConfig, so the
+    # reassignment sticks.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        lg = logging.getLogger(name)
+        lg.handlers.clear()
+        lg.propagate = True
+
+    # httpx logs every outbound call at INFO. Left alone, routine FX and price
+    # requests fill the 200-line tail the diagnostics export ships.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 _configure_logging()
 

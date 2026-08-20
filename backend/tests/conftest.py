@@ -1,5 +1,7 @@
 import asyncio
+import atexit
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -11,6 +13,15 @@ from sqlalchemy import event
 
 # Add backend directory to sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Point the app at a throwaway data directory BEFORE importing anything that
+# reads it. `main` calls _configure_logging() at import time, so without this
+# every test run appends to the real backend/data/logs/finance.log — the file the
+# diagnostics export tails, which then shows test noise instead of the user's
+# session. Set unconditionally: test isolation is not something to opt into.
+_TEST_DATA_DIR = tempfile.mkdtemp(prefix="finance-test-data-")
+os.environ["FINANCE_DATA_DIR"] = _TEST_DATA_DIR
+atexit.register(shutil.rmtree, _TEST_DATA_DIR, True)
 
 from database import Base, get_db
 from main import app
