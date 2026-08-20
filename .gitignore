@@ -43,3 +43,8 @@ web/*.tsbuildinfo
 autre/
 CLAUDE.md
 
+
+# Throwaway backend data for the Playwright suite (fresh DB per run)
+web/e2e/.tmp-data/
+web/playwright-report/
+web/test-results/

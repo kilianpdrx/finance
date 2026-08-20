@@ -65,7 +65,7 @@ export interface HoldingOut {
   price_currency: string | null;
   price_fetched_at: string | null;
   value_in_account_ccy_cents: number | null;
-  price_status: "ok" | "fallback" | "mismatch" | "missing";
+  price_status: "ok" | "fallback" | "mismatch" | "missing" | "cash";
   // Dividend fields
   dividend_yield: number | null;
   yield_on_cost: number | null;

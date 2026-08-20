@@ -36,8 +36,28 @@ async def create_profile(body: ProfileCreate, db: AsyncSession = Depends(get_db)
     db.add(p)
     await db.commit()
     await db.refresh(p)
-    return p
 
+    # A profile with no categories and no rules is a dead app: nothing to file a
+    # transaction under, and auto-categorisation silently does nothing. Give it the
+    # same defaults a fresh install gets. `seed_if_empty` is profile-scoped, so this
+    # can never overwrite an existing profile's categories.
+    from seed import seed_if_empty
+    await seed_if_empty(db, p.id)
+
+    # Inherit the household's base currency. Without a settings row the reader falls
+    # back to a hardcoded "CHF" (`analytics._get_base_currency`), so a new profile
+    # would silently report a different currency from every other one.
+    default_ccy = (await db.execute(text(
+        "SELECT s.value FROM settings s JOIN profiles pr ON pr.id = s.profile_id"
+        " WHERE s.key = 'base_currency' AND pr.is_default = 1 LIMIT 1"
+    ))).scalar() or "CHF"
+    await db.execute(text(
+        "INSERT OR IGNORE INTO settings (profile_id, key, value)"
+        " VALUES (:p, 'base_currency', :c)"
+    ), {"p": p.id, "c": default_ccy})
+    await db.commit()
+
+    return p
 
 
 @router.put("/{profile_id}", response_model=ProfileOut)

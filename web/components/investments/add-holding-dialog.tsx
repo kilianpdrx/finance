@@ -16,6 +16,7 @@ const ASSET_TYPES = [
   { value: "crypto", label: "Crypto" },
   { value: "bond", label: "Obligation" },
   { value: "fund", label: "Fonds" },
+  { value: "cash", label: "Liquidités" },
 ];
 
 const EMPTY = { ticker: "", name: "", quantity: "", costBasis: "", currency: "USD", assetType: "stock" };
@@ -32,15 +33,26 @@ export function AddHoldingDialog({
   const { create } = useHoldingMutations();
   const [form, setForm] = useState(EMPTY);
 
+  // Cash has no ticker, no name and no cost basis — the amount IS the position.
+  // The backend derives CASH.{devise} and pins the price, so those fields are
+  // hidden rather than asked for and thrown away.
+  const isCash = form.assetType === "cash";
+
   const submit = async () => {
     try {
       await create.mutateAsync({
         accountId,
         body: {
-          ticker: form.assetType === "crypto" ? form.ticker.toLowerCase() : form.ticker.toUpperCase(),
-          name: form.name,
-          quantity: parseFloat(form.quantity),
-          cost_basis_cents: parseAmountToCents(form.costBasis),
+          ticker: isCash
+            ? "cash"
+            : form.assetType === "crypto"
+              ? form.ticker.toLowerCase()
+              : form.ticker.toUpperCase(),
+          name: isCash ? "" : form.name,
+          quantity: isCash
+            ? parseAmountToCents(form.quantity) / 100
+            : parseFloat(form.quantity),
+          cost_basis_cents: isCash ? 0 : parseAmountToCents(form.costBasis),
           currency: form.currency,
           asset_type: form.assetType,
         },
@@ -53,7 +65,9 @@ export function AddHoldingDialog({
     }
   };
 
-  const valid = form.ticker && form.name && form.quantity && form.costBasis;
+  const valid = isCash
+    ? Boolean(form.quantity) && parseAmountToCents(form.quantity) >= 0
+    : Boolean(form.ticker && form.name && form.quantity && form.costBasis);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -62,26 +76,45 @@ export function AddHoldingDialog({
           <DialogTitle>Ajouter une position</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          {!isCash && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Ticker / ID</Label>
+                  <Input value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })} placeholder="AAPL, bitcoin…" />
+                </div>
+                <div className="space-y-1">
+                  <Label>Nom</Label>
+                  <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Apple Inc." />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Quantité</Label>
+                  <Input inputMode="decimal" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="10" />
+                </div>
+                <div className="space-y-1">
+                  <Label>Coût d'acquisition total</Label>
+                  <Input inputMode="decimal" value={form.costBasis} onChange={(e) => setForm({ ...form, costBasis: e.target.value })} placeholder="1 500,00" />
+                </div>
+              </div>
+            </>
+          )}
+          {isCash && (
             <div className="space-y-1">
-              <Label>Ticker / ID</Label>
-              <Input value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })} placeholder="AAPL, bitcoin…" />
+              <Label>Montant</Label>
+              <Input
+                inputMode="decimal"
+                value={form.quantity}
+                onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+                placeholder="1 500,00"
+              />
+              <p className="text-xs text-muted-foreground">
+                Les liquidités non investies du compte. Elles comptent dans le
+                patrimoine mais ne sont pas cotées.
+              </p>
             </div>
-            <div className="space-y-1">
-              <Label>Nom</Label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Apple Inc." />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Quantité</Label>
-              <Input inputMode="decimal" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="10" />
-            </div>
-            <div className="space-y-1">
-              <Label>Coût d'acquisition total</Label>
-              <Input inputMode="decimal" value={form.costBasis} onChange={(e) => setForm({ ...form, costBasis: e.target.value })} placeholder="1 500,00" />
-            </div>
-          </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label>Type d'actif</Label>
@@ -93,7 +126,7 @@ export function AddHoldingDialog({
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Devise de cotation</Label>
+              <Label>{isCash ? "Devise" : "Devise de cotation"}</Label>
               <Select value={form.currency} onValueChange={(v) => setForm({ ...form, currency: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>

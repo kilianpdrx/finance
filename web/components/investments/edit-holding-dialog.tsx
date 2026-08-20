@@ -28,6 +28,11 @@ export function EditHoldingDialog({
   const [name, setName] = useState("");
   const [priceLocked, setPriceLocked] = useState(false);
   const [manualPrice, setManualPrice] = useState("");
+  const [cashAmount, setCashAmount] = useState("");
+
+  // Cash has no symbol, no ISIN and no quote to lock — the only thing to edit is
+  // how much of it there is.
+  const isCash = holding?.asset_type === "cash";
 
   useEffect(() => {
     if (holding) {
@@ -40,12 +45,22 @@ export function EditHoldingDialog({
           ? (holding.current_price_cents / 100).toString().replace(".", ",")
           : "",
       );
+      setCashAmount(holding.quantity ? holding.quantity.toString().replace(".", ",") : "");
     }
   }, [holding]);
 
   const submit = async () => {
     if (!holding) return;
     try {
+      if (isCash) {
+        await update.mutateAsync({
+          holdingId: holding.id,
+          body: { quantity: parseAmountToCents(cashAmount) / 100 },
+        });
+        toast.success("Liquidités mises à jour");
+        onOpenChange(false);
+        return;
+      }
       const body: Record<string, unknown> = {
         ticker: holding.asset_type === "crypto" ? ticker.trim().toLowerCase() : ticker.trim().toUpperCase(),
         isin: isin.trim() || null,
@@ -68,12 +83,24 @@ export function EditHoldingDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Modifier la position</DialogTitle>
+          <DialogTitle>{isCash ? "Modifier les liquidités" : "Modifier la position"}</DialogTitle>
           <DialogDescription>
-            Corrigez le symbole Yahoo ou l&apos;ISIN si le cours affiché est erroné. La correction
-            est mémorisée et réutilisée lors des prochains imports.
+            {isCash
+              ? "Le montant non investi présent sur ce compte. Il compte dans le patrimoine mais n'est pas coté."
+              : "Corrigez le symbole Yahoo ou l'ISIN si le cours affiché est erroné. La correction est mémorisée et réutilisée lors des prochains imports."}
           </DialogDescription>
         </DialogHeader>
+        {isCash ? (
+          <div className="space-y-1">
+            <Label>Montant ({holding?.currency ?? "EUR"})</Label>
+            <Input
+              value={cashAmount}
+              onChange={(e) => setCashAmount(e.target.value)}
+              placeholder="1 500,00"
+              inputMode="decimal"
+            />
+          </div>
+        ) : (
         <div className="space-y-3">
           <div className="space-y-1">
             <Label>Nom</Label>
@@ -118,9 +145,10 @@ export function EditHoldingDialog({
             )}
           </div>
         </div>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Annuler</Button>
-          <Button onClick={submit} disabled={update.isPending || !ticker.trim()}>
+          <Button onClick={submit} disabled={update.isPending || (isCash ? !cashAmount.trim() : !ticker.trim())}>
             {update.isPending ? "…" : "Enregistrer"}
           </Button>
         </DialogFooter>

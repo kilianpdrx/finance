@@ -14,6 +14,7 @@ const TYPE_LABELS: Record<string, string> = {
   crypto: "Crypto",
   bond: "Obligation",
   fund: "Fonds",
+  cash: "Liquidités",
 };
 
 export function HoldingsTable({ holdings, currency }: { holdings: HoldingOut[]; currency: string }) {
@@ -49,25 +50,30 @@ export function HoldingsTable({ holdings, currency }: { holdings: HoldingOut[]; 
         <tbody>
           {holdings.map((h) => {
             const alloc = totalValue > 0 && accVal(h) ? Math.round((accVal(h) / totalValue) * 1000) / 10 : null;
-            const isExpanded = expandedTicker === h.ticker;
+            // Cash has no quote to chart and no ticker to warn about — expanding it
+            // would ask the price provider for a symbol that doesn't exist.
+            const isCash = h.asset_type === "cash";
+            const isExpanded = !isCash && expandedTicker === h.ticker;
             return (
               <React.Fragment key={h.id}>
                 <tr
-                  onClick={() => setExpandedTicker(isExpanded ? null : h.ticker)}
-                  className={cn("cursor-pointer border-b border-border/60 transition-colors hover:bg-muted/30", isExpanded && "bg-muted/20")}
+                  onClick={() => !isCash && setExpandedTicker(isExpanded ? null : h.ticker)}
+                  className={cn("border-b border-border/60 transition-colors hover:bg-muted/30", !isCash && "cursor-pointer", isExpanded && "bg-muted/20")}
                 >
                   <td className="py-2 pl-1">
-                    <ChevronDown className={cn("size-3.5 text-muted-foreground transition-transform", isExpanded && "rotate-180")} />
+                    {!isCash && (
+                      <ChevronDown className={cn("size-3.5 text-muted-foreground transition-transform", isExpanded && "rotate-180")} />
+                    )}
                   </td>
                   <td className="py-2 font-mono text-xs font-semibold">
                     <span className="inline-flex items-center gap-1.5">
                       {h.ticker.toUpperCase()}
-                      {h.price_locked && (
+                      {!isCash && h.price_locked && (
                         <span title="Prix verrouillé — pas de mise à jour automatique" className="inline-flex">
                           <Lock className="size-3 text-muted-foreground" />
                         </span>
                       )}
-                      {!h.price_locked && h.price_status !== "ok" && (
+                      {!isCash && !h.price_locked && h.price_status !== "ok" && (
                         <span title="Cours indisponible — vérifiez le ticker / ISIN" className="inline-flex">
                           <AlertTriangle className="size-3 text-warning" />
                         </span>

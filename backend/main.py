@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -207,7 +208,15 @@ async def lifespan(app: FastAPI):
                     logger.warning("IBKR startup iteration failed: %s", e)
 
 
-    startup_task = asyncio.create_task(_deferred_startup())
+    # FINANCE_OFFLINE skips everything that reaches the network: the FX backfill,
+    # the price refresh and the IBKR sync at startup, plus the recurring jobs. The
+    # e2e suite runs against a real backend, and without this every run would be
+    # slow, chatty and at the mercy of Yahoo being up.
+    offline = os.environ.get("FINANCE_OFFLINE", "").lower() in ("1", "true", "yes")
+    if offline:
+        logger.info("FINANCE_OFFLINE — skipping network startup tasks and scheduler")
+
+    startup_task = asyncio.create_task(_deferred_startup()) if not offline else None
 
     # ── Scheduler ─────────────────────────────────────────────────────────────────
     scheduler = AsyncIOScheduler()
@@ -244,13 +253,16 @@ async def lifespan(app: FastAPI):
     # unauthenticated APIs shared by every install. Halving the poll rate halves
     # the standing load for no meaningful loss of freshness on a personal dashboard.
     scheduler.add_job(periodic_price_refresh, "interval", minutes=30, id="price_refresh")
-    scheduler.start()
-    logger.info("Scheduler started (FX daily at 07:00, prices every 30min)")
+    if not offline:
+        scheduler.start()
+        logger.info("Scheduler started (FX daily at 07:00, prices every 30min)")
 
     yield
 
-    startup_task.cancel()
-    scheduler.shutdown(wait=False)
+    if startup_task is not None:
+        startup_task.cancel()
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(

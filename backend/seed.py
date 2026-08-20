@@ -1,9 +1,12 @@
 """Seed the database with default categories, rules and bank profiles."""
 import json
+import logging
 from pathlib import Path
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import Category, CategoryRule
+
+logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -130,8 +133,17 @@ async def seed_if_empty(db: AsyncSession, profile_id: int):
     one are invisible to the whole app (the user would see no categories and get
     no auto-categorisation at all). The caller must create the default profile
     before calling this.
+
+    The "already seeded" check is **per profile**, not global. A global count
+    meant every profile after the first was skipped, so a second household member
+    got zero categories and zero rules — an app that cannot categorise anything.
+    Scoping it also keeps this safe to call on profile creation: a profile that
+    already has categories is never touched, so nobody's existing rules are
+    rewritten behind their back.
     """
-    result = await db.execute(select(func.count(Category.id)))
+    result = await db.execute(
+        select(func.count(Category.id)).where(Category.profile_id == profile_id)
+    )
     count = result.scalar()
     if count and count > 0:
         return  # already seeded
@@ -151,4 +163,7 @@ async def seed_if_empty(db: AsyncSession, profile_id: int):
             db.add(build_default_rule(rule_data, cat_id, profile_id))
 
     await db.commit()
-    print(f"Seeded {len(DEFAULT_CATEGORIES)} categories, {len(DEFAULT_RULES)} rules for profile {profile_id}.")
+    logger.info(
+        "Seeded %d categories, %d rules for profile %s.",
+        len(DEFAULT_CATEGORIES), len(DEFAULT_RULES), profile_id,
+    )

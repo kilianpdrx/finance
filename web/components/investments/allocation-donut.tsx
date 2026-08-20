@@ -13,6 +13,7 @@ const TYPE_LABELS: Record<string, string> = {
   crypto: "Crypto",
   bond: "Obligations",
   fund: "Fonds",
+  cash: "Liquidités",
   other: "Autre",
 };
 

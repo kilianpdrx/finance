@@ -25,6 +25,52 @@ from datetime import date, datetime
 router = APIRouter()
 
 
+# ── Cash positions ────────────────────────────────────────────────────────────
+# An investment account's holdings value *supersedes* its snapshot/transaction
+# balance in net worth, to avoid double-counting — which quietly assumed such an
+# account holds no loose cash. Uninvested cash in a PEA or at a broker was
+# therefore invisible. It is modelled as a holding whose price is pinned to one
+# unit of its own currency, so every existing total picks it up for free.
+CASH_ASSET_TYPE = "cash"
+CASH_UNIT_PRICE_CENTS = 100  # 1.00 of the holding's own currency
+CASH_NAME = "Liquidités"
+
+
+def cash_ticker(currency: str) -> str:
+    """`CASH.EUR`. The existing (account_id, ticker) unique constraint then allows
+    exactly one cash line per currency in an account, which is what a
+    multi-currency broker account needs."""
+    return f"CASH.{(currency or 'EUR').upper()}"
+
+
+def _normalize_cash_holding(h: Holding) -> None:
+    """Force a cash holding's invariants, on create *and* on update.
+
+    `price_locked` is the load-bearing part: it keeps cash out of every provider
+    call (`refresh_all_prices`, `warm_history_cache`, `account_performance`,
+    `_holdings_monthly_values`) through guards that already exist. Cash really is
+    manually priced, so this is the flag's intended meaning, not a trick.
+    Cost basis tracks the amount so a cash line never shows a phantom gain, and
+    the ticker is derived rather than accepted, so a cash row cannot be edited
+    into something the price refresh would try to quote.
+    """
+    if h.asset_type != CASH_ASSET_TYPE:
+        return
+    h.quantity = max(0.0, float(h.quantity or 0))
+    h.currency = (h.currency or "EUR").upper()
+    h.ticker = cash_ticker(h.currency)
+    h.name = (h.name or "").strip() or CASH_NAME
+    h.isin = None
+    h.price_locked = True
+    h.ref_price_cents = CASH_UNIT_PRICE_CENTS
+    h.ref_price_date = date.today()
+    h.cost_basis_cents = round(h.quantity * CASH_UNIT_PRICE_CENTS)
+
+
+def _cash_value_cents(h: Holding) -> int:
+    return round((h.quantity or 0) * CASH_UNIT_PRICE_CENTS)
+
+
 async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], account_currency: str = "EUR") -> list[dict]:
     """Bulk enrich holdings with ISIN mappings, cached prices, and cached dividends in 3 queries."""
     if not holdings:
@@ -97,6 +143,27 @@ async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], accou
             "industry": None,
             "dividend_date": None,
         }
+
+        # Cash is worth exactly its quantity. Short-circuit before the price
+        # lookup: the cache, the ISIN map and the dividend table all mean nothing
+        # for cash, and `price_status = "cash"` keeps the UI from badging it as a
+        # stale reference price.
+        if h.asset_type == CASH_ASSET_TYPE:
+            value = _cash_value_cents(h)
+            out["price_status"] = "cash"
+            out["current_price_cents"] = CASH_UNIT_PRICE_CENTS
+            out["current_value_cents"] = value
+            out["gain_cents"] = value - h.cost_basis_cents
+            if h.cost_basis_cents != 0:
+                out["gain_pct"] = round(
+                    (value - h.cost_basis_cents) / abs(h.cost_basis_cents) * 100, 2)
+            if h.currency == account_currency:
+                out["value_in_account_ccy_cents"] = value
+            else:
+                rate = await get_rate(db, h.currency, account_currency, today)
+                out["value_in_account_ccy_cents"] = round(value * rate) if rate else value
+            out_list.append(out)
+            continue
 
         lookup_ticker = h.ticker.lower() if h.asset_type == "crypto" else h.ticker.upper()
         cached = price_map.get(lookup_ticker)
@@ -264,6 +331,7 @@ async def create_holding(account_id: int, body: HoldingCreate, db: AsyncSession 
         added_date=body.added_date,
         notes=body.notes,
     )
+    _normalize_cash_holding(h)
     db.add(h)
     await db.commit()
     await db.refresh(h)
@@ -280,6 +348,11 @@ async def update_holding(holding_id: int, body: HoldingUpdate, db: AsyncSession 
     updates = body.model_dump(exclude_unset=True)
     for field, val in updates.items():
         setattr(h, field, val)
+
+    # Re-apply the cash invariants before anything reads the ticker or the lock:
+    # the price fetch below is skipped for locked holdings, and a currency change
+    # must move the row to its own CASH.{ccy} ticker.
+    _normalize_cash_holding(h)
 
     ticker_changed = "ticker" in updates and h.ticker and h.ticker != old_ticker
 
@@ -385,6 +458,11 @@ async def holding_history(
     period: str = Query("1y"),
     asset_type: str = Query("stock"),
 ):
+    # This endpoint takes an arbitrary ticker from the client, so it needs its own
+    # guard: `CASH.*` is not a symbol any provider knows, and asking would spend a
+    # request to earn a 404.
+    if ticker.upper().startswith("CASH."):
+        return {"ticker": ticker, "period": period, "data": []}
     data = await fetch_historical_prices(ticker, period)
     return {"ticker": ticker, "period": period, "data": data}
 
@@ -1037,10 +1115,27 @@ async def _holdings_monthly_values(db: AsyncSession, account_id: int, acc_ccy: s
     if not holdings:
         return []
 
+    # Cash has no price history but is real value: leaving it out understates the
+    # account's month-end series by exactly the cash balance. We only know today's
+    # amount, so it is carried back as a constant — an assumption, but a far
+    # smaller error than pretending the cash isn't there.
+    cash_cents = 0
+    for h in holdings:
+        if h.asset_type != CASH_ASSET_TYPE:
+            continue
+        value = _cash_value_cents(h)
+        if h.currency and h.currency != acc_ccy:
+            r = await get_rate(db, h.currency, acc_ccy, date.today())
+            value = round(value * r) if r else value
+        cash_cents += value
+
     # price_locked holdings are manual-priced (e.g. a fund Yahoo can't fetch) — no history.
     eligible = [h for h in holdings if not h.price_locked]
     if not eligible:
-        return []
+        # A cash-only account still belongs on the chart. With no history to build
+        # months from, it starts at the current month rather than being absent.
+        return ([{"month": date.today().strftime("%Y-%m"), "amount_cents": cash_cents}]
+                if cash_cents else [])
     # Fetch every holding's history CONCURRENTLY. Sequentially this was one blocking
     # network round-trip per holding on the dashboard's critical path (~4s for 17).
     raws = await asyncio.gather(*(fetch_historical_prices(h.ticker, "2y") for h in eligible))
@@ -1056,7 +1151,8 @@ async def _holdings_monthly_values(db: AsyncSession, account_id: int, acc_ccy: s
             rate = r if r else 1.0
         histories.append((h.quantity, {pt["date"]: pt["close"] * rate for pt in raw}))
     if not histories:
-        return []
+        return ([{"month": date.today().strftime("%Y-%m"), "amount_cents": cash_cents}]
+                if cash_cents else [])
 
     all_dates = sorted({d for _, closes in histories for d in closes})
     # Month-end value = sum of each holding's last close on/before the month's end.
@@ -1069,7 +1165,8 @@ async def _holdings_monthly_values(db: AsyncSession, account_id: int, acc_ccy: s
                 last[i] = closes[d]
         total = sum(qty * last[i] for i, (qty, _) in enumerate(histories) if last[i] is not None)
         by_month[d[:7]] = total  # later date in the month overwrites → month-end value
-    return [{"month": m, "amount_cents": round(v * 100)} for m, v in by_month.items()]
+    return [{"month": m, "amount_cents": round(v * 100) + cash_cents}
+            for m, v in by_month.items()]
 
 
 @router.get("/total-series")
