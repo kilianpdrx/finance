@@ -1,0 +1,29 @@
+# Le contexte de build est `./backend` (docker-compose.yml, ci.yml, release.yml),
+# donc Docker lit CE fichier — celui de la racine ne s'applique qu'à un build
+# lancé depuis la racine. Sans lui, le `COPY . .` du Dockerfile embarquerait
+# `backend/data/` — base réelle, sauvegardes, journaux — dans l'image.
+#
+# La CI part d'un dépôt fraîchement cloné, donc les images publiées sont saines
+# de toute façon ; ce fichier protège les constructions LOCALES
+# (`docker compose up --build`), les seules qui voient vos vraies données.
+
+# Données personnelles
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.csv
+*.pkl
+
+# Artefacts Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.venv/
+
+# Divers
+.env*
+.DS_Store

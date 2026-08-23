@@ -1,0 +1,22 @@
+# Le contexte de build est `./web`, donc Docker lit CE fichier et non celui de la
+# racine. Voir `backend/.dockerignore` pour le raisonnement complet.
+
+# Base jetable de la suite Playwright (contient une vraie base SQLite seedée)
+e2e/.tmp-data/
+test-results/
+playwright-report/
+
+# Données personnelles, si jamais un fichier atterrit ici
+*.csv
+*.db
+*.sqlite
+*.sqlite3
+
+# Artefacts de build — recompilés dans l'image
+node_modules/
+.next/
+*.tsbuildinfo
+
+# Divers
+.env*
+.DS_Store
