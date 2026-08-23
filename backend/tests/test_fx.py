@@ -1,0 +1,97 @@
+import pytest
+import pytest_asyncio
+from datetime import date, timedelta
+from sqlalchemy.ext.asyncio import AsyncSession
+from services import fx as fxmod
+from services.fx import get_rate, convert_cents, convert_cents_checked, backfill_range, refresh_latest
+from models import ExchangeRate
+
+pytestmark = pytest.mark.asyncio
+
+@pytest_asyncio.fixture
+async def fx_data(db_session: AsyncSession):
+    # Insert a cached rate
+    r = ExchangeRate(
+        base_currency="USD",
+        target_currency="EUR",
+        date=date(2026, 7, 20),
+        rate=0.90,
+    )
+    db_session.add(r)
+    await db_session.commit()
+
+async def test_get_rate_same_currency(db_session: AsyncSession):
+    rate = await get_rate(db_session, "EUR", "EUR", date.today())
+    assert rate == 1.0
+
+async def test_get_rate_cached(db_session: AsyncSession, fx_data):
+    # It should find the cached rate 0.90 for date 2026-07-20 or later
+    rate = await get_rate(db_session, "USD", "EUR", date(2026, 7, 21))
+    assert rate == 0.90
+
+async def test_convert_cents_same_currency(db_session: AsyncSession):
+    res = await convert_cents(db_session, 1000, "EUR", "EUR", date.today())
+    assert res == 1000
+
+async def test_convert_cents_cached(db_session: AsyncSession, fx_data):
+    res = await convert_cents(db_session, 1000, "USD", "EUR", date(2026, 7, 20))
+    # 1000 * 0.90 = 900
+    assert res == 900
+
+async def test_convert_cents_checked_ok(db_session: AsyncSession, fx_data):
+    cents, ok = await convert_cents_checked(db_session, 1000, "USD", "EUR", date(2026, 7, 20))
+    assert (cents, ok) == (900, True)
+
+
+async def test_convert_cents_checked_same_currency(db_session: AsyncSession):
+    cents, ok = await convert_cents_checked(db_session, 1000, "EUR", "EUR", date.today())
+    assert (cents, ok) == (1000, True)
+
+
+async def test_convert_cents_checked_missing_rate(db_session: AsyncSession):
+    # Pre-mark the pair failed so no network call is made; a missing rate returns
+    # the amount unconverted with ok=False (drives fx_incomplete).
+    fxmod._mark_pair_failed("GBP", "EUR")
+    cents, ok = await convert_cents_checked(db_session, 1000, "GBP", "EUR", date(2026, 7, 20))
+    assert cents == 1000 and ok is False
+
+
+async def test_backfill_same_currency(db_session: AsyncSession):
+    res = await backfill_range(db_session, "EUR", "EUR", date(2026, 7, 1), date(2026, 7, 10))
+    assert res == 0
+
+async def test_refresh_same_currency(db_session: AsyncSession):
+    # This shouldn't crash or insert anything
+    await refresh_latest(db_session, ["EUR"], "EUR")
+
+
+async def test_rate_cache_matches_uncached_and_queries_once(db_session: AsyncSession, fx_data, monkeypatch):
+    """RateCache must return identical values to the plain path, but hit get_rate
+    once per distinct (pair, date) — analytics repeats the same bucket many times."""
+    from services.fx import RateCache
+    import services.fx as fxmod
+
+    calls: list[tuple] = []
+    real = fxmod.get_rate
+
+    async def counting(db, base, target, on_date):
+        calls.append((base, target, on_date))
+        return await real(db, base, target, on_date)
+
+    monkeypatch.setattr(fxmod, "get_rate", counting)
+
+    cache = RateCache()
+    d = date(2026, 7, 20)
+    results = [await cache.convert(db_session, 1000, "USD", "EUR", d) for _ in range(5)]
+
+    assert results == [900] * 5                       # same as convert_cents
+    assert len(calls) == 1                            # ...but one lookup
+    # A different date is a different bucket.
+    await cache.convert(db_session, 1000, "USD", "EUR", date(2026, 7, 21))
+    assert len(calls) == 2
+
+
+async def test_rate_cache_same_currency_never_queries(db_session: AsyncSession):
+    from services.fx import RateCache
+    cents, ok = await RateCache().convert_checked(db_session, 500, "EUR", "EUR", date.today())
+    assert (cents, ok) == (500, True)
