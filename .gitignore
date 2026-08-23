@@ -1,13 +1,45 @@
-# Database & runtime data (SQLite, WAL/SHM sidecars, snapshots, restore temp files).
-# The dir is auto-created on startup (init_db) and by the Docker volume mount.
-backend/data/
-backend/finance.db
-backend/*.db-wal
-backend/*.db-shm
+# ─────────────────────────────────────────────────────────────────────────────
+# DONNÉES PERSONNELLES — ne jamais versionner.
+#
+# Les règles sont volontairement GLOBALES et non limitées à un dossier : les
+# relevés qui ont fui une fois (`UBS.csv`, `Creditmut.csv`) étaient à la racine,
+# pas dans « csv files/ ». Un motif par chemin ne protège que le chemin auquel on
+# a pensé.
+#
+# Si un CSV doit vraiment être versionné (jeu de test), c'est un acte conscient :
+#   git add -f chemin/vers/fixture.csv
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Bank statement exports — contain personal financial data, never commit
-csv files/
+# Relevés bancaires et exports, où qu'ils soient
+*.csv
+
+# Bases SQLite : base vive, sauvegardes, copies de test, journaux WAL
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Dossiers de données (base + sauvegardes + journaux)
+backend/data/
+release/data/
+web/e2e/.tmp-data/
+
+# Export de diagnostic — contient une queue de journal (noms de fichiers importés)
+diagnostics*.json
+
+# Secrets et configuration d'environnement
+.env*
+!.env.example
+
+# Modèle ML entraîné sur vos données
 *.ml.pkl
+*.pkl
+
+# Notes de travail personnelles
+csv files/
+autre/
+CLAUDE.md
 
 # Python
 __pycache__/
@@ -28,26 +60,9 @@ web/*.tsbuildinfo
 # Next artefacts égarés hors de web/ (un build lancé depuis le mauvais dossier)
 .next/
 
-# Environment
-.env
-.env.local
-
 # macOS
 .DS_Store
 
 # IDE
 .vscode/
 .idea/
-
-# Notes de travail (personnelles, non versionnées)
-autre/
-CLAUDE.md
-
-
-# Throwaway backend data for the Playwright suite (fresh DB per run)
-web/e2e/.tmp-data/
-web/playwright-report/
-web/test-results/
-
-# Ne jamais versionner la base lancée depuis le bundle release/
-release/data/
