@@ -1,0 +1,37 @@
+# Finance — version prête à l'emploi.
+#
+# Ce fichier NE COMPILE RIEN : il télécharge des images déjà construites, donc
+# l'installation prend quelques secondes au lieu de plusieurs minutes.
+#
+# SÉCURITÉ — l'application n'a pas de mot de passe. Les ports sont volontairement
+# limités à 127.0.0.1 : seule VOTRE machine peut y accéder, jamais les autres
+# appareils du wifi. Ne remplacez pas « 127.0.0.1:3000:3000 » par « 3000:3000 ».
+#
+# Rien à configurer ici pour l'utiliser. Deux réglages existent quand même :
+#   IMAGE_PREFIX — d'où viennent les images (ghcr.io/<compte>/<dépôt>)
+#   TAG          — « latest » (dernière version) ou un numéro précis, ex. v1.0.0
+# Pour figer une version : TAG=v1.0.0 docker compose up -d
+services:
+  backend:
+    image: ${IMAGE_PREFIX:-ghcr.io/kilianpdrx/finance}-backend:${TAG:-latest}
+    container_name: finance-backend
+    restart: unless-stopped
+    # Pas publié sur la machine : l'interface y accède par le réseau interne.
+    expose:
+      - "8000"
+    volumes:
+      # Vos données, à côté de ce fichier. C'est ce dossier qu'il faut sauvegarder.
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  web:
+    image: ${IMAGE_PREFIX:-ghcr.io/kilianpdrx/finance}-web:${TAG:-latest}
+    container_name: finance-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
