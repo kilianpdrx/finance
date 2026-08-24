@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy import select, and_, delete, text, func
@@ -21,6 +22,8 @@ from services.holdings_csv_parser import (
 )
 from services.fx import get_rate
 from datetime import date, datetime
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -385,8 +388,11 @@ async def update_holding(holding_id: int, body: HoldingUpdate, db: AsyncSession 
                     "VALUES (:t, :p, :c, :f, 'live')"
                 ), {"t": h.ticker.upper(), "p": round(pc[0] * 100), "c": pc[1], "f": datetime.utcnow()})
             await db.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            # L'utilisateur vient de corriger un ticker : s'il n'obtient pas de
+            # nouveau cours, c'est ici qu'il faut regarder.
+            logger.warning("Price refresh after ticker change (%s → %s) failed: %s",
+                           old_ticker, h.ticker, e)
 
     await db.refresh(h)
     acc = await db.get(Account, h.account_id)
@@ -447,8 +453,8 @@ async def resolve_tickers(db: AsyncSession = Depends(get_db), pid: int = Depends
     try:
         # Tickers just changed, so the cached prices are for the old symbols.
         await refresh_all_prices(db, force=True)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Price refresh after resolving %d ticker(s) failed: %s", resolved, e)
     return {"resolved": resolved}
 
 
@@ -777,8 +783,9 @@ async def import_confirm(
 
     try:
         await refresh_all_prices(db)
-    except Exception:
-        pass
+    except Exception as e:
+        # Les positions sont importées ; seuls les cours manquent.
+        logger.warning("Price refresh after holdings import failed: %s", e)
 
     return HoldingsImportConfirmResponse(created=created, updated=updated, skipped=skipped)
 
@@ -833,7 +840,9 @@ async def ibkr_sync_preview(
                     headers={"Retry-After": str(int(MIN_SYNC_INTERVAL_SECONDS - elapsed))},
                 )
         except ValueError:
-            pass
+            # Horodatage stocké illisible : on laisse passer la synchro plutôt que
+            # de la bloquer, mais la limite de fréquence ne s'applique alors plus.
+            logger.debug("Unreadable last-sync timestamp %r, rate limit skipped", last)
 
     try:
         xml = await fetch_flex_statement(token, query)

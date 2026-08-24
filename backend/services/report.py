@@ -2,6 +2,7 @@
 analyses (KPIs, net worth, cash flow, spending, budget, investments), gated by a
 date range. Reuses the analytics/investments route handlers as plain functions."""
 import io
+import logging
 from datetime import date
 
 from sqlalchemy import select, and_
@@ -9,6 +10,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from schemas import cents_to_display
+
+logger = logging.getLogger(__name__)
 
 
 # ── data gathering ────────────────────────────────────────────────────────────
@@ -62,8 +65,11 @@ async def gather_report_data(db: AsyncSession, pid: int, date_from=None, date_to
             from routers.investments import investment_accounts as _inv, dividend_calendar as _divcal
             data["investments"] = await _inv(db=db, pid=pid)
             data["dividends"] = await _divcal(months=12, db=db, pid=pid)
-        except Exception:
-            pass
+        except Exception as e:
+            # Le rapport est produit sans sa section investissements plutôt que
+            # d'échouer — mais l'utilisateur reçoit alors un document amputé sans
+            # explication, d'où la trace.
+            logger.warning("Report: investments section omitted (profile %s): %s", pid, e)
     return data
 
 

@@ -324,15 +324,19 @@ async def confirm(
     if category_overrides:
         try:
             overrides = json.loads(category_overrides)
-        except Exception:
-            pass
+        except Exception as e:
+            # Silencieux, l'import se poursuivait en ignorant les catégories que
+            # l'utilisateur venait de choisir à l'écran de revue.
+            logger.warning("Import: category_overrides unreadable, choices ignored: %s", e)
 
     force_hashes: set = set()
     if force_import_hashes:
         try:
             force_hashes = set(json.loads(force_import_hashes))
-        except Exception:
-            pass
+        except Exception as e:
+            # Sans ces empreintes, les lignes que l'utilisateur a explicitement
+            # forcées repassent pour des doublons et sont écartées.
+            logger.warning("Import: force_import_hashes unreadable, forced rows will be skipped: %s", e)
 
     if profile_id:
         result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id, BankProfile.profile_id == pid))

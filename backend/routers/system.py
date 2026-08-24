@@ -76,7 +76,7 @@ def _shutdown_worker() -> None:
         try:
             os.kill(pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
-            pass
+            pass  # déjà mort, ou pas à nous : c'est le résultat recherché
 
     time.sleep(1.5)
 
@@ -90,7 +90,7 @@ def _shutdown_worker() -> None:
         try:
             os.kill(pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
-            pass
+            pass  # idem : le SIGTERM précédent a suffi
 
 
 def _in_container() -> bool:
@@ -344,8 +344,11 @@ async def restore_backup(
     # 3. Flush & dispose the active pool, snapshot the current DB, then atomically swap.
     try:
         await db.execute(text("PRAGMA wal_checkpoint(TRUNCATE);"))
-    except Exception:
-        pass
+    except Exception as e:
+        # Non bloquant : le fichier est de toute façon remplacé juste après. Mais
+        # un checkpoint raté signale une base encore occupée, ce qui explique une
+        # restauration qui se comporte bizarrement.
+        logger.warning("WAL checkpoint before restore failed: %s", e)
     await engine.dispose()
 
     try:

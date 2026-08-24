@@ -125,8 +125,12 @@ async def _fetch_stock_prices(tickers: list[str]) -> dict[str, tuple[float, str]
                         try:
                             info = yf.Ticker(ticker).fast_info
                             currency = getattr(info, "currency", "USD") or "USD"
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # On retombe sur USD. Pour un titre qui cote ailleurs,
+                            # la valeur enregistrée est alors dans la mauvaise
+                            # devise : ça se voit dans les totaux, pas dans le prix.
+                            logger.warning(
+                                "Currency lookup failed for %s, assuming USD: %s", ticker, e)
                     result[ticker] = (float(close), currency.upper())
             except Exception as e:
                 logger.warning("yfinance price extraction failed for %s: %s", ticker, e)
@@ -143,6 +147,21 @@ async def _fetch_stock_prices(tickers: list[str]) -> dict[str, tuple[float, str]
         logger.warning("yfinance batch fetch failed: %s", e)
         _backoff.record_failure("yahoo")
         return {}
+
+
+def _epoch_to_date(ts, field: str, ticker: str):
+    """Yahoo's dividend dates arrive as epoch seconds — sometimes absent, null or
+    nonsense. A bad value just means that date is unknown, so it must not sink the
+    whole dividend record; but it was previously discarded in total silence, three
+    times over, which made "why is the ex-date empty?" unanswerable.
+    """
+    if not ts:
+        return None
+    try:
+        return datetime.utcfromtimestamp(ts).date()
+    except (OSError, OverflowError, ValueError, TypeError) as e:
+        logger.debug("Ignoring unusable %s for %s (%r): %s", field, ticker, ts, e)
+        return None
 
 
 def _detect_frequency(dividends_series) -> str | None:
@@ -237,34 +256,15 @@ async def _fetch_dividend_details(tickers: list[str]) -> dict[str, dict]:
                 else:
                     yield_pct = None
 
-                ex_date = None
-                if ex_date_ts:
-                    try:
-                        from datetime import datetime as _dt
-                        ex_date = _dt.utcfromtimestamp(ex_date_ts).date()
-                    except Exception:
-                        pass
+                ex_date = _epoch_to_date(ex_date_ts, "exDividendDate", ticker)
 
                 # Dividend payment date
-                div_date = None
-                div_date_ts = info.get("dividendDate")
-                if div_date_ts:
-                    try:
-                        from datetime import datetime as _dt
-                        div_date = _dt.utcfromtimestamp(div_date_ts).date()
-                    except Exception:
-                        pass
+                div_date = _epoch_to_date(info.get("dividendDate"), "dividendDate", ticker)
 
                 # Last dividend
                 last_div_val = info.get("lastDividendValue")
-                last_div_date = None
-                last_div_ts = info.get("lastDividendDate")
-                if last_div_ts:
-                    try:
-                        from datetime import datetime as _dt
-                        last_div_date = _dt.utcfromtimestamp(last_div_ts).date()
-                    except Exception:
-                        pass
+                last_div_date = _epoch_to_date(
+                    info.get("lastDividendDate"), "lastDividendDate", ticker)
 
                 # Frequency from actual dividend history
                 try:
