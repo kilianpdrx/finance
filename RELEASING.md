@@ -75,16 +75,25 @@ cd ../web && npx tsc --noEmit && npx vitest run && npm run test:e2e
 **Test de migration sur une vraie base** — c'est le contrôle qui compte, parce que les
 migrations ne se jouent que vers l'avant :
 
+Sur une **copie** de votre base réelle — celle de l'installation, pas celle du dépôt
+(`~/Desktop/Finance/data/finance.db` ; adaptez si vous l'avez rangée ailleurs) :
+
 ```bash
-cp backend/data/finance.db /tmp/migration-test.db
+sqlite3 ~/Desktop/Finance/data/finance.db ".backup '/tmp/migration-test.db'"
 cd backend && python - <<'PY'
 from pathlib import Path
 import database; database.DB_PATH = Path("/tmp/migration-test.db")
 from alembic.config import Config; from alembic import command
-command.upgrade(Config("alembic.ini"), "head")   # doit passer sans erreur
-command.upgrade(Config("alembic.ini"), "head")   # et être idempotent
+cfg = Config("alembic.ini"); cfg.attributes["embedded"] = True
+command.upgrade(cfg, "head")   # doit passer sans erreur
+command.upgrade(cfg, "head")   # et être idempotent
 PY
 ```
+
+> `.backup` plutôt que `cp` : SQLite est en mode WAL, une copie brute du seul fichier
+> `.db` perdrait les pages encore dans le journal `-wal`.
+> `attributes["embedded"]` évite qu'Alembic ne réinitialise la configuration de
+> journalisation (voir `alembic/env.py`).
 
 > ⚠️ `env.py` lit `database.DB_PATH` et **ignore** l'URL passée à Alembic : c'est la seule
 > façon de viser une autre base que celle de production. Ne lancez pas
@@ -99,7 +108,7 @@ git push
 ### 3. Taguer
 
 ```bash
-git tag v1.1.0 && git push origin v1.1.0
+git tag v1.2.0 && git push origin v1.2.0   # adaptez le numéro
 ```
 
 La CI construit alors les images **amd64 + arm64** (indispensable : une image construite

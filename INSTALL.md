@@ -8,7 +8,7 @@ Ce projet a **deux publics**. Choisissez la section qui vous concerne.
 
 **Ne clonez pas ce dépôt.** Téléchargez le fichier `finance-app.zip` de la dernière
 version depuis la page **Releases** du projet, décompressez-le, et suivez le
-`LISEZMOI.md` qu'il contient.
+`README.md` qu'il contient.
 
 Il tient en trois étapes :
 
@@ -45,8 +45,9 @@ Construit les images localement et sert l'application sur http://127.0.0.1:3000.
 
 ### Tests
 ```bash
-cd backend && python -m pytest        # 145 tests
+cd backend && python -m pytest        # 235 tests
 cd web && npx tsc --noEmit && npx vitest run
+cd web && npm run test:e2e            # Playwright — démarre sa propre pile isolée
 ```
 
 ### Publier une version

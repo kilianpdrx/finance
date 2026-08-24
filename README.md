@@ -6,6 +6,10 @@ aucune donnée envoyée sur internet : tout vit dans un fichier sur votre machin
 Importez les CSV de votre banque, laissez les règles classer vos dépenses, et suivez
 budget, patrimoine, emprunts et investissements au même endroit.
 
+![Tableau de bord de Finance](docs/dashboard.png)
+
+<sub>Capture réalisée sur une base de démonstration — les chiffres sont inventés.</sub>
+
 ---
 
 ## Installation
@@ -13,7 +17,7 @@ budget, patrimoine, emprunts et investissements au même endroit.
 **Vous voulez juste utiliser l'application** → téléchargez `finance-app.zip` depuis la
 page **[Releases](../../releases/latest)**, décompressez, double-cliquez sur *Finance*.
 Il faut simplement [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-installé. Le détail est dans le `LISEZMOI.md` fourni.
+installé. Le détail est dans le `README.md` fourni.
 
 **Vous voulez modifier le code** → voir **[INSTALL.md](INSTALL.md)**.
 
@@ -78,8 +82,9 @@ TypeScript, Next.js 15, React 19, TanStack Query, Tailwind, Recharts · Docker.
 
 ```bash
 ./start.sh                                  # API + interface en mode dev
-cd backend && python -m pytest              # 148 tests
+cd backend && python -m pytest              # 235 tests
 cd web && npx tsc --noEmit && npx vitest run
+cd web && npm run test:e2e                  # Playwright : démarre sa propre pile
 ```
 
 Les tests tournent aussi automatiquement sur chaque push (voir `.github/workflows/ci.yml`).
