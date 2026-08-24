@@ -2,7 +2,6 @@ import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { KpiStat } from './kpi-stat';
 import { Home } from 'lucide-react';
-import { formatCents, formatPercent } from '@/lib/format';
 
 // Mock framer-motion so the animation is instantaneous
 vi.mock('framer-motion', () => ({

@@ -228,7 +228,7 @@ export default function ImporterPage() {
         skipped={previewSkipped}
         selectedAccount={selectedAccount} onSelectAccount={setSelectedAccount}
         loading={loading} error={error} onConfirm={handleConfirm}
-        onBack={() => { setError(""); detected && !detected.detected ? setStep("mapping") : reset(); }}
+        onBack={() => { setError(""); if (detected && !detected.detected) setStep("mapping"); else reset(); }}
       />
     );
   }

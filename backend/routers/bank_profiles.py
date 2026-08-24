@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
 from models import BankProfile
-from schemas import BankProfileBase, BankProfileCreate, BankProfileUpdate, BankProfileOut
+from schemas import BankProfileCreate, BankProfileUpdate, BankProfileOut
 
 router = APIRouter()
 

@@ -9,7 +9,7 @@ import { useTransactions, useCategories, type AnalyticsQuery, type Transaction }
 import { formatCents } from "@/lib/format";
 
 /** Top 10 biggest expenses (debits, internal transfers excluded) for the period. */
-export function TopExpenses({ query, currency }: { query: AnalyticsQuery; currency: string }) {
+export function TopExpenses({ query }: { query: AnalyticsQuery; currency: string }) {
   const { data = [] } = useTransactions({
     date_from: query.date_from,
     date_to: query.date_to,

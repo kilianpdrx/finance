@@ -1,5 +1,4 @@
 """Seed the database with default categories, rules and bank profiles."""
-import json
 import logging
 from pathlib import Path
 from sqlalchemy import select, func

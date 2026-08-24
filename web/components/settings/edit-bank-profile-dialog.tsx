@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useBankProfileMutations, type BankProfile } from "@/lib/api/hooks";
+import { useBankProfileMutations } from "@/lib/api/hooks";
 
 // Logical field → human label (mirrors the importer's column-mapping step).
 const FIELDS: { key: string; label: string }[] = [

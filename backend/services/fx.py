@@ -1,6 +1,6 @@
 import logging
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Optional
 
 import httpx

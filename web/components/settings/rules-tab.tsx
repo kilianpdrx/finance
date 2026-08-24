@@ -137,7 +137,7 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
             <Card className="divide-y divide-border p-0">
               {g.items.map((r) => (
                 <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
-                  <Checkbox checked={selected.has(r.id)} onCheckedChange={() => setSelected((p) => { const n = new Set(p); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n; })} />
+                  <Checkbox checked={selected.has(r.id)} onCheckedChange={() => setSelected((p) => { const n = new Set(p); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); return n; })} />
                   <span className="size-2.5 shrink-0 rounded-full" style={{ background: catColor(r.category_id) }} />
                   <span className="w-40 shrink-0 truncate text-sm font-medium">{catName(r.category_id)}</span>
                   {catArchived(r.category_id) && <ArchivedBadge className="shrink-0" />}

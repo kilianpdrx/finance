@@ -552,7 +552,7 @@ def _pdf_budget_table(budget, REG, BOLD):
 
 def _pdf_investments(e, data, base_ccy, png_image, styled_table, st_h2, rc, REG, BOLD):
     from reportlab.lib.units import cm
-    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.platypus import Paragraph
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
     accs = data["investments"]

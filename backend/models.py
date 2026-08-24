@@ -1,5 +1,5 @@
 import enum
-from datetime import datetime, date
+from datetime import datetime
 from sqlalchemy import (
     Column, Integer, Float, String, Boolean, Date, DateTime,
     ForeignKey, Enum, JSON, UniqueConstraint, Index

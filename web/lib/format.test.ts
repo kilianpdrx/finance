@@ -8,7 +8,6 @@ import {
   formatMonthLabel,
   deriveCurrency,
 } from './format';
-import type { components } from './api/schema';
 
 describe('format.ts', () => {
   describe('currencySymbol', () => {

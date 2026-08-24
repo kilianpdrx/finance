@@ -1,16 +1,16 @@
 import json
 import logging
-from typing import Optional, List
+from typing import Optional
 from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
 from models import Transaction, BankProfile, Account, ImportBatch
-from schemas import DetectResponse, ConfirmResponse, BankProfileOut, BankProfileCreate
+from schemas import ConfirmResponse, BankProfileOut, BankProfileCreate
 from services.bank_detector import detect_bank, guess_columns, guess_confidence
 from services.csv_parser import parse_csv
-from services.categorizer import categorize, categorize_batch, evaluate_rules_batch
+from services.categorizer import categorize_batch, evaluate_rules_batch
 from services.transfer_detector import detect_internal_transfers
 from utils import generate_import_hash
 
@@ -106,7 +106,11 @@ def _extract_raw_preview(file_bytes: bytes):
                     raw_headers = [h.strip().lstrip("\ufeff") for h in rows[0]]
                     raw_preview = rows[1:6]
                     return raw_headers, raw_preview
-            except Exception:
+            except Exception as e:
+                # L'échec EST le signal « ce délimiteur n'est pas le bon » : on
+                # essaie le suivant. En debug, parce qu'un import réussi en
+                # produirait un ou deux à chaque fois.
+                logger.debug("Delimiter %r rejected while sniffing headers: %s", delim, e)
                 continue
 
     return raw_headers, raw_preview

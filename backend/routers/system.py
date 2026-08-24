@@ -1,11 +1,23 @@
+import csv
+import io
+import logging
 import os
 import signal
 import subprocess
 import threading
 import time
-import logging
+from datetime import datetime, date as _date
+from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
+from fastapi.responses import FileResponse, Response
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database import get_db, DB_PATH, engine
+from dependencies import current_profile_id
+from models import Transaction, Account, Category
+from utils import csv_safe_cell
 
 logger = logging.getLogger(__name__)
 
@@ -141,21 +153,6 @@ async def shutdown():
 
 
 # ── Backup & Restore & Export ──────────────────────────────────────────────────
-
-import io
-import csv
-import asyncio
-from datetime import datetime, date as _date
-from pathlib import Path
-from fastapi import Depends, HTTPException, File, UploadFile
-from fastapi.responses import FileResponse, Response
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from database import get_db, DB_PATH, engine
-from dependencies import current_profile_id
-from models import Transaction, Account, Category
-from utils import csv_safe_cell
 
 # Upper bound on an uploaded restore file (defensive: avoids reading an
 # unbounded upload fully into memory).

@@ -42,20 +42,9 @@ async def test_create_rule_and_preview(client: AsyncClient, seed_data: dict, cat
     profile = seed_data["profile"]
     cat = cat_data["cat_transport"]
     
-    # Add a transaction
+    # La transaction est créée via l'API : elle passe ainsi par la même
+    # catégorisation que celle d'un vrai import.
     acc = seed_data["account_courant"]
-    t = Transaction(
-        profile_id=profile.id,
-        account_id=acc.id,
-        date="2026-07-23",
-        description="UBER RIDE",
-        amount_cents=1500,
-        is_debit=True,
-        import_hash="hash_uber"
-    )
-    # Don't add to session here if client creates its own, wait we can directly insert it
-    # But wait, client fixture uses the same db_session in conftest!
-    # Let's insert via route or directly
     res_t = await client.post(
         "/api/transactions",
         headers={"X-Profile-Id": str(profile.id)},
@@ -105,7 +94,10 @@ async def test_rescan(client: AsyncClient, seed_data: dict, cat_data: dict):
             "category_id": cat.id
         }
     )
-    
+    # Le reste du test suppose que la règle existe : sans cette vérification, un
+    # échec de création se serait manifesté plus loin en « le rescan ne classe rien ».
+    assert res_rule.status_code == 201, res_rule.text
+
     acc = seed_data["account_courant"]
     await client.post(
         "/api/transactions",
@@ -123,7 +115,6 @@ async def test_rescan(client: AsyncClient, seed_data: dict, cat_data: dict):
     # Rescan only scans non-reviewed transactions!
     # Actually wait, let's just create transaction directly via DB
     # We can't access db_session easily without async test logic
-    pass
 
 async def test_delete_category_fallback(client: AsyncClient, seed_data: dict, db_session: AsyncSession, cat_data: dict):
     profile = seed_data["profile"]

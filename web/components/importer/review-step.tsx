@@ -65,7 +65,7 @@ export function ReviewStep({
     ? transactions.filter((t) => (!t.is_duplicate || force.has(t.import_hash)) && catId(t) === null)
     : transactions.filter((t) => !t.is_duplicate || force.has(t.import_hash)));
 
-  const toggleForce = (h: string) => setForce((p) => { const n = new Set(p); n.has(h) ? n.delete(h) : n.add(h); return n; });
+  const toggleForce = (h: string) => setForce((p) => { const n = new Set(p); if (n.has(h)) n.delete(h); else n.add(h); return n; });
 
   return (
     <div className="space-y-4">

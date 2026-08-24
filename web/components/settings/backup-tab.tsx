@@ -74,7 +74,7 @@ export function BackupTab() {
       a.remove();
       URL.revokeObjectURL(objUrl);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Échec de l'export");
+      toast.error(e instanceof Error ? e.message : "Échec de l&apos;export");
     } finally {
       setExporting(null);
     }
@@ -147,7 +147,7 @@ export function BackupTab() {
             <div>
               <CardTitle>Restauration de la base de données</CardTitle>
               <CardDescription>
-                Restaurez vos données à partir d'un fichier de sauvegarde `.sqlite` ou `.db` précédemment exporté.
+                Restaurez vos données à partir d&apos;un fichier de sauvegarde `.sqlite` ou `.db` précédemment exporté.
               </CardDescription>
             </div>
           </div>
@@ -156,7 +156,7 @@ export function BackupTab() {
           <div className="rounded-xl border border-warning/30 bg-warning/5 p-4 text-xs text-warning-foreground">
             <div className="flex items-start gap-2 font-medium">
               <AlertTriangle className="size-4 shrink-0 text-warning" />
-              <span>Attention : La restauration remplacera l'intégralité des données actuelles par le contenu du fichier sélectionné.</span>
+              <span>Attention : La restauration remplacera l&apos;intégralité des données actuelles par le contenu du fichier sélectionné.</span>
             </div>
           </div>
 

@@ -50,7 +50,7 @@ export function CategoriesTab() {
   // Collapsed parent namespaces (by parent category id) — hides their children.
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const toggleCollapsed = (id: number) =>
-    setCollapsed((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const parentIdSet = useMemo(() => new Set(categories.filter((c) => c.parent_id != null).map((c) => c.parent_id)), [categories]);
 
   useEffect(() => {

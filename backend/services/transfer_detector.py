@@ -1,6 +1,5 @@
 import logging
-from datetime import timedelta
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import Transaction, Account
 from services.fx import RateCache

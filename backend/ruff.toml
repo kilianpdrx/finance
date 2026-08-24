@@ -1,0 +1,48 @@
+# Configuration ruff — volontairement resserrée.
+#
+# Le jeu de règles complet remonte ~700 remarques sur ce dépôt, dont l'écrasante
+# majorité est de la modernisation de style (`Optional[X]` → `X | None`, 266 fois).
+# Réécrire tout cela produirait un énorme diff sans corriger un seul bug, dans du
+# code qui manipule de l'argent. On sélectionne donc ce qui signale de vrais
+# problèmes, et on laisse le style tranquille.
+
+target-version = "py311"
+line-length = 100
+extend-exclude = ["alembic/versions"]
+
+[lint]
+select = [
+    "E4", "E7", "E9",  # erreurs (défaut ruff)
+    "F",               # pyflakes : imports morts, variables inutilisées, noms indéfinis
+    "B",               # bugbear : pièges qui deviennent des bugs
+    "PIE",             # simplifications sans risque
+    "S112",            # try/except/continue muet
+]
+
+ignore = [
+    # `Depends()` / `Query()` en valeur par défaut EST l'idiome FastAPI : le
+    # framework repose dessus, ce n'est pas le piège du mutable par défaut.
+    "B008",
+    # `raise ... from err` dans un except : purement cosmétique ici, les messages
+    # d'erreur sont déjà explicites et destinés à l'utilisateur final.
+    "B904",
+    # `zip(..., strict=)` serait une bonne assertion, mais l'ajouter change le
+    # comportement à l'exécution (levée sur longueurs inégales) dans des chemins
+    # qui calculent des montants. À faire séparément, avec des tests, pas dans
+    # une passe de nettoyage.
+    "B905",
+    # `col == False` / `col == None` : en SQLAlchemy ce sont des CONSTRUCTEURS
+    # d'expression SQL, pas des comparaisons booléennes. `not col` / `col is None`
+    # s'évalueraient en Python et casseraient la requête. Toutes les occurrences
+    # de ce dépôt sont de cette forme.
+    "E711",
+    "E712",
+]
+
+[lint.per-file-ignores]
+# Les tests importent des fixtures et des symboles pour leurs effets de bord.
+"tests/*" = ["F401"]
+# conftest DOIT poser FINANCE_DATA_DIR avant d'importer `main` : ce dernier
+# configure la journalisation à l'import et écrirait sinon dans le vrai
+# data/logs/finance.log. L'ordre est ici porteur de sens, pas un oubli.
+"tests/conftest.py" = ["E402", "F401"]

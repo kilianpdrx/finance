@@ -30,7 +30,7 @@ export function hasDividend(h: HoldingOut) {
 /** Lists every dividend-paying position with the detail columns that used to
  *  clutter the live holdings table (yield, YOC, est. income, frequency, payout,
  *  growth, ex-date). Sorted by estimated annual income, highest first. */
-export function DividendPositionsTable({ holdings, currency }: { holdings: HoldingOut[]; currency: string }) {
+export function DividendPositionsTable({ holdings }: { holdings: HoldingOut[]; currency: string }) {
   const rows = holdings
     .filter(hasDividend)
     .sort((a, b) => (b.est_annual_income_cents ?? 0) - (a.est_annual_income_cents ?? 0));

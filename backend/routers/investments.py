@@ -1,19 +1,18 @@
 import asyncio
 import logging
-from typing import List, Optional
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
-from sqlalchemy import select, and_, delete, text, func
+from sqlalchemy import select, and_, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
 from models import Account, AccountType, AccountBalanceSnapshot, Holding, PriceCache, BankProfile, DividendCache, IsinTicker
 from schemas import (
-    HoldingCreate, HoldingUpdate, HoldingOut,
-    HoldingsImportPreviewResponse, ParsedHoldingPreview,
+    HoldingCreate, HoldingUpdate, HoldingsImportPreviewResponse, ParsedHoldingPreview,
     HoldingsImportConfirmRequest, HoldingsImportConfirmResponse,
 )
 from services.market_data import (
-    refresh_all_prices, get_cached_price, get_cached_dividend, fetch_historical_prices, resolve_yahoo_symbol,
+    refresh_all_prices, get_cached_dividend, fetch_historical_prices, resolve_yahoo_symbol,
     store_isin_ticker, reverse_lookup_isin, fetch_isin_for_ticker, _fetch_stock_prices,
 )
 from services.holdings_csv_parser import (
@@ -84,7 +83,6 @@ async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], accou
     lookup_tickers = [h.ticker.lower() if h.asset_type == "crypto" else h.ticker.upper() for h in holdings]
 
     # 1. Bulk ISIN reverse lookups
-    from models import IsinTicker
     isin_rows = (await db.execute(
         select(IsinTicker.isin, IsinTicker.ticker)
         .where(func.upper(IsinTicker.ticker).in_(tickers_upper))
@@ -1167,9 +1165,10 @@ async def _holdings_monthly_values(db: AsyncSession, account_id: int, acc_ccy: s
     # Month-end value = sum of each holding's last close on/before the month's end.
     by_month: dict[str, float] = {}
     last = [None] * len(histories)
-    cursor = 0
     for d in all_dates:
-        for i, (qty, closes) in enumerate(histories):
+        # `_` : la quantité est relue par la compréhension ci-dessous, la lier ici
+        # ne servait qu'à masquer la variable.
+        for i, (_, closes) in enumerate(histories):
             if d in closes:
                 last[i] = closes[d]
         total = sum(qty * last[i] for i, (qty, _) in enumerate(histories) if last[i] is not None)

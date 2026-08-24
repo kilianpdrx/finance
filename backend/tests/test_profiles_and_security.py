@@ -101,7 +101,6 @@ async def test_delete_default_profile_fails(client: AsyncClient, seed_data: dict
 
 async def test_header_resolution(client: AsyncClient, seed_data: dict, extra_profile: Profile):
     # Test that requests are scoped by header
-    acc = seed_data["account_courant"]
     # Request to get accounts with extra_profile ID
     res = await client.get("/api/accounts", headers={"X-Profile-Id": str(extra_profile.id)})
     assert res.status_code == 200

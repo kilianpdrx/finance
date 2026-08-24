@@ -9,7 +9,7 @@ import { formatCents } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { assetTypeLabel, isCashType } from "@/lib/asset-types";
 
-export function HoldingsTable({ holdings, currency }: { holdings: HoldingOut[]; currency: string }) {
+export function HoldingsTable({ holdings }: { holdings: HoldingOut[]; currency: string }) {
   const { remove } = useHoldingMutations();
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
   const [editing, setEditing] = useState<HoldingOut | null>(null);

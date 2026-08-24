@@ -133,7 +133,7 @@ export default function AnalysesPage() {
       total_cents: g.total_cents, count: g.count, percentage: g.percentage,
     }));
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const toggle = (id: number) => setExpanded((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggle = (id: number) => setExpanded((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   // Click a category name → its 20 biggest transactions in a table below.
   const [detailCat, setDetailCat] = useState<{ name: string; ids: number[] } | null>(null);
@@ -209,12 +209,6 @@ export default function AnalysesPage() {
     const Icon = sort?.col !== col ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
     return <Icon className={`size-3 ${sort?.col === col ? "text-brand" : "text-muted-foreground/40"}`} />;
   };
-
-  // Global vs account-specific category split (shared by Tendances / Mensuelle).
-  const globalTrends = (trends.data ?? []).filter((t: SpendingTrend) => t.category_account_id == null);
-  const specificTrends = (trends.data ?? []).filter((t: SpendingTrend) => t.category_account_id != null);
-  const globalRecurring = (recurring.data ?? []).filter((r: RecurringTransaction) => catAccountId(r.category_id) == null);
-  const specificRecurring = (recurring.data ?? []).filter((r: RecurringTransaction) => catAccountId(r.category_id) != null);
 
   const showPerAccount = scopeIds.length > 1;
 

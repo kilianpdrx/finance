@@ -57,7 +57,7 @@ export default function BudgetPage() {
   // Collapsed parent namespaces (by parent category id) — hides their children.
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const toggleCollapsed = (pid: number) =>
-    setCollapsed((s) => { const n = new Set(s); n.has(pid) ? n.delete(pid) : n.add(pid); return n; });
+    setCollapsed((s) => { const n = new Set(s); if (n.has(pid)) n.delete(pid); else n.add(pid); return n; });
 
   // After prepending months, keep the viewport visually stable (no jump). Hold
   // the `extending` lock briefly after the layout settles so a fast scroll can't
@@ -120,7 +120,6 @@ export default function BudgetPage() {
       scrollRef.current.scrollLeft = Math.max(0, curIdx * COL_W - scrollRef.current.clientWidth / 3);
       inited.current = true;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, targetMonths, currentMonth]);
 
   const fmt = (cents: number, isTotal = false) =>

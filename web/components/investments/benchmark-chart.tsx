@@ -12,7 +12,7 @@ import {
   Legend,
 } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useBenchmarks, useBenchmarkHistory, usePortfolioPerformance, type BenchmarkPoint } from "@/lib/api/hooks";
+import { useBenchmarks, useBenchmarkHistory, usePortfolioPerformance } from "@/lib/api/hooks";
 import { cn } from "@/lib/utils";
 
 const PORTFOLIO_KEY = "__portfolio__";
@@ -40,7 +40,7 @@ interface Props {
   holdings: { ticker: string; quantity: number; cost_basis_cents: number; current_value_cents: number | null }[];
 }
 
-export function BenchmarkChart({ accountId, accountName, accountColor, holdings }: Props) {
+export function BenchmarkChart({ accountId, accountColor, holdings }: Props) {
   const [period, setPeriod] = useState("1y");
   const [selectedBenchmarks, setSelectedBenchmarks] = useState<string[]>(["sp500", "msci_world"]);
   const { data: benchmarkList = [] } = useBenchmarks();

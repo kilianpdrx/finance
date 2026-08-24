@@ -24,6 +24,8 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements*.txt
       - run: pip install -r requirements-dev.txt
+      # Le linter d'abord : il échoue en quelques secondes là où la suite prend 10 s.
+      - run: ruff check .
       - run: python -m pytest -q
 
   frontend:
@@ -39,6 +41,7 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npx tsc --noEmit
       - run: npx vitest run
       - run: npm run build

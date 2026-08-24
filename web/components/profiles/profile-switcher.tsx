@@ -10,7 +10,6 @@ import {
 import { useProfiles } from "@/lib/api/hooks";
 import { useProfileStore, useSelectedAccountsStore } from "@/lib/stores";
 import { ProfileManageDialog } from "./profile-manage-dialog";
-import { cn } from "@/lib/utils";
 
 export function ProfileSwitcher() {
   const { data: profiles = [] } = useProfiles();

@@ -101,7 +101,8 @@ async def detect_bank(file_bytes: bytes, filename: str, db: AsyncSession, profil
             if len(df.columns) > 1:
                 header_cols = list(df.columns)
                 break
-        except Exception:
+        except Exception as e:
+            logger.debug("Delimiter %r rejected while reading headers: %s", delim, e)
             continue
 
     if not header_cols:

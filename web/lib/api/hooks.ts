@@ -5,7 +5,6 @@ import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/rea
 import { api, unwrap } from "./client";
 import type { components } from "./schema";
 import { useDateRangeStore, useSelectedAccountsStore } from "../stores";
-import { deriveCurrency } from "../format";
 
 // ── Types (re-exported from generated schema) ─────────────────────────────────
 export type Account = components["schemas"]["AccountOut"];

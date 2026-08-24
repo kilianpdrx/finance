@@ -41,7 +41,6 @@ async def archive_suggestions(
     from models import PlannedExpense
 
     cats = (await db.execute(select(Category).where(Category.profile_id == pid))).scalars().all()
-    by_id = {c.id: c for c in cats}
     children_of: dict[int, list[int]] = {}
     for c in cats:
         if c.parent_id is not None:

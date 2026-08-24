@@ -714,7 +714,6 @@ async def budget_full(
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
-    import calendar
     from datetime import date as date_type
 
     if year is None:

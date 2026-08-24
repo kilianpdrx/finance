@@ -21,7 +21,7 @@ import { TransactionDialog } from "@/components/transactions/transaction-dialog"
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
-  useAccounts, useAllAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionCount, useTransactionStats, useTransactionMutations,
+  useAllAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionCount, useTransactionStats, useTransactionMutations,
   fetchTransactionIds, type TransactionFilters, type Transaction, type Account, type Category,
 } from "@/lib/api/hooks";
 import { orderCategoryTree } from "@/lib/group";
@@ -33,7 +33,6 @@ const UNCAT = "__uncat__";
 const CATEGORIZED = "__has_cat__";
 
 export default function TransactionsPage() {
-  const { data: accounts = [] } = useAccounts();
   // Closed accounts are included here so their history stays filterable and
   // attributable (they keep their transactions; only their balance is retired).
   const { data: allAccounts = [] } = useAllAccounts();
@@ -91,7 +90,7 @@ export default function TransactionsPage() {
     });
   };
   const toggleRow = (id: number) =>
-    setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const clearSelection = () => setSelected(new Set());
 
   // "Select all matching" across pages (not just the visible page).

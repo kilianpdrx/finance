@@ -86,7 +86,7 @@ export function AddHoldingDialog({
                   <Input inputMode="decimal" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="10" />
                 </div>
                 <div className="space-y-1">
-                  <Label>Coût d'acquisition total</Label>
+                  <Label>Coût d&apos;acquisition total</Label>
                   <Input inputMode="decimal" value={form.costBasis} onChange={(e) => setForm({ ...form, costBasis: e.target.value })} placeholder="1 500,00" />
                 </div>
               </div>
@@ -109,7 +109,7 @@ export function AddHoldingDialog({
           )}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label>Type d'actif</Label>
+              <Label>Type d&apos;actif</Label>
               <Select value={form.assetType} onValueChange={(v) => setForm({ ...form, assetType: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
