@@ -17,6 +17,13 @@ data/
 *.csv
 *.pkl
 
+# Tests et outillage de build : jamais exécutés dans l'image, ~240 Ko de trajet
+# et de surface en moins. La CI les lance depuis les sources.
+tests/
+pytest.ini
+Dockerfile
+requirements-dev.txt
+
 # Artefacts Python
 __pycache__/
 *.py[cod]

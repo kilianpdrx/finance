@@ -7,15 +7,7 @@ import { HoldingPriceChart } from "./holding-price-chart";
 import { EditHoldingDialog } from "./edit-holding-dialog";
 import { formatCents } from "@/lib/format";
 import { cn } from "@/lib/utils";
-
-const TYPE_LABELS: Record<string, string> = {
-  stock: "Action",
-  etf: "ETF",
-  crypto: "Crypto",
-  bond: "Obligation",
-  fund: "Fonds",
-  cash: "Liquidités",
-};
+import { assetTypeLabel, isCashType } from "@/lib/asset-types";
 
 export function HoldingsTable({ holdings, currency }: { holdings: HoldingOut[]; currency: string }) {
   const { remove } = useHoldingMutations();
@@ -52,7 +44,7 @@ export function HoldingsTable({ holdings, currency }: { holdings: HoldingOut[]; 
             const alloc = totalValue > 0 && accVal(h) ? Math.round((accVal(h) / totalValue) * 1000) / 10 : null;
             // Cash has no quote to chart and no ticker to warn about — expanding it
             // would ask the price provider for a symbol that doesn't exist.
-            const isCash = h.asset_type === "cash";
+            const isCash = isCashType(h.asset_type);
             const isExpanded = !isCash && expandedTicker === h.ticker;
             return (
               <React.Fragment key={h.id}>
@@ -81,7 +73,7 @@ export function HoldingsTable({ holdings, currency }: { holdings: HoldingOut[]; 
                     </span>
                   </td>
                   <td className="max-w-[140px] truncate py-2">{h.name}</td>
-                  <td className="py-2 text-xs text-muted-foreground">{TYPE_LABELS[h.asset_type] ?? h.asset_type}</td>
+                  <td className="py-2 text-xs text-muted-foreground">{assetTypeLabel(h.asset_type)}</td>
                   <td className="nums py-2 text-right">{h.quantity % 1 === 0 ? h.quantity : h.quantity.toFixed(4)}</td>
                   <td className="nums py-2 text-right text-muted-foreground">
                     {h.current_price_cents != null ? formatCents(h.current_price_cents, h.price_currency ?? h.currency, { decimals: 2 }) : "—"}

@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useHoldingMutations, type HoldingOut } from "@/lib/api/hooks";
 import { parseAmountToCents, formatCents } from "@/lib/format";
+import { isCashType } from "@/lib/asset-types";
 
 /** Edit a position's ticker / ISIN / name. Saving a ticker also overwrites the
  *  persistent ISIN→ticker lookup on the backend and re-fetches the live price. */
@@ -32,7 +33,7 @@ export function EditHoldingDialog({
 
   // Cash has no symbol, no ISIN and no quote to lock — the only thing to edit is
   // how much of it there is.
-  const isCash = holding?.asset_type === "cash";
+  const isCash = isCashType(holding?.asset_type);
 
   useEffect(() => {
     if (holding) {

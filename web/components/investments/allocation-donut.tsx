@@ -3,19 +3,10 @@
 import { useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { formatCents } from "@/lib/format";
+import { assetTypeLabelPlural } from "@/lib/asset-types";
 import { cn } from "@/lib/utils";
 
 const PALETTE = ["#6366f1", "#22c55e", "#f59e0b", "#ef4444", "#06b6d4", "#8b5cf6", "#ec4899", "#14b8a6"];
-
-const TYPE_LABELS: Record<string, string> = {
-  stock: "Actions",
-  etf: "ETFs",
-  crypto: "Crypto",
-  bond: "Obligations",
-  fund: "Fonds",
-  cash: "Liquidités",
-  other: "Autre",
-};
 
 export interface AllocationHolding {
   asset_type: string;
@@ -39,7 +30,7 @@ export function AllocationDonut({
 
   const data = Object.entries(allocation)
     .filter(([, v]) => v > 0)
-    .map(([type, value]) => ({ type, name: TYPE_LABELS[type] ?? type, value }))
+    .map(([type, value]) => ({ type, name: assetTypeLabelPlural(type), value }))
     .sort((a, b) => b.value - a.value);
 
   if (data.length === 0) return null;
@@ -104,7 +95,7 @@ export function AllocationDonut({
       {/* Detail list — expands downward below the pie. */}
       {clickable && selected && detail.length > 0 && (
         <div className="min-w-0">
-          <p className="mb-2 text-sm font-semibold">{TYPE_LABELS[selected] ?? selected} · {detail.length}</p>
+          <p className="mb-2 text-sm font-semibold">{assetTypeLabelPlural(selected)} · {detail.length}</p>
           <ul className="space-y-1.5">
             {detail.map((h) => {
               const pct = detailTotal > 0 ? Math.round((h.value_cents / detailTotal) * 1000) / 10 : 0;

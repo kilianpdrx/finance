@@ -9,15 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useHoldingMutations } from "@/lib/api/hooks";
 import { parseAmountToCents, CURRENCIES } from "@/lib/format";
-
-const ASSET_TYPES = [
-  { value: "stock", label: "Action" },
-  { value: "etf", label: "ETF" },
-  { value: "crypto", label: "Crypto" },
-  { value: "bond", label: "Obligation" },
-  { value: "fund", label: "Fonds" },
-  { value: "cash", label: "Liquidités" },
-];
+import { ASSET_TYPES, CASH_ASSET_TYPE, isCashType } from "@/lib/asset-types";
 
 const EMPTY = { ticker: "", name: "", quantity: "", costBasis: "", currency: "USD", assetType: "stock" };
 
@@ -36,7 +28,7 @@ export function AddHoldingDialog({
   // Cash has no ticker, no name and no cost basis — the amount IS the position.
   // The backend derives CASH.{devise} and pins the price, so those fields are
   // hidden rather than asked for and thrown away.
-  const isCash = form.assetType === "cash";
+  const isCash = isCashType(form.assetType);
 
   const submit = async () => {
     try {
@@ -44,7 +36,7 @@ export function AddHoldingDialog({
         accountId,
         body: {
           ticker: isCash
-            ? "cash"
+            ? CASH_ASSET_TYPE
             : form.assetType === "crypto"
               ? form.ticker.toLowerCase()
               : form.ticker.toUpperCase(),

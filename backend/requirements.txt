@@ -1,3 +1,6 @@
+# Dépendances d'exécution uniquement — ce fichier est installé dans l'image.
+# Les outils de test vivent dans requirements-dev.txt : les embarquer ici les
+# ferait installer dans l'image de production, sans jamais y servir.
 aiofiles==25.1.0
 aiosqlite==0.22.1
 anyio==4.12.1
@@ -25,6 +28,3 @@ alembic>=1.13.0
 openpyxl>=3.1.0
 reportlab>=4.0.0
 matplotlib>=3.7.0
-pytest>=8.0.0
-pytest-asyncio>=0.23.0
-

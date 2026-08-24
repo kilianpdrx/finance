@@ -3,15 +3,8 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatCents } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { assetTypeLabel } from "@/lib/asset-types";
 import type { HoldingsImportPreviewResponse } from "@/lib/api/hooks";
-
-const TYPE_LABELS: Record<string, string> = {
-  stock: "Action",
-  etf: "ETF",
-  crypto: "Crypto",
-  bond: "Obligation",
-  fund: "Fonds",
-};
 
 const DUPLICATE_LABELS: Record<string, string> = {
   skip: "Ignorer",
@@ -62,7 +55,7 @@ export function HoldingsImportReview({
               <tr key={h.ticker} className={cn("border-b border-border/60", h.is_duplicate && "bg-amber-500/5")}>
                 <td className="py-2 font-mono text-xs font-semibold">{h.ticker}</td>
                 <td className="max-w-[160px] truncate py-2">{h.name}</td>
-                <td className="py-2 text-xs text-muted-foreground">{TYPE_LABELS[h.asset_type] ?? h.asset_type}</td>
+                <td className="py-2 text-xs text-muted-foreground">{assetTypeLabel(h.asset_type)}</td>
                 <td className="nums py-2 text-right">{h.quantity % 1 === 0 ? h.quantity : h.quantity.toFixed(4)}</td>
                 <td className="nums py-2 text-right">{formatCents(h.cost_basis_cents, h.currency)}</td>
                 <td className="py-2 text-right text-xs">{h.currency}</td>

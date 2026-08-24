@@ -34,7 +34,8 @@ fi
 
 # Install backend deps
 echo "Installing backend dependencies..."
-pip install -r "$BACKEND/requirements.txt" -q
+# -dev : le dossier de dev fait aussi tourner les tests.
+pip install -r "$BACKEND/requirements-dev.txt" -q
 
 UI_DIR="$WEB"
 UI_PORT=3000
