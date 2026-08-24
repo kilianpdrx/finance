@@ -32,8 +32,8 @@ diagnostics*.json
 .env*
 !.env.example
 
-# Modèle ML entraîné sur vos données
-*.ml.pkl
+# Pickles : le sous-système ML a été retiré, mais un .pkl est presque toujours
+# un vidage de données. La règle reste, par précaution.
 *.pkl
 
 # Notes de travail personnelles
