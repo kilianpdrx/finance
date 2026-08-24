@@ -81,20 +81,87 @@ jobs:
           path: web/playwright-report/
           retention-days: 7
 
-  # Les images doivent rester constructibles même sans tag : sinon on ne le
-  # découvre qu'au moment de publier une version.
-  docker-build:
+  # Construire l'image ne prouve rien : il faut la LANCER. Ce job démarre la pile
+  # avec `release/docker-compose.yml` — le fichier exact que reçoivent vos proches —
+  # donc il teste aussi le câblage (proxy web→backend, volume, ports), pas seulement
+  # la compilation. Sans lui, un point d'entrée cassé arrive chez eux avant chez vous.
+  docker-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
-      - name: Build backend image
+
+      # `load: true` charge l'image dans le démon local — impossible de la lancer
+      # sinon. Mono-architecture ici ; le multi-arch est vérifié à la publication.
+      - name: Construire l'image backend
         uses: docker/build-push-action@v6
         with:
           context: ./backend
-          push: false
-      - name: Build web image
+          load: true
+          tags: finance-backend:ci
+      - name: Construire l'image web
         uses: docker/build-push-action@v6
         with:
           context: ./web
-          push: false
+          load: true
+          tags: finance-web:ci
+
+      - name: Démarrer la pile comme le ferait un utilisateur
+        working-directory: release
+        env:
+          IMAGE_PREFIX: finance
+          TAG: ci
+        run: docker compose up -d
+
+      - name: Attendre que l'application réponde
+        working-directory: release
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
+              echo "l'application répond"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::pas de réponse sur 127.0.0.1:3000 après 120 s"
+          docker compose logs --no-color
+          exit 1
+
+      - name: Vérifier la version, l'amorçage et l'isolation réseau
+        working-directory: release
+        run: |
+          set -euo pipefail
+
+          # 1. L'API de version répond (c'est elle qui alimente « À propos »).
+          version=$(curl -fsS http://127.0.0.1:3000/api/system/version)
+          echo "version: $version"
+          echo "$version" | grep -q '"version"'
+
+          # 2. Une base neuve est amorcée : sans cela l'utilisateur arrive sur une
+          #    application sans catégories et sans catégorisation automatique.
+          count=$(curl -fsS http://127.0.0.1:3000/api/categories | grep -o '"id"' | wc -l)
+          echo "catégories amorcées : $count"
+          test "$count" -ge 14
+
+          # 3. Le backend ne doit PAS être publié sur la machine (invariant : seul
+          #    le web est exposé, en 127.0.0.1 uniquement). Un `ports:` ajouté par
+          #    inadvertance sur le backend donnerait un accès total sans mot de passe.
+          if curl -fsS --max-time 5 http://127.0.0.1:8000/api/health >/dev/null 2>&1; then
+            echo "::error::le backend est joignable sur 127.0.0.1:8000 — il ne doit pas être publié"
+            exit 1
+          fi
+          echo "backend non publié"
+
+          # 4. Le port du web est bien restreint à la boucle locale.
+          docker compose port web 3000 | grep -q '^127.0.0.1:' \
+            || { echo "::error::le web n'est pas restreint à 127.0.0.1"; exit 1; }
+          echo "web restreint à 127.0.0.1"
+
+      - name: Journaux en cas d'échec
+        if: failure()
+        working-directory: release
+        run: docker compose logs --no-color
+
+      - name: Arrêter la pile
+        if: always()
+        working-directory: release
+        run: docker compose down -v
