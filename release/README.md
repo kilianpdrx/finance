@@ -43,6 +43,25 @@ L'adresse est toujours **http://127.0.0.1:3000** — vous pouvez la mettre en fa
 
 ---
 
+## Premiers pas
+
+1. **Créez un compte** (onglet *Comptes*) : un nom, votre banque, la devise. La devise de
+   ce premier compte devient celle de vos tableaux de bord (modifiable dans *Paramètres*).
+2. **Récupérez un relevé au format CSV.** Un CSV est un simple fichier texte qui liste vos
+   opérations, une par ligne. La plupart des banques le proposent sur leur site : dans
+   l'historique de votre compte, cherchez un bouton *Exporter* ou *Télécharger* et
+   choisissez le format **CSV** (parfois présenté comme « tableur » ou « Excel »).
+3. **Importez-le** (onglet *Importer*) : choisissez le compte, glissez le fichier, vérifiez
+   les colonnes proposées, puis confirmez.
+
+Vos dépenses sont classées automatiquement par des règles. Celles qui restent « sans
+catégorie » se classent depuis l'onglet *Transactions*, et vous pouvez créer vos propres
+règles pour que les suivantes le soient toutes seules.
+
+Le fichier CSV ne sert qu'à l'import : une fois importé, l'application n'en a plus besoin.
+
+---
+
 ## Vos données
 
 - Tout est dans le dossier **`data`**, juste à côté de ce fichier. C'est le seul dossier
@@ -71,8 +90,7 @@ L'adresse est toujours **http://127.0.0.1:3000** — vous pouvez la mettre en fa
   dossier `data`, qui contient vos comptes !). Vous pouvez vous échanger des données via
   le fichier de sauvegarde.
 - **Premier démarrage** : l'application arrive avec des catégories et des règles de
-  classement automatique déjà prêtes. Créez d'abord un compte, puis importez un relevé
-  CSV de votre banque depuis l'onglet **Importer**.
+  classement automatique déjà prêtes — voir [Premiers pas](#premiers-pas).
 
 ---
 

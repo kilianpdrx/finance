@@ -234,6 +234,79 @@ async def test_recurring_never_averages_two_currencies(client: AsyncClient, seed
     assert netflix == {"EUR": 1100, "CHF": 6000}
 
 
+async def test_recurring_shows_one_direction_at_a_time(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """The Dépenses/Revenus toggle drives both recurring lists: expenses by
+    default, income with `income=true` — never the two mixed."""
+    acc = seed_data["account_courant"]
+    rows = [("LOYER DUPONT", True, 80000), ("VIREMENT SALAIRE ACME", False, 250000)]
+    for label, is_debit, cents in rows:
+        for month in (7, 8):
+            db_session.add(Transaction(
+                profile_id=seed_data["profile"].id, account_id=acc.id, date=date(2026, month, 3),
+                amount_cents=cents, is_debit=is_debit, currency="EUR",
+                description=label, import_hash=f"dir_{label}_{month}",
+            ))
+    await db_session.commit()
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+
+    async def labels(path: str, **params) -> set:
+        return {g["description"] for g in (await client.get(path, headers=h, params=params)).json()}
+
+    for path in ("/api/analytics/recurring", "/api/analytics/recurring-uncovered"):
+        assert await labels(path) == {"LOYER DUPONT"}
+        assert await labels(path, income="true") == {"SALAIRE ACME"}
+
+
+async def _add_spend(db_session: AsyncSession, seed_data: dict, day: date, cents: int, key: str, category_id=None):
+    db_session.add(Transaction(
+        profile_id=seed_data["profile"].id, account_id=seed_data["account_courant"].id, date=day,
+        amount_cents=cents, is_debit=True, currency="EUR", category_id=category_id,
+        description=f"ACHAT {key}", import_hash=f"trend_{key}",
+    ))
+
+
+async def test_spending_trends_by_month(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    cat = seed_data["cat_courses"].id
+    await _add_spend(db_session, seed_data, date(2026, 3, 4), 1000, "a", cat)
+    await _add_spend(db_session, seed_data, date(2026, 3, 20), 500, "b", cat)
+    await _add_spend(db_session, seed_data, date(2026, 5, 2), 700, "c", cat)
+    await db_session.commit()
+
+    res = await client.get("/api/analytics/spending-trends", headers={"X-Profile-Id": str(seed_data["profile"].id)},
+                           params={"date_from": "2026-03-01", "date_to": "2026-05-31"})
+    assert res.status_code == 200
+    (trend,) = res.json()
+    assert trend["category_name"] == "Alimentation"
+    # One point per month that has data — no day-level detail by default.
+    assert trend["series"] == [{"period": "2026-03", "amount_cents": 1500}, {"period": "2026-05", "amount_cents": 700}]
+
+
+async def test_spending_trends_by_day_fills_the_whole_range(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """A one-month range must show WHEN in the month the money went: one point per
+    day of the range, empty days included, shared by every category."""
+    cat = seed_data["cat_courses"].id
+    await _add_spend(db_session, seed_data, date(2026, 3, 2), 1000, "d1", cat)
+    await _add_spend(db_session, seed_data, date(2026, 3, 2), 250, "d2", cat)
+    await _add_spend(db_session, seed_data, date(2026, 3, 5), 400, "d3")          # uncategorised
+    await db_session.commit()
+
+    res = await client.get("/api/analytics/spending-trends", headers={"X-Profile-Id": str(seed_data["profile"].id)},
+                           params={"date_from": "2026-03-01", "date_to": "2026-03-07", "granularity": "day"})
+    assert res.status_code == 200
+    by_name = {t["category_name"]: t["series"] for t in res.json()}
+    days = [f"2026-03-0{d}" for d in range(1, 8)]
+    assert [p["period"] for p in by_name["Alimentation"]] == days
+    assert [p["period"] for p in by_name["Non catégorisé"]] == days
+    assert [p["amount_cents"] for p in by_name["Alimentation"]] == [0, 1250, 0, 0, 0, 0, 0]
+    assert [p["amount_cents"] for p in by_name["Non catégorisé"]] == [0, 0, 0, 0, 400, 0, 0]
+
+
+async def test_spending_trends_rejects_an_unknown_granularity(client: AsyncClient, seed_data: dict):
+    res = await client.get("/api/analytics/spending-trends", headers={"X-Profile-Id": str(seed_data["profile"].id)},
+                           params={"granularity": "hour"})
+    assert res.status_code == 422
+
+
 async def test_analytics_cash_flow(client: AsyncClient, seed_data: dict, analytics_data: dict):
     profile = seed_data["profile"]
     res = await client.get("/api/analytics/cash-flow", headers={"X-Profile-Id": str(profile.id)})

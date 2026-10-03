@@ -1,6 +1,6 @@
 "use client";
 
-import { Landmark, TrendingUp, TrendingDown, Scale, PieChart as PieIcon, Inbox, Upload, Wallet, Table2, ArrowRight, AlertTriangle, Info, X } from "lucide-react";
+import { Landmark, TrendingUp, TrendingDown, Scale, PieChart as PieIcon, Inbox, Upload, Wallet, Table2, ArrowRight, AlertTriangle, Info, X, Check } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -75,6 +75,13 @@ export default function DashboardPage() {
     !dismissedHints.includes(mismatchHintId);
 
   const s = summary.data;
+  // The welcome steps used to vanish the moment the first account existed, so
+  // nothing pointed to the import. Keep them, as a card above the dashboard, until
+  // the profile has a transaction (`last_transaction_date` is profile-wide) — or
+  // until the user closes it, for those who never import (investments, manual
+  // balances).
+  const onboardingHintId = `onboarding:${activeProfile?.id ?? 0}`;
+  const showNextStep = s !== undefined && s.last_transaction_date == null && !dismissedHints.includes(onboardingHintId);
   const nw = netWorth.data ?? [];
   const patrimoine = patrimoineByType(nw, accounts);
   const nwDelta =
@@ -98,6 +105,10 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-5">
+      {showNextStep && (
+        <GettingStarted showBudget={modules.includes("budgeting")} accountDone onDismiss={() => dismissHint(onboardingHintId)} />
+      )}
+
       {s?.fx_incomplete && (
         <div className="flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
           <AlertTriangle className="size-4 shrink-0" />
@@ -250,7 +261,14 @@ export default function DashboardPage() {
   );
 }
 
-function GettingStarted({ showBudget }: { showBudget: boolean }) {
+/** First-run checklist. With no account it is the whole page; once an account
+ *  exists (`accountDone`) it stays as a card above the dashboard, first step
+ *  ticked, until a statement has been imported or the user closes it. */
+function GettingStarted({ showBudget, accountDone = false, onDismiss }: {
+  showBudget: boolean;
+  accountDone?: boolean;
+  onDismiss?: () => void;
+}) {
   const steps = [
     {
       icon: Wallet,
@@ -258,15 +276,15 @@ function GettingStarted({ showBudget }: { showBudget: boolean }) {
       description: "Ajoutez votre compte bancaire (nom, banque, type, devise). C'est la destination de vos imports, et sa devise devient votre devise de base (modifiable dans Paramètres).",
       href: "/comptes",
       cta: "Créer un compte",
-      primary: true,
+      done: accountDone,
     },
     {
       icon: Upload,
       title: "Importez un relevé bancaire",
-      description: "Glissez un fichier CSV de votre banque dans ce compte — les colonnes sont détectées automatiquement.",
+      description: "Téléchargez vos opérations au format CSV depuis le site de votre banque, puis glissez le fichier dans l'onglet Importer — les colonnes sont détectées automatiquement.",
       href: "/importer",
       cta: "Importer un relevé",
-      primary: false,
+      done: false,
     },
     ...(showBudget
       ? [{
@@ -275,25 +293,34 @@ function GettingStarted({ showBudget }: { showBudget: boolean }) {
           description: "Planifiez vos dépenses et suivez-les mois par mois.",
           href: "/budget",
           cta: "Ouvrir le budget",
-          primary: false,
+          done: false,
         }]
       : []),
   ];
+  const next = steps.findIndex((step) => !step.done);
 
   return (
-    <Card className="mx-auto max-w-2xl p-8">
+    <Card className="relative mx-auto max-w-2xl p-8">
+      {onDismiss && (
+        <button type="button" onClick={onDismiss} aria-label="Masquer les premiers pas"
+          className="absolute right-3 top-3 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+          <X className="size-4" />
+        </button>
+      )}
       <div className="space-y-1 text-center">
-        <h1 className="text-xl font-bold tracking-tight">Bienvenue 👋</h1>
+        <h1 className="text-xl font-bold tracking-tight">{accountDone ? "Votre compte est créé" : "Bienvenue 👋"}</h1>
         <p className="text-sm text-muted-foreground">
-          Trois étapes pour commencer à suivre vos finances. Vos données restent sur votre machine.
+          {accountDone
+            ? "Importez un relevé pour voir apparaître vos dépenses et vos revenus."
+            : "Quelques étapes pour commencer à suivre vos finances. Vos données restent sur votre machine."}
         </p>
       </div>
       <ol className="mt-6 space-y-3">
         {steps.map((step, i) => (
           <li key={step.href}
-            className="flex items-center gap-4 rounded-xl border border-border bg-surface p-4 transition-colors hover:bg-muted/40">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand/10 text-sm font-semibold text-brand">
-              {i + 1}
+            className={`flex items-center gap-4 rounded-xl border border-border bg-surface p-4 transition-colors hover:bg-muted/40 ${step.done ? "opacity-60" : ""}`}>
+            <span className={`flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${step.done ? "bg-positive/15 text-positive" : "bg-brand/10 text-brand"}`}>
+              {step.done ? <Check className="size-4" aria-label="Fait" /> : i + 1}
             </span>
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-2 text-sm font-semibold">
@@ -301,9 +328,11 @@ function GettingStarted({ showBudget }: { showBudget: boolean }) {
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">{step.description}</p>
             </div>
-            <Button asChild variant={step.primary ? "default" : "outline"} size="sm" className="shrink-0">
-              <Link href={step.href}>{step.cta} <ArrowRight className="ml-1 size-3.5" /></Link>
-            </Button>
+            {!step.done && (
+              <Button asChild variant={i === next ? "default" : "outline"} size="sm" className="shrink-0">
+                <Link href={step.href}>{step.cta} <ArrowRight className="ml-1 size-3.5" /></Link>
+              </Button>
+            )}
           </li>
         ))}
       </ol>

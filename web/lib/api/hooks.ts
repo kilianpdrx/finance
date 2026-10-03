@@ -43,7 +43,8 @@ export interface SpendingTrend {
   category_name: string;
   category_color: string;
   category_account_id: number | null;
-  series: { month: string; amount_cents: number }[];
+  /** One point per bucket: `period` is `YYYY-MM`, or `YYYY-MM-DD` with `granularity: "day"`. */
+  series: { period: string; amount_cents: number }[];
 }
 export interface HoldingOut {
   id: number;
@@ -118,6 +119,7 @@ export interface AnalyticsQuery {
   date_to?: string | null;
   account_ids?: string | null;
   income?: boolean;   // by-category / spending-trends: true = revenus, false = dépenses
+  granularity?: "month" | "day";   // spending-trends only
 }
 
 export interface TransactionFilters {
@@ -133,6 +135,8 @@ export interface TransactionFilters {
   bank_name?: string | null;
   month?: string | null;
   import_batch_id?: number | null;
+  sort_by?: "date" | "amount" | "description" | "category";
+  sort_dir?: "asc" | "desc";
   limit?: number;
   offset?: number;
 }
@@ -267,14 +271,15 @@ export function useCashFlowPerAccount(query: AnalyticsQuery, accountIds: number[
   });
   return accountIds.map((id, i) => ({ accountId: id, data: results[i]?.data ?? [], isLoading: results[i]?.isLoading ?? false }));
 }
-export function useSpendingTrends(query: AnalyticsQuery) {
-  return useQuery({ queryKey: ["analytics", "spending-trends", query], queryFn: () => unwrap(api.GET("/api/analytics/spending-trends", { params: { query } })) as Promise<SpendingTrend[]> });
+export function useSpendingTrends(query: AnalyticsQuery, enabled = true) {
+  return useQuery({ queryKey: ["analytics", "spending-trends", query], enabled, queryFn: () => unwrap(api.GET("/api/analytics/spending-trends", { params: { query } })) as Promise<SpendingTrend[]> });
 }
-export function useRecurring(accountIds?: string | null) {
-  return useQuery({ queryKey: ["analytics", "recurring", accountIds], queryFn: () => unwrap(api.GET("/api/analytics/recurring", { params: { query: { account_ids: accountIds ?? undefined } } })) });
+// Both recurring lists show one direction at a time (expenses, or income).
+export function useRecurring(accountIds?: string | null, income = false) {
+  return useQuery({ queryKey: ["analytics", "recurring", accountIds, income], queryFn: () => unwrap(api.GET("/api/analytics/recurring", { params: { query: { account_ids: accountIds ?? undefined, income } } })) });
 }
-export function useRecurringUncovered(accountIds?: string | null) {
-  return useQuery({ queryKey: ["analytics", "recurring-uncovered", accountIds], queryFn: () => unwrap(api.GET("/api/analytics/recurring-uncovered", { params: { query: { account_ids: accountIds ?? undefined } } })) as Promise<RecurringTransaction[]> });
+export function useRecurringUncovered(accountIds?: string | null, income = false) {
+  return useQuery({ queryKey: ["analytics", "recurring-uncovered", accountIds, income], queryFn: () => unwrap(api.GET("/api/analytics/recurring-uncovered", { params: { query: { account_ids: accountIds ?? undefined, income } } })) as Promise<RecurringTransaction[]> });
 }
 export function useBudgetFull(year: number | undefined, accountIds?: string | null) {
   return useQuery({
@@ -290,8 +295,8 @@ export function useTransactionMeta() {
   return useQuery({ queryKey: ["transactions", "meta"], queryFn: () => unwrap(api.GET("/api/transactions/meta")), staleTime: 60_000 });
 }
 export function useTransactionCount(filters: TransactionFilters) {
-  // Same filters as the list, minus pagination, for a real total count.
-  const { limit: _l, offset: _o, ...rest } = filters;
+  // Same filters as the list, minus pagination and order, for a real total count.
+  const { limit: _l, offset: _o, sort_by: _sb, sort_dir: _sd, ...rest } = filters;
   const query = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== null && v !== ""));
   return useQuery({
     queryKey: ["transactions", "count", rest],
@@ -302,7 +307,7 @@ export interface TransactionStats { total: number; categorized: number; uncatego
 export function useTransactionStats(filters: TransactionFilters) {
   // Base filters only — the categorized/uncategorized/transfer toggles are the
   // dimensions being counted, so they're excluded to keep counts stable.
-  const { limit: _l, offset: _o, category_id: _c, uncategorized: _u, categorized: _cz, is_internal_transfer: _t, ...rest } = filters;
+  const { limit: _l, offset: _o, sort_by: _sb, sort_dir: _sd, category_id: _c, uncategorized: _u, categorized: _cz, is_internal_transfer: _t, ...rest } = filters;
   const query = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== null && v !== ""));
   return useQuery({
     queryKey: ["transactions", "stats", rest],
@@ -312,11 +317,32 @@ export function useTransactionStats(filters: TransactionFilters) {
 /** Fetch all transaction ids matching the given filters (for "select all across
  *  pages"). One-shot on demand rather than a standing query. */
 export async function fetchTransactionIds(filters: TransactionFilters): Promise<number[]> {
-  const { limit: _l, offset: _o, ...rest } = filters;
+  const { limit: _l, offset: _o, sort_by: _sb, sort_dir: _sd, ...rest } = filters;
   const query = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== null && v !== ""));
   const res = (await unwrap(api.GET("/api/transactions/ids", { params: { query } }))) as { ids: number[] };
   return res.ids;
 }
+
+// ── Classify by label ─────────────────────────────────────────────────────────
+export type UncategorizedGroup = components["schemas"]["UncategorizedGroup"];
+export type SimilarUncategorized = components["schemas"]["SimilarUncategorized"];
+
+/** Uncategorised transactions grouped by label, most frequent first. */
+export function useUncategorizedGroups(enabled = true) {
+  return useQuery({
+    queryKey: ["transactions", "uncategorized-groups"],
+    enabled,
+    queryFn: () => unwrap(api.GET("/api/transactions/uncategorized-groups")) as Promise<UncategorizedGroup[]>,
+  });
+}
+/** The other uncategorised transactions sharing this one's label — asked right
+ *  after it was given `categoryId`, to offer classifying them too. */
+export async function fetchSimilarUncategorized(transactionId: number, categoryId: number): Promise<SimilarUncategorized> {
+  return (await unwrap(api.GET("/api/transactions/{transaction_id}/similar-uncategorized", {
+    params: { path: { transaction_id: transactionId }, query: { category_id: categoryId } },
+  }))) as SimilarUncategorized;
+}
+
 export function useImportBatches() {
   return useQuery({ queryKey: ["transactions", "batches"], queryFn: () => unwrap(api.GET("/api/transactions/batches")) as Promise<ImportBatch[]> });
 }
@@ -422,7 +448,8 @@ export function useTransactionMutations() {
     update: useMutation({ mutationFn: ({ id, body }: { id: number; body: TransactionUpdate }) => unwrap(api.PUT("/api/transactions/{transaction_id}", { params: { path: { transaction_id: id } }, body })), onSuccess }),
     remove: useMutation({ mutationFn: (id: number) => api.DELETE("/api/transactions/{transaction_id}", { params: { path: { transaction_id: id } } }), onSuccess }),
     bulkDelete: useMutation({ mutationFn: (ids: number[]) => unwrap(api.POST("/api/transactions/bulk-delete", { body: { ids } })), onSuccess }),
-    bulkCategory: useMutation({ mutationFn: ({ ids, category_id }: { ids: number[]; category_id: number | null }) => unwrap(api.POST("/api/transactions/bulk-update-category", { body: { ids, category_id } })), onSuccess }),
+    // `only_uncategorized`: fill the rows that have no category, never overwrite one.
+    bulkCategory: useMutation({ mutationFn: ({ ids, category_id, only_uncategorized = false }: { ids: number[]; category_id: number | null; only_uncategorized?: boolean }) => unwrap(api.POST("/api/transactions/bulk-update-category", { body: { ids, category_id, only_uncategorized } })) as Promise<{ updated: number }>, onSuccess }),
     bulkReviewed: useMutation({ mutationFn: ({ ids, value }: { ids: number[]; value: boolean }) => unwrap(api.POST("/api/transactions/bulk-update-reviewed", { body: { ids, is_manually_reviewed: value } })), onSuccess }),
     bulkTransfer: useMutation({ mutationFn: ({ ids, value }: { ids: number[]; value: boolean }) => unwrap(api.POST("/api/transactions/bulk-update-transfer", { body: { ids, is_internal_transfer: value } })), onSuccess }),
     detectTransfers: useMutation({ mutationFn: () => unwrap(api.POST("/api/transactions/detect-transfers", { params: { query: { max_days: 3 } } })), onSuccess }),

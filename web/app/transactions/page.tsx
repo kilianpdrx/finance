@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { toast } from "sonner";
-import { Plus, Download, Shuffle, Trash2, CheckCheck, ArrowLeftRight, X, Inbox, ChevronLeft, ChevronRight, Pencil, Ban, Undo2, Archive } from "lucide-react";
+import Link from "next/link";
+import { Plus, Download, Shuffle, Trash2, CheckCheck, ArrowLeftRight, X, Inbox, ChevronLeft, ChevronRight, Pencil, Ban, Undo2, Archive, Upload } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -20,10 +21,14 @@ import { ACCOUNT_TYPE_LABELS } from "@/components/accounts/account-dialog";
 import { TransactionDialog } from "@/components/transactions/transaction-dialog";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { RuleDialog } from "@/components/settings/rule-dialog";
+import { SameLabelBar } from "@/components/transactions/same-label-bar";
+import { UncategorizedPanel } from "@/components/transactions/uncategorized-panel";
+import { SortHeader, type SortState } from "@/components/ui/sort-header";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   useAllAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionCount, useTransactionStats, useTransactionMutations,
-  fetchTransactionIds, type TransactionFilters, type Transaction, type Account, type Category, type CategoryRule,
+  fetchTransactionIds, fetchSimilarUncategorized,
+  type TransactionFilters, type Transaction, type Account, type Category, type CategoryRule, type SimilarUncategorized,
 } from "@/lib/api/hooks";
 import { orderCategoryTree } from "@/lib/group";
 import { formatCents } from "@/lib/format";
@@ -32,6 +37,8 @@ const PAGE = 100;
 const ALL = "__all__";
 const UNCAT = "__uncat__";
 const CATEGORIZED = "__has_cat__";
+
+type SortCol = NonNullable<TransactionFilters["sort_by"]>;
 
 export default function TransactionsPage() {
   // Closed accounts are included here so their history stays filterable and
@@ -61,6 +68,13 @@ export default function TransactionsPage() {
   const openCreate = () => { setEditing(null); setDialogOpen(true); };
   const openEdit = (t: Transaction) => { setEditing(t); setDialogOpen(true); };
   const [editingRule, setEditingRule] = useState<CategoryRule | null>(null);
+  const [rulePrefill, setRulePrefill] = useState<{ description: string; categoryId: number | null } | null>(null);
+  // null = the default order (most recent first).
+  const [sort, setSort] = useState<SortState<SortCol> | null>(null);
+  const changeSort = (next: SortState<SortCol> | null) => { setSort(next); setPage(0); };
+  const [panelOpen, setPanelOpen] = useState(false);
+  // Set right after a row was categorised, when other uncategorised rows share its label.
+  const [sameLabel, setSameLabel] = useState<{ categoryId: number; similar: SimilarUncategorized } | null>(null);
 
   const isSentinel = (c: string) => c === ALL || c === UNCAT || c === CATEGORIZED;
   const filters: TransactionFilters = useMemo(() => ({
@@ -72,13 +86,18 @@ export default function TransactionsPage() {
     is_debit: type === ALL ? undefined : type === "debit",
     is_internal_transfer: hideTransfers ? false : undefined,
     month: month === ALL ? undefined : month,
+    sort_by: sort?.col,
+    sort_dir: sort?.dir,
     limit: PAGE,
     offset: page * PAGE,
-  }), [search, account, category, type, hideTransfers, month, page]);
+  }), [search, account, category, type, hideTransfers, month, page, sort]);
 
   const { data: rows = [], isLoading, isFetching } = useTransactions(filters);
   const { data: countData } = useTransactionCount(filters);
   const { data: stats } = useTransactionStats(filters);
+
+  const noFilter = !search && account === ALL && category === ALL && type === ALL && month === ALL;
+  const nothingImportedYet = noFilter && stats?.total === 0;
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const someSelected = rows.some((r) => selected.has(r.id));
@@ -112,10 +131,49 @@ export default function TransactionsPage() {
     catch (e) { toast.error(e instanceof Error ? e.message : "Erreur"); }
   };
 
+  const catName = (id: number) => categories.find((c) => c.id === id)?.name ?? "cette catégorie";
+
+  // Categorising one row: afterwards, OFFER to classify the other uncategorised
+  // rows with the same label (never done silently — see SameLabelBar).
+  const setRowCategory = (t: Transaction, cid: number | null) =>
+    mut.update.mutate({ id: t.id, body: { category_id: cid } }, {
+      onSuccess: async () => {
+        toast.success("Catégorie mise à jour");
+        if (cid == null) { setSameLabel(null); return; }
+        try {
+          const similar = await fetchSimilarUncategorized(t.id, cid);
+          setSameLabel(similar.count > 0 ? { categoryId: cid, similar } : null);
+        } catch { setSameLabel(null); }   // the offer is a convenience; the edit itself succeeded
+      },
+    });
+  const applySameLabel = async () => {
+    if (!sameLabel) return;
+    try {
+      const { updated } = await mut.bulkCategory.mutateAsync({
+        ids: sameLabel.similar.transaction_ids, category_id: sameLabel.categoryId, only_uncategorized: true,
+      });
+      toast.success(`${updated} transaction${updated > 1 ? "s" : ""} classée${updated > 1 ? "s" : ""} en ${catName(sameLabel.categoryId)}`);
+      setSameLabel(null);
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Erreur"); }
+  };
+  const openRuleFor = (prefill: { description: string; categoryId: number | null }) => {
+    setSameLabel(null);
+    setPanelOpen(false);
+    setRulePrefill(prefill);
+  };
+
+  const detectTransfers = async () => {
+    try {
+      const { detected_pairs: n } = (await mut.detectTransfers.mutateAsync()) as { detected_pairs: number };
+      if (n > 0) toast.success(`${n} virement(s) interne(s) détecté(s)`, { description: "Ils ne comptent plus dans vos dépenses ni vos revenus." });
+      else toast.info("Aucun nouveau virement interne détecté");
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Erreur"); }
+  };
+
   const exportHref = useMemo(() => {
     const p = new URLSearchParams();
     Object.entries(filters).forEach(([k, v]) => {
-      if (v !== undefined && v !== null && v !== "" && k !== "limit" && k !== "offset") p.set(k, String(v));
+      if (v !== undefined && v !== null && v !== "" && !["limit", "offset", "sort_by", "sort_dir"].includes(k)) p.set(k, String(v));
     });
     return `/api/transactions/export?${p}`;
   }, [filters]);
@@ -147,7 +205,15 @@ export default function TransactionsPage() {
               <span className="mx-1.5 text-border">·</span>
               <span className="text-positive">{stats.categorized}</span> catégorisées
               <span className="mx-1.5 text-border">·</span>
-              <span className="text-warning">{stats.uncategorized}</span> sans catégorie
+              {stats.uncategorized > 0 ? (
+                <button type="button" onClick={() => setPanelOpen(true)}
+                  className="rounded underline decoration-dotted underline-offset-2 hover:text-foreground"
+                  title="Classer les transactions sans catégorie, regroupées par libellé">
+                  <span className="text-warning">{stats.uncategorized}</span> sans catégorie
+                </button>
+              ) : (
+                <><span className="text-warning">0</span> sans catégorie</>
+              )}
               <span className="mx-1.5 text-border">·</span>
               <span className="text-info">{stats.transfers}</span> virements
             </>
@@ -156,7 +222,8 @@ export default function TransactionsPage() {
           )}
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => runBulk(() => mut.detectTransfers.mutateAsync(), "Virements détectés")}>
+          <Button variant="outline" size="sm" disabled={mut.detectTransfers.isPending} onClick={detectTransfers}
+            title="Repère les mouvements entre vos propres comptes (même montant, sens opposé, à quelques jours d'écart) pour qu'ils ne comptent ni en dépense ni en revenu.">
             <Shuffle className="size-4" /> Détecter virements
           </Button>
           <Button variant="outline" size="sm" asChild>
@@ -210,21 +277,40 @@ export default function TransactionsPage() {
         </Card>
       )}
 
+      {sameLabel && (
+        <SameLabelBar
+          similar={sameLabel.similar}
+          categoryName={catName(sameLabel.categoryId)}
+          busy={mut.bulkCategory.isPending}
+          onApply={applySameLabel}
+          onCreateRule={() => openRuleFor({ description: sameLabel.similar.rule_pattern, categoryId: sameLabel.categoryId })}
+          onDismiss={() => setSameLabel(null)}
+        />
+      )}
+
       {/* Table */}
       <Card className="overflow-hidden p-0">
         {isLoading ? (
           <div className="space-y-2 p-4">{Array.from({ length: 10 }).map((_, i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
         ) : rows.length === 0 ? (
-          <EmptyState icon={Inbox} title="Aucune transaction" description="Ajustez les filtres ou importez un relevé." />
+          nothingImportedYet ? (
+            // Nothing in the profile at all (not a filter with no match): say
+            // where transactions come from instead of suggesting to adjust filters.
+            <EmptyState icon={Inbox} title="Aucune transaction pour l'instant"
+              description="Importez un relevé : le fichier CSV de vos opérations, téléchargé depuis le site de votre banque."
+              action={<Button asChild size="sm"><Link href="/importer"><Upload className="size-4" /> Importer un relevé</Link></Button>} />
+          ) : (
+            <EmptyState icon={Inbox} title="Aucune transaction" description="Ajustez les filtres ou importez un relevé." />
+          )
         ) : (
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead className="w-10"><Checkbox checked={allSelected ? true : someSelected ? "indeterminate" : false} onCheckedChange={toggleAll} /></TableHead>
-                <TableHead className="w-24">Date</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="w-52">Catégorie</TableHead>
-                <TableHead className="w-32 text-right">Montant</TableHead>
+                <TableHead className="w-24"><SortHeader col="date" sort={sort} onSort={changeSort} first="asc">Date</SortHeader></TableHead>
+                <TableHead><SortHeader col="description" sort={sort} onSort={changeSort} first="asc">Description</SortHeader></TableHead>
+                <TableHead className="w-52"><SortHeader col="category" sort={sort} onSort={changeSort} first="asc">Catégorie</SortHeader></TableHead>
+                <TableHead className="w-32 text-right"><SortHeader col="amount" sort={sort} onSort={changeSort}>Montant</SortHeader></TableHead>
                 <TableHead className="w-10"></TableHead>
               </TableRow>
             </TableHeader>
@@ -253,7 +339,7 @@ export default function TransactionsPage() {
                       accountNames={accountNames}
                       showNamespace
                       className="h-8 border-transparent bg-transparent text-xs shadow-none hover:border-border"
-                      onChange={(cid) => mut.update.mutate({ id: t.id, body: { category_id: cid } }, { onSuccess: () => toast.success("Catégorie mise à jour") })}
+                      onChange={(cid) => setRowCategory(t, cid)}
                     />
                   </TableCell>
                   <TableCell className={`nums blurable text-right font-semibold ${t.is_debit ? "text-negative" : "text-positive"}`}>
@@ -290,9 +376,14 @@ export default function TransactionsPage() {
       </div>
 
       <TransactionDialog open={dialogOpen} onOpenChange={(v) => { setDialogOpen(v); if (!v) setEditing(null); }} transaction={editing} />
-      {/* Opened from a « conflit » badge: rules have no priority, so a conflict is
-          settled by editing one of the rules involved. */}
-      <RuleDialog open={editingRule !== null} onOpenChange={(v) => !v && setEditingRule(null)} accounts={allAccounts} editing={editingRule} />
+      {/* Editing: opened from a « conflit » badge — rules have no priority, so a
+          conflict is settled by editing one of the rules involved. Creating: from
+          the same-label bar or the "classer par libellé" panel, prefilled. */}
+      <RuleDialog open={editingRule !== null || rulePrefill !== null}
+        onOpenChange={(v) => { if (!v) { setEditingRule(null); setRulePrefill(null); } }}
+        accounts={allAccounts} editing={editingRule} prefill={rulePrefill} />
+      <UncategorizedPanel open={panelOpen} onOpenChange={setPanelOpen} categories={categories}
+        accountNames={accountNames} onCreateRule={openRuleFor} />
     </div>
   );
 }

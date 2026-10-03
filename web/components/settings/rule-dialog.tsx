@@ -59,7 +59,9 @@ export function RuleDialog({
     } else {
       setConditions([{ field: "description", operator: "contains", value: prefill?.description ?? "" }]);
       setLogic("AND");
-      setCategoryId(prefill?.categoryId ?? categories[0]?.id ?? 0);
+      // No default category: preselecting the first one of the list made it easy
+      // to save a rule under a category nobody chose. 0 = "Choisir…".
+      setCategoryId(prefill?.categoryId ?? 0);
       setAccountId(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

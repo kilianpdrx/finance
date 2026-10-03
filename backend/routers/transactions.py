@@ -1,6 +1,6 @@
 import csv
 import io
-from typing import List, Optional
+from typing import List, Literal, Optional
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -11,9 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
 from models import Transaction, Account, Category, ImportBatch
-from schemas import TransactionOut, TransactionUpdate, TransactionMeta, TransactionCreateManual
+from schemas import (
+    TransactionOut, TransactionUpdate, TransactionMeta, TransactionCreateManual,
+    UncategorizedGroup, SimilarUncategorized,
+)
 from ownership import require_account, require_category
 from utils import generate_import_hash, csv_safe_cell
+from services.label_groups import group_by_label, label_key, rule_pattern
 
 router = APIRouter()
 
@@ -23,6 +27,10 @@ class BulkDeleteQuery(BaseModel):
 class BulkCategoryUpdate(BaseModel):
     ids: List[int]
     category_id: Optional[int] = None
+    # Only fill rows that have no category yet. For "classify the others with this
+    # label": the list the user saw may be stale, and a category that was set in
+    # the meantime must not be overwritten.
+    only_uncategorized: bool = False
 
 
 # SQLite caps the number of host parameters per statement (historically 999);
@@ -190,6 +198,27 @@ async def transaction_ids(
     return {"ids": [r[0] for r in rows]}
 
 
+def _txn_order(sort_by: str, sort_dir: str) -> list:
+    """ORDER BY of the transactions list. Whatever the column, ties fall back to
+    the default "most recent first" so paging stays stable.
+
+    `amount` sorts on the stored (unsigned) amount — the biggest movements first,
+    expense or income — and on raw cents: accounts in different currencies are
+    not converted for a sort. `category` sorts by name with uncategorised rows
+    last in both directions (it needs the Category outer join)."""
+    def directed(col):
+        return col.desc() if sort_dir == "desc" else col.asc()
+
+    newest_first = [Transaction.date.desc(), Transaction.id.desc()]
+    if sort_by == "amount":
+        return [directed(Transaction.amount_cents), *newest_first]
+    if sort_by == "description":
+        return [directed(func.lower(Transaction.description)), *newest_first]
+    if sort_by == "category":
+        return [Category.name.is_(None), directed(func.lower(Category.name)), *newest_first]
+    return [directed(Transaction.date), directed(Transaction.id)]
+
+
 @router.get("", response_model=List[TransactionOut])
 async def list_transactions(
     account_id: Optional[int] = None,
@@ -204,6 +233,8 @@ async def list_transactions(
     bank_name: Optional[str] = None,
     month: Optional[str] = None,
     import_batch_id: Optional[int] = None,
+    sort_by: Literal["date", "amount", "description", "category"] = "date",
+    sort_dir: Literal["asc", "desc"] = "desc",
     limit: int = Query(default=500, le=10000),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -216,14 +247,10 @@ async def list_transactions(
         month=month, import_batch_id=import_batch_id,
     )
 
-    stmt = (
-        select(Transaction)
-        .options(selectinload(Transaction.account))
-        .where(and_(*filters))
-        .order_by(Transaction.date.desc(), Transaction.id.desc())
-        .limit(limit)
-        .offset(offset)
-    )
+    stmt = select(Transaction).options(selectinload(Transaction.account)).where(and_(*filters))
+    if sort_by == "category":
+        stmt = stmt.outerjoin(Category, Category.id == Transaction.category_id)
+    stmt = stmt.order_by(*_txn_order(sort_by, sort_dir)).limit(limit).offset(offset)
     result = await db.execute(stmt)
     rows = result.scalars().all()
     outs = []
@@ -274,6 +301,86 @@ async def transaction_meta(db: AsyncSession = Depends(get_db), pid: int = Depend
     return TransactionMeta(
         available_months=available_months,
         available_banks=available_banks,
+    )
+
+
+# What grouping by label needs from a transaction.
+_LABEL_COLS = (
+    Transaction.id, Transaction.description, Transaction.amount_cents, Transaction.date,
+    Transaction.category_id, Transaction.account_id, Transaction.is_debit, Transaction.currency,
+)
+
+
+def _to_classify_filters(pid: int) -> list:
+    """Transactions still waiting for a category. Internal transfers have none on
+    purpose (they must not weigh on budgets), so they are not "to classify"."""
+    return [
+        Transaction.profile_id == pid,
+        Transaction.category_id == None,  # noqa: E711
+        Transaction.is_internal_transfer == False,  # noqa: E712
+    ]
+
+
+@router.get("/uncategorized-groups", response_model=List[UncategorizedGroup])
+async def uncategorized_groups(
+    account_id: Optional[int] = None,
+    limit: int = Query(default=100, le=500),
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Uncategorised transactions grouped by label, most frequent first — so the
+    user classifies a label once instead of each of its rows."""
+    filters = _to_classify_filters(pid)
+    if account_id is not None:
+        filters.append(Transaction.account_id == account_id)
+    rows = (await db.execute(select(*_LABEL_COLS).where(and_(*filters)))).all()
+    return [
+        UncategorizedGroup(
+            description=g.keyword, rule_pattern=g.pattern, occurrences=g.count,
+            total_cents=g.total_cents, currency=g.currency, is_debit=g.is_debit,
+            last_date=g.last_date, transaction_ids=[m.id for m in g.members],
+            account_ids=sorted({m.account_id for m in g.members}),
+        )
+        for g in group_by_label(rows)[:limit]
+    ]
+
+
+@router.get("/{transaction_id}/similar-uncategorized", response_model=SimilarUncategorized)
+async def similar_uncategorized(
+    transaction_id: int,
+    category_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """The OTHER uncategorised transactions carrying the same label (and
+    direction) as this one — what the user is offered to classify along with it.
+
+    `category_id` is the category about to be applied: when it belongs to one
+    account, only that account's transactions can take it."""
+    txn = (await db.execute(
+        select(Transaction).where(Transaction.id == transaction_id, Transaction.profile_id == pid)
+    )).scalar_one_or_none()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction introuvable")
+
+    filters = _to_classify_filters(pid)
+    filters += [Transaction.id != txn.id, Transaction.is_debit == txn.is_debit]
+    if category_id is not None:
+        await require_category(db, pid, category_id)
+        scope = (await db.execute(
+            select(Category.account_id).where(Category.id == category_id, Category.profile_id == pid)
+        )).scalar_one_or_none()
+        if scope is not None:
+            filters.append(Transaction.account_id == scope)
+
+    key = label_key(txn.description)
+    rows = (await db.execute(select(*_LABEL_COLS).where(and_(*filters)))).all()
+    similar = [r for r in rows if label_key(r.description) == key] if key else []
+    return SimilarUncategorized(
+        description=key.upper(),
+        rule_pattern=rule_pattern(key, [txn.description, *(r.description for r in similar)]).upper(),
+        count=len(similar),
+        transaction_ids=[r.id for r in similar],
     )
 
 
@@ -435,14 +542,14 @@ async def bulk_update_category(
     await require_category(db, pid, payload.category_id)
     await _reject_grouping_category(db, payload.category_id)
     from sqlalchemy import update
+    updated = 0
     for chunk in _chunks(payload.ids):
-        await db.execute(
-            update(Transaction)
-            .where(Transaction.id.in_(chunk), Transaction.profile_id == pid)
-            .values(category_id=payload.category_id)
-        )
+        stmt = update(Transaction).where(Transaction.id.in_(chunk), Transaction.profile_id == pid)
+        if payload.only_uncategorized:
+            stmt = stmt.where(Transaction.category_id == None)  # noqa: E711
+        updated += (await db.execute(stmt.values(category_id=payload.category_id))).rowcount
     await db.commit()
-    return {"updated": len(payload.ids)}
+    return {"updated": updated}
 
 
 @router.get("/export")

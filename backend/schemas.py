@@ -487,6 +487,29 @@ class TransactionMeta(BaseModel):
     available_banks: List[str]
 
 
+class UncategorizedGroup(BaseModel):
+    """Uncategorised transactions sharing a label, to classify in one go."""
+    description: str          # cleaned-up keyword, for display
+    rule_pattern: str         # fragment present in every real label (for a rule)
+    occurrences: int
+    total_cents: int
+    currency: str
+    is_debit: bool
+    last_date: date
+    transaction_ids: List[int]
+    # The accounts the group's rows live in: a category bound to one account can
+    # only be offered when every row is in that account.
+    account_ids: List[int]
+
+
+class SimilarUncategorized(BaseModel):
+    """The other uncategorised transactions carrying the same label as one row."""
+    description: str
+    rule_pattern: str
+    count: int
+    transaction_ids: List[int]
+
+
 # ── Upload ────────────────────────────────────────────────────────────────────
 
 class DetectResponse(BaseModel):

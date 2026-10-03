@@ -63,6 +63,21 @@ async def test_cash_flow_uses_period_rate(client: AsyncClient, usd_flows: dict):
     assert by_month["2026-07"]["expenses_cents"] == 900
 
 
+async def test_spending_trends_convert_each_bucket_at_its_own_month(client: AsyncClient, usd_flows: dict):
+    """Monthly or daily, a bucket is converted at the rate of the month it falls in."""
+    h = {"X-Profile-Id": str(usd_flows["profile"].id)}
+    params = {"date_from": "2026-06-01", "date_to": "2026-07-31"}
+
+    monthly = (await client.get("/api/analytics/spending-trends", params=params, headers=h)).json()
+    assert monthly[0]["series"] == [{"period": "2026-06", "amount_cents": 800},
+                                    {"period": "2026-07", "amount_cents": 900}]
+
+    daily = (await client.get("/api/analytics/spending-trends", params={**params, "granularity": "day"}, headers=h)).json()
+    spent = {p["period"]: p["amount_cents"] for p in daily[0]["series"] if p["amount_cents"]}
+    assert spent == {"2026-06-10": 800, "2026-07-10": 900}
+    assert len(daily[0]["series"]) == 61   # every day of June and July
+
+
 async def test_summary_period_rate_and_fx_complete(client: AsyncClient, usd_flows: dict):
     pid = usd_flows["profile"].id
     res = await client.get("/api/analytics/summary",

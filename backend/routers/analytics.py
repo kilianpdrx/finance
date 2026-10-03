@@ -1,7 +1,6 @@
-import re
 import calendar
-from typing import List, Optional
-from datetime import date
+from typing import List, Literal, Optional
+from datetime import date, timedelta
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, and_
@@ -18,6 +17,7 @@ from schemas import (
 from ownership import require_account, require_category
 from services.base_currency import get_base_currency
 from services.fx import RateCache
+from services.label_groups import LabelGroup, group_by_label
 
 router = APIRouter()
 
@@ -292,9 +292,17 @@ async def spending_trends(
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
     income: bool = False,
+    granularity: Literal["month", "day"] = "month",
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
+    """Per-category totals over time, one `{period, amount_cents}` point per bucket.
+
+    `period` is `YYYY-MM`, or `YYYY-MM-DD` with `granularity=day` — for a short
+    range, where one bar per month says nothing about when the money went. Every
+    bucket is converted at the end of ITS month (a transaction's period, never
+    today's rate), and with `day` every day of the requested range is returned,
+    empty ones included, so the bars are evenly spaced."""
     parsed_ids = _parse_account_ids(account_ids)
     base_ccy = await get_base_currency(db, pid)
     acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
@@ -307,27 +315,32 @@ async def spending_trends(
     if parsed_ids:
         filters.append(Transaction.account_id.in_(parsed_ids))
 
+    bucket = "%Y-%m-%d" if granularity == "day" else "%Y-%m"
     txn_rows = (await db.execute(
         select(
             Transaction.category_id,
             Transaction.account_id,
-            func.strftime("%Y-%m", Transaction.date).label("month"),
+            func.strftime(bucket, Transaction.date).label("period"),
             func.sum(Transaction.amount_cents).label("total"),
         )
         .where(and_(*filters))
-        .group_by(Transaction.category_id, Transaction.account_id, "month")
+        .group_by(Transaction.category_id, Transaction.account_id, "period")
     )).all()
 
     data: dict = defaultdict(lambda: defaultdict(int))
-    all_months: set = set()
+    periods: set = set()
     cat_ids_set: set = set()
     for r in txn_rows:
         ccy = acc_ccys.get(r.account_id, "EUR")
-        converted = await rates.convert(db, r.total, ccy, base_ccy, _month_end(r.month))
-        data[r.category_id][r.month] += converted
-        all_months.add(r.month)
+        converted = await rates.convert(db, r.total, ccy, base_ccy, _month_end(r.period[:7]))
+        data[r.category_id][r.period] += converted
+        periods.add(r.period)
         if r.category_id is not None:
             cat_ids_set.add(r.category_id)
+
+    if granularity == "day" and date_from and date_to and data:
+        last = min(date_to, date.today())
+        periods.update((date_from + timedelta(days=n)).isoformat() for n in range((last - date_from).days + 1))
 
     cat_map: dict = {}
     cat_colors: dict = {}
@@ -339,29 +352,28 @@ async def spending_trends(
             cat_colors[c.id] = c.color
             cat_account[c.id] = c.account_id
 
-    sorted_months = sorted(all_months)
+    sorted_periods = sorted(periods)
+
+    def series(cat_id) -> list:
+        return [{"period": p, "amount_cents": data[cat_id].get(p, 0)} for p in sorted_periods]
 
     result = []
     for cat_id in sorted(cat_ids_set, key=lambda x: cat_map.get(x, "")):
-        monthly = data[cat_id]
-        series = [{"month": m, "amount_cents": monthly.get(m, 0)} for m in sorted_months]
         result.append({
             "category_id": cat_id,
             "category_name": cat_map.get(cat_id, "Non catégorisé"),
             "category_color": cat_colors.get(cat_id, "#94a3b8"),
             "category_account_id": cat_account.get(cat_id),
-            "series": series,
+            "series": series(cat_id),
         })
 
     if None in data:
-        monthly = data[None]
-        series = [{"month": m, "amount_cents": monthly.get(m, 0)} for m in sorted_months]
         result.append({
             "category_id": None,
             "category_name": "Non catégorisé",
             "category_color": "#94a3b8",
             "category_account_id": None,
-            "series": series,
+            "series": series(None),
         })
 
     return result
@@ -534,95 +546,16 @@ async def net_worth_history(
     return result
 
 
-# Banking boilerplate that carries no merchant information — dropped so that
-# "PAIEMENT CB CARREFOUR 0512" and "ACHAT CARREFOUR 1806" merge into one group.
-_DESC_STOPWORDS = {
-    "paiement", "paiment", "achat", "cb", "carte", "card", "prelevement", "prlv",
-    "prelvt", "prel", "virement", "vir", "retrait", "sepa", "facture", "fact",
-    "com", "commission", "ttc", "ht", "www", "sarl", "sas", "eurl", "sa",
-    "du", "de", "des", "le", "la", "les", "au", "aux", "et", "chez", "mr", "mme",
-}
-_DIGIT_TOKEN = re.compile(r"\w*\d\w*", re.UNICODE)   # any token containing a digit
-_PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
-
-
-def _normalize_desc(desc: str) -> str:
-    """Reduce a raw description to a broad merchant keyword: lowercase, strip
-    punctuation, drop tokens that contain digits (dates/refs/amounts) and common
-    banking boilerplate, and collapse whitespace."""
-    s = (desc or "").lower()
-    s = _PUNCT.sub(" ", s)
-    s = _DIGIT_TOKEN.sub(" ", s)
-    tokens = [t for t in s.split() if len(t) >= 3 and t not in _DESC_STOPWORDS]
-    return " ".join(tokens).strip()
-
-
-def _rule_pattern(key: str, labels) -> str:
-    """The fragment a "contains" rule should be built from for this group: the
-    longest run of consecutive keyword tokens found verbatim in EVERY real label.
-
-    The keyword itself is not usable: normalising drops reference numbers and
-    boilerplate from the MIDDLE of a label, so "CARTE 12/09 FRANPRIX 5106 PARIS"
-    becomes "franprix paris" — which appears in no real transaction, and a rule
-    built from it would classify nothing. A single token always survives (each one
-    is a verbatim piece of every label), so there is always a usable answer."""
-    tokens = key.split()
-    lowered = {(lbl or "").lower() for lbl in labels}
-    best = ""
-    for i in range(len(tokens)):
-        for j in range(i + 1, len(tokens) + 1):
-            cand = " ".join(tokens[i:j])
-            if len(cand) > len(best) and all(cand in lbl for lbl in lowered):
-                best = cand
-    return best or key
-
-
-def _group_recurring(raw_rows) -> list:
-    """Group raw transactions by their broad keyword (numbers/refs dropped) and
-    currency, recomputing occurrences, average amount, last date and the
-    most-frequent category. Grouping raw (not by exact description) is what lets
-    rows that each carry a unique reference still count as recurring; keeping the
-    currency in the key means an average never mixes two currencies.
-
-    Returns `(RecurringTransaction, member_rows)` pairs, most frequent first."""
-    groups: dict = {}
-    for r in raw_rows:
-        key = _normalize_desc(r.description) or (r.description or "").strip().lower()
-        if not key:
-            continue
-        currency = r.currency or ""
-        g = groups.get((key, currency))
-        if g is None:
-            g = groups[(key, currency)] = {"amt_sum": 0, "last_date": None,
-                                           "cat_votes": defaultdict(int), "members": []}
-        g["members"].append(r)
-        g["amt_sum"] += r.amount_cents
-        if g["last_date"] is None or r.date > g["last_date"]:
-            g["last_date"] = r.date
-        if r.category_id is not None:
-            g["cat_votes"][r.category_id] += 1
-
-    out = []
-    for (key, currency), g in groups.items():
-        cnt = len(g["members"])
-        if cnt < 2:
-            continue
-        cat = max(g["cat_votes"], key=g["cat_votes"].get) if g["cat_votes"] else None
-        out.append((RecurringTransaction(
-            description=key.upper(),
-            rule_pattern=_rule_pattern(key, (m.description for m in g["members"])).upper(),
-            occurrences=cnt,
-            avg_amount_cents=int(g["amt_sum"] / cnt),
-            currency=currency,
-            last_date=g["last_date"],
-            category_id=cat,
-        ), g["members"]))
-    out.sort(key=lambda pair: pair[0].occurrences, reverse=True)
-    return out
-
-
-def _recurring_groups(raw_rows, *, limit: int = 50) -> List[RecurringTransaction]:
-    return [g for g, _ in _group_recurring(raw_rows)][:limit]
+def _as_recurring(group: LabelGroup) -> RecurringTransaction:
+    return RecurringTransaction(
+        description=group.keyword,
+        rule_pattern=group.pattern,
+        occurrences=group.count,
+        avg_amount_cents=int(group.total_cents / group.count),
+        currency=group.currency,
+        last_date=group.last_date,
+        category_id=group.top_category_id,
+    )
 
 
 # Columns the recurring endpoints need: the group itself, plus what a rule can
@@ -638,15 +571,23 @@ _COVERAGE_SAMPLE = 5
 @router.get("/recurring", response_model=List[RecurringTransaction])
 async def recurring(
     account_ids: Optional[str] = None,
+    income: bool = False,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
+    """Recurring expenses, or recurring income with `income=true`. One direction
+    at a time: a purchase and its refund share a label, and averaging the two
+    describes neither."""
     parsed_ids = _parse_account_ids(account_ids)
-    rec_filters = [Transaction.is_internal_transfer == False, Transaction.profile_id == pid]
+    rec_filters = [
+        Transaction.is_internal_transfer == False,  # noqa: E712
+        Transaction.is_debit == (not income),
+        Transaction.profile_id == pid,
+    ]
     if parsed_ids:
         rec_filters.append(Transaction.account_id.in_(parsed_ids))
     raw = (await db.execute(select(*_RECURRING_COLS).where(and_(*rec_filters)))).all()
-    return _recurring_groups(raw, limit=50)
+    return [_as_recurring(g) for g in group_by_label(raw, min_count=2)[:50]]
 
 
 def _coverage_sample(members) -> list:
@@ -670,11 +611,12 @@ def _coverage_sample(members) -> list:
 @router.get("/recurring-uncovered", response_model=List[RecurringTransaction])
 async def recurring_uncovered(
     account_ids: Optional[str] = None,
+    income: bool = False,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
-    """Recurring EXPENSES that no active rule matches — good candidates for
-    creating a new categorization rule.
+    """Recurring expenses (income with `income=true`) that no active rule matches
+    — good candidates for creating a new categorization rule.
 
     Coverage is tested on the group's REAL transactions (their own label,
     account, amount), never on the cleaned-up keyword: a rule can match the
@@ -686,7 +628,7 @@ async def recurring_uncovered(
     parsed_ids = _parse_account_ids(account_ids)
     rec_filters = [
         Transaction.is_internal_transfer == False,  # noqa: E712
-        Transaction.is_debit == True,  # noqa: E712
+        Transaction.is_debit == (not income),
         Transaction.profile_id == pid,
     ]
     if parsed_ids:
@@ -698,13 +640,13 @@ async def recurring_uncovered(
     )).scalars().all()
 
     out = []
-    for group, members in _group_recurring(raw):
+    for group in group_by_label(raw, min_count=2):
         covered = all(
             any(rule_matches(rule, txn) for rule in rules)
-            for txn in _coverage_sample(members)
+            for txn in _coverage_sample(group.members)
         )
         if not covered:
-            out.append(group)
+            out.append(_as_recurring(group))
         if len(out) >= 50:
             break
     return out

@@ -10,8 +10,12 @@ export const SheetClose = DialogPrimitive.Close;
 
 export const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { side?: "left" | "right" }
->(({ className, children, side = "left", ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+    side?: "left" | "right";
+    /** Accessible name of the panel (announced, not displayed). */
+    title?: string;
+  }
+>(({ className, children, side = "left", title = "Navigation", ...props }, ref) => (
   <DialogPrimitive.Portal>
     <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
     <DialogPrimitive.Content
@@ -26,7 +30,7 @@ export const SheetContent = React.forwardRef<
       )}
       {...props}
     >
-      <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
+      <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
       {children}
     </DialogPrimitive.Content>
   </DialogPrimitive.Portal>

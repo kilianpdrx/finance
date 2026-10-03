@@ -129,3 +129,33 @@ async def test_delete_category_fallback(client: AsyncClient, seed_data: dict, db
     # Ensure it's gone
     res2 = await client.get(f"/api/categories/{cat_transport.id}", headers={"X-Profile-Id": str(profile.id)})
     assert res2.status_code == 404
+
+
+async def test_rule_account_scope_can_be_cleared(client: AsyncClient, seed_data: dict, db_session: AsyncSession, cat_data: dict):
+    """`account_id: null` means "Tous les comptes". It used to be dropped like an
+    absent field, so a rule could be scoped to an account but never un-scoped."""
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    cat = cat_data["cat_transport"]
+    conditions = [{"field": "description", "operator": "contains", "value": "sncf"}]
+    rule = (await client.post(f"/api/categories/{cat.id}/rules", headers=h, json={
+        "conditions": conditions, "category_id": cat.id, "account_id": seed_data["account_courant"].id,
+    })).json()
+    assert rule["account_id"] == seed_data["account_courant"].id
+
+    # A partial update leaves everything it doesn't mention alone.
+    res = await client.put(f"/api/categories/rules/{rule['id']}", headers=h, json={"is_active": False})
+    assert res.status_code == 200
+    assert res.json()["is_active"] is False
+    assert res.json()["account_id"] == seed_data["account_courant"].id
+    assert res.json()["conditions"] == conditions
+
+    # An explicit null clears the scope...
+    res = await client.put(f"/api/categories/rules/{rule['id']}", headers=h, json={"account_id": None})
+    assert res.status_code == 200 and res.json()["account_id"] is None
+
+    # ...while a null on a column that cannot be empty is ignored, not written.
+    res = await client.put(f"/api/categories/rules/{rule['id']}", headers=h,
+                           json={"category_id": None, "conditions": None})
+    assert res.status_code == 200
+    assert res.json()["category_id"] == cat.id and res.json()["conditions"] == conditions
+

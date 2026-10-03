@@ -205,6 +205,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/transactions/uncategorized-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Uncategorized Groups
+         * @description Uncategorised transactions grouped by label, most frequent first — so the
+         *     user classifies a label once instead of each of its rows.
+         */
+        get: operations["uncategorized_groups_api_transactions_uncategorized_groups_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transactions/{transaction_id}/similar-uncategorized": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Similar Uncategorized
+         * @description The OTHER uncategorised transactions carrying the same label (and
+         *     direction) as this one — what the user is offered to classify along with it.
+         *
+         *     `category_id` is the category about to be applied: when it belongs to one
+         *     account, only that account's transactions can take it.
+         */
+        get: operations["similar_uncategorized_api_transactions__transaction_id__similar_uncategorized_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/transactions/batches": {
         parameters: {
             query?: never;
@@ -704,7 +749,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Spending Trends */
+        /**
+         * Spending Trends
+         * @description Per-category totals over time, one `{period, amount_cents}` point per bucket.
+         *
+         *     `period` is `YYYY-MM`, or `YYYY-MM-DD` with `granularity=day` — for a short
+         *     range, where one bar per month says nothing about when the money went. Every
+         *     bucket is converted at the end of ITS month (a transaction's period, never
+         *     today's rate), and with `day` every day of the requested range is returned,
+         *     empty ones included, so the bars are evenly spaced.
+         */
         get: operations["spending_trends_api_analytics_spending_trends_get"];
         put?: never;
         post?: never;
@@ -755,7 +809,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Recurring */
+        /**
+         * Recurring
+         * @description Recurring expenses, or recurring income with `income=true`. One direction
+         *     at a time: a purchase and its refund share a label, and averaging the two
+         *     describes neither.
+         */
         get: operations["recurring_api_analytics_recurring_get"];
         put?: never;
         post?: never;
@@ -774,8 +833,8 @@ export interface paths {
         };
         /**
          * Recurring Uncovered
-         * @description Recurring EXPENSES that no active rule matches — good candidates for
-         *     creating a new categorization rule.
+         * @description Recurring expenses (income with `income=true`) that no active rule matches
+         *     — good candidates for creating a new categorization rule.
          *
          *     Coverage is tested on the group's REAL transactions (their own label,
          *     account, amount), never on the cleaned-up keyword: a rule can match the
@@ -2046,6 +2105,11 @@ export interface components {
             ids: number[];
             /** Category Id */
             category_id?: number | null;
+            /**
+             * Only Uncategorized
+             * @default false
+             */
+            only_uncategorized: boolean;
         };
         /** BulkDeleteQuery */
         BulkDeleteQuery: {
@@ -2794,6 +2858,20 @@ export interface components {
             /** Account Id */
             account_id?: number | null;
         };
+        /**
+         * SimilarUncategorized
+         * @description The other uncategorised transactions carrying the same label as one row.
+         */
+        SimilarUncategorized: {
+            /** Description */
+            description: string;
+            /** Rule Pattern */
+            rule_pattern: string;
+            /** Count */
+            count: number;
+            /** Transaction Ids */
+            transaction_ids: number[];
+        };
         /** TransactionCreateManual */
         TransactionCreateManual: {
             /** Account Id */
@@ -2932,6 +3010,33 @@ export interface components {
             is_manually_reviewed?: boolean | null;
             /** Is Internal Transfer */
             is_internal_transfer?: boolean | null;
+        };
+        /**
+         * UncategorizedGroup
+         * @description Uncategorised transactions sharing a label, to classify in one go.
+         */
+        UncategorizedGroup: {
+            /** Description */
+            description: string;
+            /** Rule Pattern */
+            rule_pattern: string;
+            /** Occurrences */
+            occurrences: number;
+            /** Total Cents */
+            total_cents: number;
+            /** Currency */
+            currency: string;
+            /** Is Debit */
+            is_debit: boolean;
+            /**
+             * Last Date
+             * Format: date
+             */
+            last_date: string;
+            /** Transaction Ids */
+            transaction_ids: number[];
+            /** Account Ids */
+            account_ids: number[];
         };
         /** ValidationError */
         ValidationError: {
@@ -3402,6 +3507,8 @@ export interface operations {
                 bank_name?: string | null;
                 month?: string | null;
                 import_batch_id?: number | null;
+                sort_by?: "date" | "amount" | "description" | "category";
+                sort_dir?: "asc" | "desc";
                 limit?: number;
                 offset?: number;
             };
@@ -3486,6 +3593,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TransactionMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    uncategorized_groups_api_transactions_uncategorized_groups_get: {
+        parameters: {
+            query?: {
+                account_id?: number | null;
+                limit?: number;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UncategorizedGroup"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    similar_uncategorized_api_transactions__transaction_id__similar_uncategorized_get: {
+        parameters: {
+            query?: {
+                category_id?: number | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                transaction_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarUncategorized"];
                 };
             };
             /** @description Validation Error */
@@ -4599,6 +4775,7 @@ export interface operations {
                 date_to?: string | null;
                 account_ids?: string | null;
                 income?: boolean;
+                granularity?: "month" | "day";
             };
             header?: {
                 "X-Profile-Id"?: number | null;
@@ -4702,6 +4879,7 @@ export interface operations {
         parameters: {
             query?: {
                 account_ids?: string | null;
+                income?: boolean;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
@@ -4735,6 +4913,7 @@ export interface operations {
         parameters: {
             query?: {
                 account_ids?: string | null;
+                income?: boolean;
             };
             header?: {
                 "X-Profile-Id"?: number | null;

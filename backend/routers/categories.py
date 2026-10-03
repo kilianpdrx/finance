@@ -602,7 +602,14 @@ async def update_rule(rule_id: int, payload: CategoryRuleUpdate, db: AsyncSessio
     rule = result.scalar_one_or_none()
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
-    updates = payload.model_dump(exclude_none=True)
+    # Only what the client actually sent. `account_id: null` is meaningful — it
+    # un-scopes the rule ("Tous les comptes") — so it must not be dropped like an
+    # absent field; every other column is NOT NULL, so a null there is ignored.
+    updates = {
+        field: value
+        for field, value in payload.model_dump(exclude_unset=True).items()
+        if value is not None or field == "account_id"
+    }
     if "account_id" in updates:
         await require_account(db, pid, updates["account_id"])
     if "category_id" in updates:

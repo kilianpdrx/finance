@@ -15,8 +15,8 @@ export function MonthlyDistribution({ data, currency }: { data: SpendingTrend[];
     for (const trend of data) {
       for (const s of trend.series) {
         if (s.amount_cents === 0) continue;
-        if (!byMonth.has(s.month)) byMonth.set(s.month, []);
-        byMonth.get(s.month)!.push({ name: trend.category_name, value: s.amount_cents, color: trend.category_color });
+        if (!byMonth.has(s.period)) byMonth.set(s.period, []);
+        byMonth.get(s.period)!.push({ name: trend.category_name, value: s.amount_cents, color: trend.category_color });
       }
     }
     return Array.from(byMonth.entries())

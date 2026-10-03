@@ -41,7 +41,11 @@ async def gather_report_data(db: AsyncSession, pid: int, date_from=None, date_to
         "cash_flow": await _cash_flow(date_from=date_from, date_to=date_to, db=db, pid=pid),
         "by_category": await _by_category(date_from=date_from, date_to=date_to, db=db, pid=pid),
         "trends": await _trends(date_from=date_from, date_to=date_to, db=db, pid=pid),
-        "recurring": await _recurring(db=db, pid=pid),
+        # The endpoint lists one direction at a time; the report shows both.
+        "recurring": sorted(
+            await _recurring(db=db, pid=pid) + await _recurring(income=True, db=db, pid=pid),
+            key=lambda r: r.occurrences, reverse=True,
+        ),
         "budget": await _budget_full(year=year, account_id=None, account_ids=None, db=db, pid=pid),
         "budget_year": year,
         "cat_map": {cid: name for cid, name in cat_rows},
@@ -183,7 +187,7 @@ def _top_categories_trends(data, n=6):
         out.append({
             "name": t["category_name"],
             "color": t.get("category_color"),
-            "months": [p["month"] for p in t["series"]],
+            "months": [p["period"] for p in t["series"]],
             "values_cents": [p["amount_cents"] for p in t["series"]],
         })
     return out
@@ -489,7 +493,7 @@ def build_pdf(data, base_ccy: str, opts=None) -> bytes:
         rows = [["Description", "Catégorie", "Occ.", "Montant moyen", "Dernière"]]
         for r in rec[:20]:
             rows.append([r.description[:55], cat_map.get(r.category_id, "—"), str(r.occurrences),
-                         cents_to_display(r.avg_amount_cents, base_ccy), str(r.last_date)])
+                         cents_to_display(r.avg_amount_cents, r.currency or base_ccy), str(r.last_date)])
         e.append(sect(Paragraph("Transactions récurrentes", st_h2),
                       styled_table(rows, col_widths=[11 * cm, 5 * cm, 2 * cm, 4 * cm, 3 * cm])))
 

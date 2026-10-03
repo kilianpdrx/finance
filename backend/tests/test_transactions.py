@@ -214,3 +214,144 @@ async def test_count_and_categorized_filter(client: AsyncClient, seed_data: dict
     rows = (await client.get("/api/transactions?categorized=true", headers=h)).json()
     assert all(r["category_id"] is not None for r in rows)
     assert len(rows) == cat
+
+
+async def test_list_transactions_sorting(client: AsyncClient, seed_data: dict, transactions_data: dict):
+    """The fixture holds: 10/07 Supermarket A 100,00 (Alimentation), 12/07 Unknown
+    Store 50,00 (no category), 15/07 Salary July 2000,00 (Salaire)."""
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+
+    async def order(**params) -> list:
+        res = await client.get("/api/transactions", headers=h, params=params)
+        assert res.status_code == 200, res.text
+        return [t["description"] for t in res.json()]
+
+    # Default: most recent first.
+    assert await order() == ["Salary July", "Unknown Store", "Supermarket A"]
+    assert await order(sort_by="date", sort_dir="asc") == ["Supermarket A", "Unknown Store", "Salary July"]
+    # Amount: biggest movement first, whatever its direction.
+    assert await order(sort_by="amount") == ["Salary July", "Supermarket A", "Unknown Store"]
+    assert await order(sort_by="amount", sort_dir="asc") == ["Unknown Store", "Supermarket A", "Salary July"]
+    assert await order(sort_by="description", sort_dir="asc") == ["Salary July", "Supermarket A", "Unknown Store"]
+    # Category: by name, uncategorised last in BOTH directions.
+    assert await order(sort_by="category", sort_dir="asc") == ["Supermarket A", "Salary July", "Unknown Store"]
+    assert await order(sort_by="category", sort_dir="desc") == ["Salary July", "Supermarket A", "Unknown Store"]
+
+
+async def test_list_transactions_rejects_an_unknown_sort(client: AsyncClient, seed_data: dict, transactions_data: dict):
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    assert (await client.get("/api/transactions", headers=h, params={"sort_by": "import_hash"})).status_code == 422
+    assert (await client.get("/api/transactions", headers=h, params={"sort_dir": "sideways"})).status_code == 422
+
+
+# ── Classify by label ───────────────────────────────────────────────────────
+@pytest_asyncio.fixture
+async def labelled(db_session: AsyncSession, seed_data: dict):
+    """Three BIOCOOP card payments (a reference in the middle of the label), one
+    of them already classified, plus a refund, a transfer and an unrelated row."""
+    pid, acc = seed_data["profile"].id, seed_data["account_courant"]
+    rows = {}
+
+    def add(key: str, description: str, cents: int, day: int, **kw):
+        t = Transaction(profile_id=pid, account_id=acc.id, date=date(2026, 9, day), amount_cents=cents,
+                        currency="EUR", description=description, import_hash=f"lbl_{key}",
+                        **{"is_debit": True, **kw})
+        rows[key] = t
+        db_session.add(t)
+
+    add("bio1", "CARTE X1234 03/09 BIOCOOP 2231 LYON 03", 4200, 3)
+    add("bio2", "CARTE X1234 12/09 BIOCOOP 2231 LYON 03", 3850, 12)
+    add("bio3", "CARTE X1234 20/09 BIOCOOP 2231 LYON 03", 4520, 20)
+    add("bio_done", "CARTE X1234 27/09 BIOCOOP 2231 LYON 03", 1000, 27, category_id=seed_data["cat_courses"].id)
+    add("bio_refund", "CARTE X1234 28/09 BIOCOOP 2231 LYON 03", 500, 28, is_debit=False)
+    add("transfer", "VIREMENT VERS LIVRET", 20000, 5, is_internal_transfer=True)
+    add("other", "PHARMACIE DU PARC", 1290, 8)
+    await db_session.commit()
+    for t in rows.values():
+        await db_session.refresh(t)
+    return rows
+
+
+async def test_uncategorized_groups_put_frequent_labels_first(client: AsyncClient, seed_data: dict, labelled: dict):
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    groups = (await client.get("/api/transactions/uncategorized-groups", headers=h)).json()
+
+    top = groups[0]
+    assert (top["description"], top["occurrences"], top["is_debit"]) == ("BIOCOOP LYON", 3, True)
+    assert top["total_cents"] == 4200 + 3850 + 4520 and top["currency"] == "EUR"
+    assert sorted(top["transaction_ids"]) == sorted(labelled[k].id for k in ("bio1", "bio2", "bio3"))
+    # The rule fragment is one that really appears in the labels.
+    assert top["rule_pattern"] == "BIOCOOP"
+    assert top["account_ids"] == [seed_data["account_courant"].id]
+
+    all_ids = {i for g in groups for i in g["transaction_ids"]}
+    assert labelled["bio_done"].id not in all_ids, "already classified"
+    assert labelled["transfer"].id not in all_ids, "internal transfers have no category on purpose"
+    # The refund has the same label but the other direction: its own group.
+    refund = next(g for g in groups if labelled["bio_refund"].id in g["transaction_ids"])
+    assert refund["is_debit"] is False and refund["occurrences"] == 1
+    assert any(g["description"] == "PHARMACIE PARC" for g in groups)
+
+
+async def test_uncategorized_groups_are_profile_scoped(client: AsyncClient, seed_data: dict, labelled: dict, extra_profile):
+    groups = (await client.get("/api/transactions/uncategorized-groups",
+                               headers={"X-Profile-Id": str(extra_profile.id)})).json()
+    assert groups == []
+
+
+async def test_similar_uncategorized_lists_the_other_rows_with_that_label(client: AsyncClient, seed_data: dict, labelled: dict):
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    res = await client.get(f"/api/transactions/{labelled['bio1'].id}/similar-uncategorized", headers=h,
+                           params={"category_id": seed_data["cat_courses"].id})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    # Not itself, not the classified one, not the refund, not another label.
+    assert sorted(body["transaction_ids"]) == sorted([labelled["bio2"].id, labelled["bio3"].id])
+    assert body["count"] == 2 and body["description"] == "BIOCOOP LYON" and body["rule_pattern"] == "BIOCOOP"
+
+    lonely = (await client.get(f"/api/transactions/{labelled['other'].id}/similar-uncategorized", headers=h)).json()
+    assert lonely["count"] == 0 and lonely["transaction_ids"] == []
+
+
+async def test_similar_uncategorized_respects_an_account_bound_category(
+        client: AsyncClient, seed_data: dict, labelled: dict, db_session: AsyncSession):
+    """A category that belongs to one account can only be given to that account's rows."""
+    from models import Category
+    pid = seed_data["profile"].id
+    elsewhere = Category(profile_id=pid, name="Courses PEA", color="#000", account_id=seed_data["account_inv"].id)
+    db_session.add(elsewhere)
+    await db_session.commit()
+    await db_session.refresh(elsewhere)
+
+    body = (await client.get(f"/api/transactions/{labelled['bio1'].id}/similar-uncategorized",
+                             headers={"X-Profile-Id": str(pid)}, params={"category_id": elsewhere.id})).json()
+    assert body["count"] == 0
+
+
+async def test_similar_uncategorized_is_profile_scoped(client: AsyncClient, seed_data: dict, labelled: dict, extra_profile):
+    res = await client.get(f"/api/transactions/{labelled['bio1'].id}/similar-uncategorized",
+                           headers={"X-Profile-Id": str(extra_profile.id)})
+    assert res.status_code == 404
+
+
+async def test_bulk_category_can_fill_only_uncategorised_rows(
+        client: AsyncClient, seed_data: dict, labelled: dict, db_session: AsyncSession):
+    """"Classer les autres" must never overwrite a category: the list the user saw
+    may be stale by the time they click."""
+    from models import Category
+    pid = seed_data["profile"].id
+    other_cat = Category(profile_id=pid, name="Bio", color="#0a0")
+    db_session.add(other_cat)
+    await db_session.commit()
+    await db_session.refresh(other_cat)
+
+    ids = [labelled[k].id for k in ("bio1", "bio2", "bio_done")]
+    res = await client.post("/api/transactions/bulk-update-category", headers={"X-Profile-Id": str(pid)},
+                            json={"ids": ids, "category_id": other_cat.id, "only_uncategorized": True})
+    assert res.status_code == 200 and res.json() == {"updated": 2}
+
+    for key in ("bio1", "bio2", "bio_done"):
+        await db_session.refresh(labelled[key])
+    assert labelled["bio1"].category_id == other_cat.id and labelled["bio2"].category_id == other_cat.id
+    assert labelled["bio_done"].category_id == seed_data["cat_courses"].id, "an existing category is kept"
+

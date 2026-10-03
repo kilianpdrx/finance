@@ -47,7 +47,12 @@ test.describe("Règles", () => {
       await dialog.getByRole("button", { name: "Tester" }).click();
       await expect(dialog.getByText("3 transaction(s) correspond(ent) à ces conditions.")).toBeVisible();
 
-      await dialog.getByRole("button", { name: "Enregistrer" }).click();
+      // No category is preselected: the rule cannot be saved under one nobody chose.
+      const save = dialog.getByRole("button", { name: "Enregistrer" });
+      await expect(save).toBeDisabled();
+      await dialog.getByRole("combobox").first().click();
+      await page.getByRole("option", { name: /Alimentation/ }).click();
+      await save.click();
 
       // Saving alone changes nothing; the app must say so and offer to apply.
       const confirm = page.getByRole("dialog", { name: "Règle créée" });
