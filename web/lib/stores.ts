@@ -138,3 +138,21 @@ export const usePrivacyStore = create<PrivacyState>()(
     { name: "finance-privacy" },
   ),
 );
+
+// ── Dismissed hints ───────────────────────────────────────────────────────────
+// One-off notices the user closed. The id carries whatever the hint is about
+// (profile, currency…), so it comes back if that changes.
+interface HintsState {
+  dismissed: string[];
+  dismiss: (id: string) => void;
+}
+
+export const useHintsStore = create<HintsState>()(
+  persist(
+    (set, get) => ({
+      dismissed: [],
+      dismiss: (id) => set({ dismissed: [...new Set([...get().dismissed, id])] }),
+    }),
+    { name: "finance-hints" },
+  ),
+);

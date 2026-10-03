@@ -36,6 +36,9 @@ s'ouvre tout seul sur l'application.
 | Fermer l'application | Double-clic sur **Arreter** |
 | Mettre à jour | Rien de spécial : **relancez Finance**, la dernière version est installée automatiquement |
 
+Inutile d'ouvrir Docker Desktop avant : **Finance le démarre tout seul** s'il n'est pas
+déjà lancé (comptez une minute de plus dans ce cas).
+
 L'adresse est toujours **http://127.0.0.1:3000** — vous pouvez la mettre en favori.
 
 ---

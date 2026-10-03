@@ -89,3 +89,58 @@ async def test_computed_balance_rejects_other_profiles_account(client, seed_data
         headers={"X-Profile-Id": str(extra_profile.id)},
     )
     assert res.status_code == 404
+
+
+# ── Base currency: decided by the first account, never by a hardcoded default ──
+async def _blank_profile(db_session):
+    """A profile with no account and no stored base currency (a fresh install)."""
+    from models import Profile
+    p = Profile(name="Nouveau", color="#6366f1", is_default=False, enabled_modules=["banking"])
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+    return p
+
+
+def _account(name: str, currency: str) -> dict:
+    return {"name": name, "bank_name": "Banque", "account_type": "courant", "currency": currency}
+
+
+@pytest.mark.asyncio
+async def test_first_account_sets_the_base_currency(client, db_session):
+    h = {"X-Profile-Id": str((await _blank_profile(db_session)).id)}
+
+    # Nothing stored yet: the API still answers with a currency, not a 404.
+    assert (await client.get("/api/settings", headers=h)).json()["base_currency"] == "EUR"
+
+    assert (await client.post("/api/accounts", json=_account("Courant", "USD"), headers=h)).status_code == 201
+    assert (await client.get("/api/settings", headers=h)).json()["base_currency"] == "USD"
+    assert (await client.get("/api/settings/base_currency", headers=h)).json()["value"] == "USD"
+
+    # A later account in another currency does not move it.
+    await client.post("/api/accounts", json=_account("Épargne", "CHF"), headers=h)
+    assert (await client.get("/api/settings", headers=h)).json()["base_currency"] == "USD"
+    assert (await client.get("/api/analytics/summary", headers=h)).json()["base_currency"] == "USD"
+
+
+@pytest.mark.asyncio
+async def test_creating_an_account_never_overwrites_a_chosen_base_currency(client, seed_data):
+    """seed_data stores EUR explicitly; a new CHF account must leave it alone."""
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    await client.post("/api/accounts", json=_account("Compte suisse", "CHF"), headers=h)
+    assert (await client.get("/api/settings", headers=h)).json()["base_currency"] == "EUR"
+
+
+@pytest.mark.asyncio
+async def test_profile_with_accounts_but_no_setting_reports_in_its_first_account_currency(client, db_session):
+    """A profile created before the setting was written must not fall back to an
+    arbitrary default while it has accounts that say otherwise."""
+    from models import Account, AccountType
+    p = await _blank_profile(db_session)
+    db_session.add(Account(profile_id=p.id, name="Ancien", bank_name="B",
+                           account_type=AccountType.courant, currency="GBP"))
+    await db_session.commit()
+
+    h = {"X-Profile-Id": str(p.id)}
+    assert (await client.get("/api/settings", headers=h)).json()["base_currency"] == "GBP"
+

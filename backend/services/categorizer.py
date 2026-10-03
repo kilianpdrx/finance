@@ -1,9 +1,27 @@
-"""Categorize a transaction description using user-defined rules."""
+"""Categorize a transaction description using user-defined rules.
+
+Rules have NO priority: they are all evaluated, and a transaction is classified
+only when every matching rule agrees on the category. When rules pointing to
+different categories match, nothing is assigned — the conflict is surfaced and
+the user edits a rule (or picks a category by hand).
+"""
 import re
-from typing import Optional, List
+from typing import NamedTuple, Optional, List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import CategoryRule
+
+
+class RuleEval(NamedTuple):
+    """Outcome of evaluating the whole ruleset against one transaction."""
+    category_id: Optional[int]   # set only when exactly ONE distinct category matches
+    source: Optional[str]        # "rule" when category_id is set, else None
+    category_ids: set            # every distinct category whose rules match
+    rule_ids: List[int]          # every matching rule, in id order
+
+    @property
+    def conflict(self) -> bool:
+        return len(self.category_ids) >= 2
 
 
 def evaluate_conditions(txn_data: dict, conditions: List[dict], logic_operator: str = "AND") -> bool:
@@ -53,6 +71,11 @@ def evaluate_conditions(txn_data: dict, conditions: List[dict], logic_operator: 
         if type(target) is str:
             if operator == 'contains':
                 matched = val in target
+            elif operator == 'not_contains':
+                matched = val not in target
+            elif operator == 'word':
+                # Whole word: "eau" must not fire on BEAUTE, "free" on FREELANCE.
+                matched = bool(val) and bool(re.search(r"(?<!\w)" + re.escape(val) + r"(?!\w)", target))
             elif operator == 'startswith':
                 matched = target.startswith(val)
             elif operator == 'equals':
@@ -84,17 +107,27 @@ def evaluate_conditions(txn_data: dict, conditions: List[dict], logic_operator: 
     return all(results) if logic_operator != "OR" else any(results)
 
 
+def rule_matches(rule: CategoryRule, txn_data: dict) -> bool:
+    """True when `rule` fires on this transaction: it has conditions, it is not
+    bound to another account, and its conditions hold."""
+    if not rule.conditions:
+        return False
+    if rule.account_id is not None and str(rule.account_id) != str(txn_data.get('account_id', '')):
+        return False
+    return evaluate_conditions(txn_data, rule.conditions, getattr(rule, 'logic_operator', 'AND') or 'AND')
+
+
 async def evaluate_rules_batch(
     txns_data: List[dict],
     db: AsyncSession,
     profile_id: Optional[int] = None,
-) -> List[tuple[Optional[int], Optional[str], set]]:
+) -> List[RuleEval]:
     """Evaluate all active rules against each transaction, querying rules once.
 
-    Returns one (category_id, source, matched_category_ids) tuple per transaction:
-      - category_id / source: the winning rule's category (highest priority), or None.
-      - matched_category_ids: the set of ALL distinct categories whose rules match —
-        len >= 2 means several categories apply (a conflict worth flagging)."""
+    Returns one `RuleEval` per transaction. Every rule is evaluated — there is no
+    ordering between them — and a category is assigned only when all the matching
+    rules agree. Two or more distinct categories is a conflict: `category_id`
+    stays None and `rule_ids` tells the caller which rules to show."""
     if not txns_data:
         return []
 
@@ -104,29 +137,23 @@ async def evaluate_rules_batch(
     result = await db.execute(
         select(CategoryRule)
         .where(*conds)
-        .order_by(CategoryRule.priority, CategoryRule.id)
+        .order_by(CategoryRule.id)
     )
     rules = result.scalars().all()
 
     out = []
     for txn_data in txns_data:
-        matched_category = None
-        matched_source = None
-        all_matches: set = set()
+        category_ids: set = set()
+        rule_ids: List[int] = []
         for rule in rules:
-            if not rule.conditions:
-                continue
-            if rule.account_id is not None and str(rule.account_id) != str(txn_data.get('account_id', '')):
-                continue
+            if rule_matches(rule, txn_data):
+                category_ids.add(rule.category_id)
+                rule_ids.append(rule.id)
 
-            logic_op = getattr(rule, 'logic_operator', 'AND') or 'AND'
-            if evaluate_conditions(txn_data, rule.conditions, logic_op):
-                all_matches.add(rule.category_id)
-                if matched_category is None:
-                    matched_category = rule.category_id
-                    matched_source = "rule"
-
-        out.append((matched_category, matched_source, all_matches))
+        if len(category_ids) == 1:
+            out.append(RuleEval(next(iter(category_ids)), "rule", category_ids, rule_ids))
+        else:
+            out.append(RuleEval(None, None, category_ids, rule_ids))
 
     return out
 
@@ -139,8 +166,9 @@ async def categorize_batch(
     """Categorize a list of transactions efficiently by querying active rules once.
 
     Returns one (category_id, source) tuple per input transaction, in order.
-    `source` is "rule" on a match, else None."""
-    return [(c, s) for c, s, _ in await evaluate_rules_batch(txns_data, db, profile_id)]
+    `source` is "rule" on a match, else None. A transaction whose matching rules
+    disagree on the category gets (None, None)."""
+    return [(e.category_id, e.source) for e in await evaluate_rules_batch(txns_data, db, profile_id)]
 
 
 async def conflict_flags_batch(
@@ -149,7 +177,7 @@ async def conflict_flags_batch(
     profile_id: Optional[int] = None,
 ) -> List[bool]:
     """True per transaction when >= 2 DISTINCT categories match (several apply)."""
-    return [len(m) >= 2 for _, _, m in await evaluate_rules_batch(txns_data, db, profile_id)]
+    return [e.conflict for e in await evaluate_rules_batch(txns_data, db, profile_id)]
 
 
 async def categorize(txn_data: dict, db: AsyncSession, profile_id: Optional[int] = None) -> tuple[Optional[int], Optional[str]]:

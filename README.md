@@ -15,7 +15,7 @@ budget, patrimoine, emprunts et investissements au même endroit.
 ## Installation
 
 **Vous voulez juste utiliser l'application** → téléchargez `finance-app.zip` depuis la
-page **[Releases](../../releases/latest)**, décompressez, double-cliquez sur *Finance*.
+page **[Releases](https://github.com/kilianpdrx/finance/releases/latest)**, décompressez, double-cliquez sur *Finance*.
 Il faut simplement [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 installé. Le détail est dans le `README.md` fourni.
 
@@ -82,7 +82,7 @@ TypeScript, Next.js 15, React 19, TanStack Query, Tailwind, Recharts · Docker.
 
 ```bash
 ./start.sh                                  # API + interface en mode dev
-cd backend && python -m pytest              # 235 tests
+cd backend && python -m pytest              # 259 tests
 cd web && npx tsc --noEmit && npx vitest run
 cd web && npm run test:e2e                  # Playwright : démarre sa propre pile
 ```

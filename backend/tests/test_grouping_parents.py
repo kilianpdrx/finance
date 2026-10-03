@@ -49,7 +49,7 @@ async def test_rule_repointed_to_autre_when_parent_created(
     parent = seed_data["cat_courses"]  # Alimentation
 
     rule = CategoryRule(
-        profile_id=pid, category_id=parent.id, priority=100, is_active=True, logic_operator="AND",
+        profile_id=pid, category_id=parent.id, is_active=True, logic_operator="AND",
         conditions=[{"field": "description", "operator": "contains", "value": "CARREFOUR"}],
     )
     db_session.add(rule)

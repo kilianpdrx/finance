@@ -18,7 +18,7 @@ async def test_archive_cascades_and_deactivates_rules(
     child = (await client.post("/api/categories", headers=h, json={"name": "Restaurants", "parent_id": parent.id})).json()
 
     # A rule targeting the child.
-    rule = CategoryRule(profile_id=pid, category_id=child["id"], priority=100, is_active=True,
+    rule = CategoryRule(profile_id=pid, category_id=child["id"], is_active=True,
                         logic_operator="AND", conditions=[{"field": "description", "operator": "contains", "value": "RESTO"}])
     db_session.add(rule)
     await db_session.commit()
@@ -56,7 +56,7 @@ async def test_rule_cannot_target_archived_category(
 
     r = await client.post(f"/api/categories/{cat.id}/rules", headers=h,
                           json={"conditions": [{"field": "description", "operator": "contains", "value": "X"}],
-                                "category_id": cat.id, "priority": 100, "is_active": True, "logic_operator": "AND"})
+                                "category_id": cat.id, "is_active": True, "logic_operator": "AND"})
     assert r.status_code == 400
 
 
@@ -71,7 +71,7 @@ async def test_rescan_scope_preserves_categorised(
     txn = Transaction(profile_id=pid, account_id=acc.id, date=date(2025, 1, 1), description="CARREFOUR",
                       amount_cents=1000, is_debit=True, import_hash="resc-1", category_id=cat.id)
     db_session.add(txn)
-    db_session.add(CategoryRule(profile_id=pid, category_id=seed_data["cat_salaire"].id, priority=100,
+    db_session.add(CategoryRule(profile_id=pid, category_id=seed_data["cat_salaire"].id,
                                 is_active=True, logic_operator="AND",
                                 conditions=[{"field": "description", "operator": "contains", "value": "CARREFOUR"}]))
     await db_session.commit()
@@ -99,7 +99,7 @@ async def test_rescan_fills_uncategorized(
     db_session.add(Transaction(profile_id=pid, account_id=acc.id, date=date(2025, 3, 1),
                                description="CARREFOUR MARKET", amount_cents=2000, is_debit=True,
                                import_hash="resc-fill", category_id=None))
-    db_session.add(CategoryRule(profile_id=pid, category_id=target.id, priority=100,
+    db_session.add(CategoryRule(profile_id=pid, category_id=target.id,
                                 is_active=True, logic_operator="AND",
                                 conditions=[{"field": "description", "operator": "contains", "value": "CARREFOUR"}]))
     await db_session.commit()

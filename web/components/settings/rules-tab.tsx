@@ -14,6 +14,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { RuleDialog } from "@/components/settings/rule-dialog";
 import { RuleTester } from "@/components/settings/rule-tester";
 import { ArchivedBadge } from "@/components/transactions/category-select";
+import { ruleSummary } from "@/lib/rules";
 
 export function RulesTab({ accounts }: { accounts: Account[] }) {
   const { data: rules = [] } = useAllRules();
@@ -94,7 +95,7 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          {search.trim() ? `${filteredRules.length} / ${rules.length}` : rules.length} règles · triées par priorité. Les règles s&apos;appliquent à l&apos;import ou via « Réappliquer ».
+          {search.trim() ? `${filteredRules.length} / ${rules.length}` : rules.length} règles, sans priorité entre elles : si deux règles désignent des catégories différentes, la transaction reste sans catégorie. Elles s&apos;appliquent à l&apos;import ou via « Réappliquer ».
         </p>
         <div className="flex gap-2">
           <div className="relative">
@@ -128,7 +129,7 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
         </div>
       </div>
 
-      <RuleTester />
+      <RuleTester onEditRule={(id) => { const r = rules.find((x) => x.id === id); if (r) openEdit(r); }} />
 
       <div className="space-y-5">
         {groups.map((g) => (
@@ -141,8 +142,8 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
                   <span className="size-2.5 shrink-0 rounded-full" style={{ background: catColor(r.category_id) }} />
                   <span className="w-40 shrink-0 truncate text-sm font-medium">{catName(r.category_id)}</span>
                   {catArchived(r.category_id) && <ArchivedBadge className="shrink-0" />}
-                  <span className="flex-1 truncate font-mono text-xs text-muted-foreground">
-                    {r.conditions.map((c) => `${c.field} ${c.operator} "${c.value}"`).join(` ${r.logic_operator} `)}
+                  <span className="flex-1 truncate text-xs text-muted-foreground" title={ruleSummary(r)}>
+                    {ruleSummary(r)}
                   </span>
                   <Switch checked={r.is_active} onCheckedChange={(v) => update.mutate({ ruleId: r.id, body: { is_active: v } })} />
                   <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label="Modifier la règle" onClick={() => openEdit(r)}><Pencil className="size-4" /></Button>

@@ -7,8 +7,8 @@ Ce projet a **deux publics**. Choisissez la section qui vous concerne.
 # 1. Vous voulez juste utiliser l'application
 
 **Ne clonez pas ce dépôt.** Téléchargez le fichier `finance-app.zip` de la dernière
-version depuis la page **Releases** du projet, décompressez-le, et suivez le
-`README.md` qu'il contient.
+version depuis la page **[Releases](https://github.com/kilianpdrx/finance/releases/latest)**
+du projet, décompressez-le, et suivez le `README.md` qu'il contient.
 
 Il tient en trois étapes :
 
@@ -28,14 +28,27 @@ automatiquement au démarrage — il n'y a rien d'autre à faire.
 
 ### Prérequis
 - **Python 3.11+** et **Node.js 20+**
-- (optionnel) conda — `start.sh` active un environnement nommé `finenv` s'il existe
+- (recommandé) un environnement Python dédié. `start.sh` installe les dépendances
+  (`backend/requirements-dev.txt`) dans l'environnement actif : sans environnement
+  dédié, elles vont dans votre Python global.
+
+`start.sh` active tout seul un environnement conda nommé `finenv` s'il existe. Pour le
+créer, une seule fois :
+```bash
+conda create -n finenv python=3.11
+```
+Sans conda, un venv fait la même chose — activez-le avant de lancer `start.sh` :
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+```
 
 ### Lancer en développement
 ```bash
 ./start.sh
 ```
-Démarre l'API sur `127.0.0.1:8000` (avec `--reload`) et l'interface sur
-`127.0.0.1:3000`. `MODE=prod ./start.sh` fait un build de production.
+Installe les dépendances Python et Node, puis démarre l'API sur `127.0.0.1:8000` (avec
+`--reload`) et l'interface sur `127.0.0.1:3000`. `MODE=prod ./start.sh` fait un build de
+production.
 
 ### Lancer la version conteneurisée depuis les sources
 ```bash
@@ -45,7 +58,7 @@ Construit les images localement et sert l'application sur http://127.0.0.1:3000.
 
 ### Tests
 ```bash
-cd backend && python -m pytest        # 235 tests
+cd backend && python -m pytest        # 259 tests
 cd web && npx tsc --noEmit && npx vitest run
 cd web && npm run test:e2e            # Playwright — démarre sa propre pile isolée
 ```

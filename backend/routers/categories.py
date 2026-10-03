@@ -348,14 +348,19 @@ async def delete_category(category_id: int, replace_with_id: Optional[int] = Non
 @router.post("/rescan", status_code=200)
 async def rescan_categories(
     scope: str = "uncategorized",
+    dry_run: bool = False,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
     """Re-apply active rules. `scope="uncategorized"` (default) only fills in
     transactions that have no category yet — it never rewrites already-categorised
     history (the ledger stays intact). `scope="all"` re-applies to every
-    non-manually-reviewed transaction and may change past categorisations."""
-    from services.categorizer import categorize_batch
+    non-manually-reviewed transaction and may change past categorisations.
+
+    A transaction whose matching rules disagree is never written, whatever the
+    scope: it is counted in `conflicts` and keeps the category it has.
+    `dry_run=true` returns the same counts without writing anything."""
+    from services.categorizer import evaluate_rules_batch
 
     filters = [Transaction.is_manually_reviewed == False, Transaction.profile_id == pid]  # noqa: E712
     if scope != "all":
@@ -363,8 +368,8 @@ async def rescan_categories(
     result = await db.execute(select(Transaction).where(*filters))
     transactions = result.scalars().all()
 
-    # Evaluate the ruleset ONCE for every transaction (categorize_batch loads the
-    # rules a single time) instead of re-querying rules per row.
+    # Evaluate the ruleset ONCE for every transaction (the rules are loaded a
+    # single time) instead of re-querying rules per row.
     txn_dicts = [
         {
             "description": txn.description,
@@ -376,16 +381,22 @@ async def rescan_categories(
         }
         for txn in transactions
     ]
-    cat_results = await categorize_batch(txn_dicts, db, pid)
+    evals = await evaluate_rules_batch(txn_dicts, db, pid)
 
     updated = 0
-    for txn, (new_cat_id, _) in zip(transactions, cat_results):
-        if new_cat_id != txn.category_id:
-            txn.category_id = new_cat_id
+    conflicts = 0
+    for txn, ev in zip(transactions, evals):
+        if ev.conflict:
+            conflicts += 1
+            continue
+        if ev.category_id != txn.category_id:
+            if not dry_run:
+                txn.category_id = ev.category_id
             updated += 1
 
-    await db.commit()
-    return {"updated": updated, "total": len(transactions)}
+    if not dry_run:
+        await db.commit()
+    return {"updated": updated, "total": len(transactions), "conflicts": conflicts}
 
 
 # ── Rule Preview ─────────────────────────────────────────────────────────────
@@ -411,16 +422,16 @@ async def test_rules(
 ):
     """Answer "which rule would classify this?" for a typed description.
 
-    Rules are evaluated by ascending priority and the FIRST match wins, so when
-    several match the losers are invisible in the UI — which is exactly what makes
-    a mis-ordered rule impossible to diagnose by staring at the list. Returns the
-    winner AND every other match, in evaluation order.
+    Rules have no order: a description is classified only when every matching
+    rule agrees on the category. Returns every match, and `conflict=True` (with
+    `matched=None`) when they point to different categories — the transaction
+    would then stay uncategorised until one of those rules is edited.
     """
     from models import CategoryRule as Rule
 
     rules = (await db.execute(
         select(Rule).where(Rule.profile_id == pid, Rule.is_active == True)  # noqa: E712
-        .order_by(Rule.priority, Rule.id)
+        .order_by(Rule.id)
     )).scalars().all()
 
     cat_names = {
@@ -462,7 +473,6 @@ async def test_rules(
         if evaluate_conditions(txn, r.conditions, r.logic_operator or "AND"):
             matches.append({
                 "rule_id": r.id,
-                "priority": r.priority,
                 "category_id": r.category_id,
                 "category_name": cat_names.get(r.category_id, f"#{r.category_id}"),
                 "logic_operator": r.logic_operator or "AND",
@@ -474,8 +484,10 @@ async def test_rules(
                 "account_scoped_unverified": scoped_elsewhere,
             })
 
+    conflict = len({m["category_id"] for m in matches}) >= 2
     return {
-        "matched": matches[0] if matches else None,
+        "matched": matches[0] if matches and not conflict else None,
+        "conflict": conflict,
         "all_matches": matches,
         "rules_evaluated": len(rules),
     }
@@ -546,7 +558,7 @@ async def preview_rule(
 
 @router.get("/rules/all", response_model=List[CategoryRuleOut])
 async def list_all_rules(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
-    result = await db.execute(select(CategoryRule).where(CategoryRule.profile_id == pid).order_by(CategoryRule.priority, CategoryRule.id))
+    result = await db.execute(select(CategoryRule).where(CategoryRule.profile_id == pid).order_by(CategoryRule.id))
     return result.scalars().all()
 
 
@@ -555,7 +567,7 @@ async def list_rules(category_id: int, db: AsyncSession = Depends(get_db), pid: 
     result = await db.execute(
         select(CategoryRule)
         .where(CategoryRule.category_id == category_id, CategoryRule.profile_id == pid)
-        .order_by(CategoryRule.priority)
+        .order_by(CategoryRule.id)
     )
     return result.scalars().all()
 
@@ -610,7 +622,7 @@ class MergeRulesRequest(BaseModel):
 
 @router.post("/rules/merge", response_model=CategoryRuleOut)
 async def merge_rules(payload: MergeRulesRequest, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
-    """Merge multiple rules into one. All conditions are combined. Uses the first rule's category/priority/account."""
+    """Merge multiple rules into one. All conditions are combined. Uses the oldest rule's category/account."""
     if len(payload.rule_ids) < 2:
         raise HTTPException(status_code=400, detail="At least 2 rules required to merge")
 
@@ -622,7 +634,7 @@ async def merge_rules(payload: MergeRulesRequest, db: AsyncSession = Depends(get
         raise HTTPException(status_code=404, detail="One or more rules not found")
 
     # Use the first rule as base
-    first = sorted(rules, key=lambda r: (r.priority, r.id))[0]
+    first = min(rules, key=lambda r: r.id)
 
     # Combine all conditions
     all_conditions = []
@@ -643,7 +655,6 @@ async def merge_rules(payload: MergeRulesRequest, db: AsyncSession = Depends(get
     merged = CategoryRule(
         conditions=unique_conditions,
         category_id=first.category_id,
-        priority=first.priority,
         is_active=True,
         account_id=first.account_id,
         logic_operator=payload.logic_operator,

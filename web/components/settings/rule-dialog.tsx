@@ -9,31 +9,16 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api, unwrap } from "@/lib/api/client";
-import { useCategories, useRuleMutations, useCategoryMutations, type CategoryRule, type Account, type Transaction } from "@/lib/api/hooks";
+import { useCategories, useRuleMutations, useCategoryMutations, previewRescan, type CategoryRule, type Account, type Transaction } from "@/lib/api/hooks";
 import { formatCents } from "@/lib/format";
+import { RULE_FIELDS, operatorsFor, type RuleCondition } from "@/lib/rules";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { CategorySelect } from "@/components/transactions/category-select";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 
-export const FIELDS = [
-  { value: "description", label: "Libellé" },
-  { value: "amount", label: "Montant" },
-  { value: "is_debit", label: "Débit ?" },
-  { value: "currency", label: "Devise" },
-  { value: "account_id", label: "Compte (ID)" },
-  { value: "date", label: "Date" },
-];
-// All rules share the same priority — kept as a constant for the API.
-const DEFAULT_PRIORITY = 100;
-
-export function operatorsFor(field: string) {
-  if (field === "amount") return [{ value: ">", label: ">" }, { value: ">=", label: "≥" }, { value: "<", label: "<" }, { value: "<=", label: "≤" }, { value: "equals", label: "=" }];
-  if (field === "is_debit") return [{ value: "equals", label: "est (true/false)" }];
-  return [{ value: "contains", label: "contient" }, { value: "startswith", label: "commence par" }, { value: "equals", label: "égal à" }, { value: "regex", label: "regex" }];
-}
-
-type Cond = { field: string; operator: string; value: string };
+type Cond = RuleCondition;
 
 /** The full categorization-rule editor: conditions builder + live "Tester"
  *  preview. Reused for creating/editing rules and for turning a recurring
@@ -54,6 +39,7 @@ export function RuleDialog({
   const { data: categories = [] } = useCategories();
   const { create, update } = useRuleMutations();
   const { rescan } = useCategoryMutations();
+  const confirm = useConfirm();
 
   const [conditions, setConditions] = useState<Cond[]>([{ field: "description", operator: "contains", value: "" }]);
   const [logic, setLogic] = useState<"AND" | "OR">("AND");
@@ -81,9 +67,32 @@ export function RuleDialog({
 
   const reapply = () =>
     rescan.mutate(undefined, {
-      onSuccess: (r) => toast.success(`${(r as { updated: number }).updated} transaction(s) recatégorisée(s)`),
+      onSuccess: (r) => toast.success(`${(r as { updated: number }).updated} transaction(s) catégorisée(s)`),
       onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur"),
     });
+
+  // A saved rule changes nothing until it is applied, which used to be a toast
+  // button that vanished after a few seconds. Say what applying would do, and
+  // ask. Only uncategorised transactions are ever filled — history stays as is.
+  const offerToApply = async (saved: string) => {
+    let preview;
+    try { preview = await previewRescan(); }
+    catch { toast.success(saved); return; }
+    const conflicts = preview.conflicts > 0
+      ? ` ${preview.conflicts} autre(s) correspondent à des règles de catégories différentes et restent sans catégorie — le badge « conflit » dans Transactions montre lesquelles.`
+      : "";
+    if (preview.updated === 0) {
+      toast.success(saved, { description: `Aucune transaction sans catégorie à classer.${conflicts}` });
+      return;
+    }
+    const ok = await confirm({
+      title: saved,
+      description: `${preview.updated} transaction(s) sans catégorie peuvent maintenant être classées par vos règles.${conflicts} Les transactions déjà classées ne sont pas modifiées.`,
+      confirmLabel: "Appliquer",
+      cancelLabel: "Plus tard",
+    });
+    if (ok) reapply();
+  };
 
   const runPreview = async () => {
     try {
@@ -96,15 +105,13 @@ export function RuleDialog({
   };
 
   const submit = async () => {
-    const body = { conditions, category_id: categoryId, priority: DEFAULT_PRIORITY, is_active: editing?.is_active ?? true, account_id: accountId, logic_operator: logic };
+    const body = { conditions, category_id: categoryId, is_active: editing?.is_active ?? true, account_id: accountId, logic_operator: logic };
     try {
       if (editing) await update.mutateAsync({ ruleId: editing.id, body });
       else await create.mutateAsync({ categoryId, body });
-      onOpenChange(false);
-      toast.success(editing ? "Règle mise à jour" : "Règle créée", {
-        action: { label: "Appliquer", onClick: reapply },
-      });
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Erreur"); }
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Erreur"); return; }
+    onOpenChange(false);
+    await offerToApply(editing ? "Règle mise à jour" : "Règle créée");
   };
 
   return (
@@ -141,7 +148,7 @@ export function RuleDialog({
               <div key={idx} className="flex items-center gap-2">
                 <Select value={cond.field} onValueChange={(v) => setConditions((cs) => cs.map((c, i) => i === idx ? { ...c, field: v, operator: operatorsFor(v)[0].value } : c))}>
                   <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-                  <SelectContent>{FIELDS.map((f) => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}</SelectContent>
+                  <SelectContent>{RULE_FIELDS.map((f) => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}</SelectContent>
                 </Select>
                 <Select value={cond.operator} onValueChange={(v) => setConditions((cs) => cs.map((c, i) => i === idx ? { ...c, operator: v } : c))}>
                   <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>

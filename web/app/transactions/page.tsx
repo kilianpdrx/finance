@@ -19,10 +19,11 @@ import { AccountTile } from "@/components/accounts/account-select";
 import { ACCOUNT_TYPE_LABELS } from "@/components/accounts/account-dialog";
 import { TransactionDialog } from "@/components/transactions/transaction-dialog";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
+import { RuleDialog } from "@/components/settings/rule-dialog";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   useAllAccounts, useCategories, useTransactionMeta, useTransactions, useTransactionCount, useTransactionStats, useTransactionMutations,
-  fetchTransactionIds, type TransactionFilters, type Transaction, type Account, type Category,
+  fetchTransactionIds, type TransactionFilters, type Transaction, type Account, type Category, type CategoryRule,
 } from "@/lib/api/hooks";
 import { orderCategoryTree } from "@/lib/group";
 import { formatCents } from "@/lib/format";
@@ -59,6 +60,7 @@ export default function TransactionsPage() {
   const [editing, setEditing] = useState<Transaction | null>(null);
   const openCreate = () => { setEditing(null); setDialogOpen(true); };
   const openEdit = (t: Transaction) => { setEditing(t); setDialogOpen(true); };
+  const [editingRule, setEditingRule] = useState<CategoryRule | null>(null);
 
   const isSentinel = (c: string) => c === ALL || c === UNCAT || c === CATEGORIZED;
   const filters: TransactionFilters = useMemo(() => ({
@@ -240,7 +242,7 @@ export default function TransactionsPage() {
                       {t.is_internal_transfer && <span className="rounded bg-info/12 px-1 text-info">virement</span>}
                       {t.is_manually_reviewed && <span className="rounded bg-positive/12 px-1 text-positive">vérifié</span>}
                       {t.is_manually_edited && <span className="rounded bg-warning/15 px-1 text-warning" title="Transaction modifiée manuellement">modifié</span>}
-                      {t.category_conflict && <ConflictBadge categories={t.conflict_categories} />}
+                      {t.category_conflict && <ConflictBadge categories={t.conflict_categories} ruleIds={t.conflict_rule_ids} onEditRule={setEditingRule} />}
                     </p>
                   </TableCell>
                   <TableCell>
@@ -288,6 +290,9 @@ export default function TransactionsPage() {
       </div>
 
       <TransactionDialog open={dialogOpen} onOpenChange={(v) => { setDialogOpen(v); if (!v) setEditing(null); }} transaction={editing} />
+      {/* Opened from a « conflit » badge: rules have no priority, so a conflict is
+          settled by editing one of the rules involved. */}
+      <RuleDialog open={editingRule !== null} onOpenChange={(v) => !v && setEditingRule(null)} accounts={allAccounts} editing={editingRule} />
     </div>
   );
 }

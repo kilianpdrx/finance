@@ -115,51 +115,96 @@ async def test_orm_created_profile_has_modules(db_session):
     assert p.enabled_modules  # not None, not empty
 
 
-@pytest.mark.asyncio
-async def test_seeded_rules_are_grouped_with_or_logic(db_session):
-    """Keywords are merged per (category, priority) into OR rules. With AND a
-    description would have to contain every keyword at once — i.e. never match."""
+async def _seeded_profile(db_session) -> Profile:
     profile = Profile(name="Principal", color="#6366f1", is_default=True)
     db_session.add(profile)
     await db_session.commit()
     await db_session.refresh(profile)
     await seed_if_empty(db_session, profile.id)
+    return profile
+
+
+def _txn(description: str, is_debit: bool = True) -> dict:
+    return {"description": description, "amount_cents": 1000, "date": "2026-07-01",
+            "is_debit": is_debit, "currency": "EUR", "account_id": 1}
+
+
+@pytest.mark.asyncio
+async def test_seeded_rules_keep_every_condition(db_session):
+    """One rule per DEFAULT_RULES entry. Keyword lists are OR-ed — with AND a
+    description would have to contain every keyword at once, i.e. never match —
+    and the explicit `all` entries are AND-ed."""
+    await _seeded_profile(db_session)
 
     rules = (await db_session.execute(select(CategoryRule))).scalars().all()
     assert len(rules) == len(DEFAULT_RULES)
-    assert all(r.logic_operator == "OR" for r in rules)
+    assert {r.logic_operator for r in rules} == {"OR", "AND"}
     # Grouping is the point: at least one rule must carry several keywords.
-    assert max(len(r.conditions) for r in rules) > 1
-    # Every keyword survived the merge.
-    seeded = sum(len(r.conditions) for r in rules)
-    assert seeded == sum(len(g["keywords"]) for g in DEFAULT_RULES)
+    assert max(len(r.conditions) for r in rules if r.logic_operator == "OR") > 1
+    # Every condition survived.
+    expected = sum(
+        len(g["all"]) if "all" in g else len(g.get("keywords", [])) + len(g.get("words", []))
+        for g in DEFAULT_RULES
+    )
+    assert sum(len(r.conditions) for r in rules) == expected
 
 
 @pytest.mark.asyncio
-async def test_priority_tiebreaks_survive_the_merge(db_session):
-    """The priority numbers encode deliberate cross-category tie-breaks. Flattening
-    each category into a single rule would silently break these."""
-    from services.categorizer import categorize
+async def test_default_rules_never_conflict_with_each_other(db_session):
+    """Rules have no priority, so two defaults matching the same label would leave
+    it uncategorised on a brand-new install. Every default keyword, used as a
+    label, must classify into exactly one category: its own."""
+    from services.categorizer import evaluate_rules_batch
 
-    profile = Profile(name="Principal", color="#6366f1", is_default=True)
-    db_session.add(profile)
-    await db_session.commit()
-    await db_session.refresh(profile)
-    await seed_if_empty(db_session, profile.id)
-
+    profile = await _seeded_profile(db_session)
     names = {c.id: c.name for c in (await db_session.execute(select(Category))).scalars().all()}
 
-    async def classify(description: str):
-        cat_id, _ = await categorize(
-            {"description": description, "amount_cents": 1000, "date": "2026-07-01",
-             "is_debit": True, "currency": "EUR", "account_id": 1},
-            db_session, profile.id,
-        )
+    probes = []  # (label, expected category, txn)
+    for entry in DEFAULT_RULES:
+        if "all" in entry:
+            label = next(v for f, op, v in entry["all"] if f == "description" and op in ("contains", "word"))
+            is_debit = ("is_debit", "equals", "false") not in entry["all"]
+            probes.append((label, entry["category"], _txn(label.upper(), is_debit)))
+        else:
+            for label in entry.get("keywords", []) + entry.get("words", []):
+                probes.append((label, entry["category"], _txn(label.upper())))
+
+    evals = await evaluate_rules_batch([t for _, _, t in probes], db_session, profile.id)
+    wrong = {
+        label: sorted(names[c] for c in ev.category_ids)
+        for (label, expected, _), ev in zip(probes, evals)
+        if {names[c] for c in ev.category_ids} != {expected}
+    }
+    assert wrong == {}
+
+
+@pytest.mark.asyncio
+async def test_default_rules_tell_similar_labels_apart(db_session):
+    """What priority used to settle is now settled by the rules themselves:
+    exclusions for a brand contained in a longer one, whole-word matching for
+    keywords short enough to hide inside other words."""
+    from services.categorizer import categorize
+
+    profile = await _seeded_profile(db_session)
+    names = {c.id: c.name for c in (await db_session.execute(select(Category))).scalars().all()}
+
+    async def classify(description: str, is_debit: bool = True):
+        cat_id, _ = await categorize(_txn(description, is_debit), db_session, profile.id)
         return names.get(cat_id)
 
-    # "amazon prime" (45) must win over "amazon" (50, Shopping).
+    # A brand contained in a longer one.
     assert await classify("PAIEMENT CB AMAZON PRIME VIDEO") == "Abonnements"
     assert await classify("ACHAT AMAZON.FR") == "Shopping"
-    # Vague keywords are deliberately late so they can't hijack a better match.
-    assert await classify("SALLE DE SPORT BASIC FIT") == "Loisirs"
     assert await classify("UBER EATS COMMANDE") == "Restaurants"
+    assert await classify("UBER TRIP PARIS") == "Transport"
+    assert await classify("COTISATION MUTUELLE") == "Santé"
+    assert await classify("COTISATION CARTE") == "Banque & Finances"
+    # Short keywords only as whole words.
+    assert await classify("SALLE DE SPORT BASIC FIT") == "Loisirs"
+    assert await classify("TRANSPORTS RATP") == "Transport"      # not "sport"
+    assert await classify("FREE MOBILE") == "Abonnements"
+    assert await classify("MISSION FREELANCE") is None           # not "free"
+    assert await classify("INSTITUT BEAUTE") is None             # not "eau"
+    # "prime" is income only as a whole word on a credit.
+    assert await classify("PRIME EXCEPTIONNELLE", is_debit=False) == "Revenus"
+    assert await classify("PRIMEUR DU MARCHE") is None

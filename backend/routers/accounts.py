@@ -9,6 +9,7 @@ from schemas import (
     AccountCreate, AccountUpdate, AccountOut,
     AccountBalanceSnapshotCreate, AccountBalanceSnapshotOut,
 )
+from services.base_currency import adopt_base_currency
 from sqlalchemy.orm import selectinload
 
 router = APIRouter()
@@ -56,6 +57,9 @@ async def create_account(payload: AccountCreate, db: AsyncSession = Depends(get_
     if payload.loan_details:
         loan = LoanDetails(**payload.loan_details.model_dump(exclude_none=True), account_id=account.id)
         db.add(loan)
+    # The first account decides the currency the profile reports in (it stays
+    # editable in Paramètres). No-op once a base currency is stored.
+    await adopt_base_currency(db, pid, account.currency)
     await db.commit()
     result = await db.execute(
         select(Account)

@@ -44,18 +44,20 @@ async def create_profile(body: ProfileCreate, db: AsyncSession = Depends(get_db)
     from seed import seed_if_empty
     await seed_if_empty(db, p.id)
 
-    # Inherit the household's base currency. Without a settings row the reader falls
-    # back to a hardcoded "CHF" (`analytics._get_base_currency`), so a new profile
-    # would silently report a different currency from every other one.
+    # Inherit the household's base currency, so a new profile doesn't silently
+    # report in a different currency from every other one. If the household has
+    # none yet (no account created so far), leave it unset: the profile's first
+    # account will decide (`services.base_currency`).
     default_ccy = (await db.execute(text(
         "SELECT s.value FROM settings s JOIN profiles pr ON pr.id = s.profile_id"
         " WHERE s.key = 'base_currency' AND pr.is_default = 1 LIMIT 1"
-    ))).scalar() or "CHF"
-    await db.execute(text(
-        "INSERT OR IGNORE INTO settings (profile_id, key, value)"
-        " VALUES (:p, 'base_currency', :c)"
-    ), {"p": p.id, "c": default_ccy})
-    await db.commit()
+    ))).scalar()
+    if default_ccy:
+        await db.execute(text(
+            "INSERT OR IGNORE INTO settings (profile_id, key, value)"
+            " VALUES (:p, 'base_currency', :c)"
+        ), {"p": p.id, "c": default_ccy})
+        await db.commit()
 
     return p
 

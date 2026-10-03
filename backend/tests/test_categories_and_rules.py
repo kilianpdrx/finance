@@ -75,7 +75,7 @@ async def test_create_rule_and_preview(client: AsyncClient, seed_data: dict, cat
     res_rule = await client.post(
         f"/api/categories/{cat.id}/rules",
         headers={"X-Profile-Id": str(profile.id)},
-        json={"conditions": conditions, "priority": 10, "logic_operator": "AND", "category_id": cat.id}
+        json={"conditions": conditions, "logic_operator": "AND", "category_id": cat.id}
     )
     assert res_rule.status_code == 201
 
@@ -90,7 +90,6 @@ async def test_rescan(client: AsyncClient, seed_data: dict, cat_data: dict):
         headers={"X-Profile-Id": str(profile.id)},
         json={
             "conditions": [{"field": "description", "operator": "contains", "value": "sncf"}],
-            "priority": 10,
             "category_id": cat.id
         }
     )

@@ -362,7 +362,8 @@ export default function AnalysesPage() {
                           <TableRow key={t.id}>
                             <TableCell className="nums whitespace-nowrap text-xs text-muted-foreground">{format(new Date(t.date), "dd MMM yy", { locale: fr })}</TableCell>
                             <TableCell className="w-full max-w-0"><span className="line-clamp-1" title={t.description}>{t.description}</span></TableCell>
-                            <TableCell className="nums blurable text-right font-semibold">{formatCents(t.amount_cents, currency)}</TableCell>
+                            {/* A raw transaction amount is in its account's currency, not the base one. */}
+                            <TableCell className="nums blurable text-right font-semibold">{formatCents(t.amount_cents, t.currency)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -417,21 +418,21 @@ export default function AnalysesPage() {
           {recurring.isLoading ? <Card className="p-4"><Skeleton className="h-64 w-full" /></Card> : !recurring.data?.length ? (
             <Card><EmptyState icon={Inbox} title="Aucune transaction récurrente détectée" /></Card>
           ) : (
-            <RecurringTable rows={recurring.data} currency={currency} catName={catName}
-              onCreateRule={(r) => setRulePrefill({ description: r.description, categoryId: r.category_id })} />
+            <RecurringTable rows={recurring.data} catName={catName}
+              onCreateRule={(r) => setRulePrefill({ description: r.rule_pattern, categoryId: r.category_id })} />
           )}
         </TabsContent>
 
         {/* ── Sans règle (recurring expenses no rule matches) ─────────── */}
         <TabsContent value="uncovered" className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Dépenses récurrentes qu&apos;aucune règle automatique ne couvre — créez une règle pour les classer à l&apos;avenir.
+            Dépenses récurrentes qu&apos;aucune règle automatique ne couvre — créez une règle pour les classer, maintenant et à l&apos;avenir.
           </p>
           {uncovered.isLoading ? <Card className="p-4"><Skeleton className="h-64 w-full" /></Card> : !uncovered.data?.length ? (
             <Card><EmptyState icon={Inbox} title="Toutes les dépenses récurrentes sont couvertes par une règle 🎉" /></Card>
           ) : (
-            <RecurringTable rows={uncovered.data} currency={currency} catName={catName}
-              onCreateRule={(r) => setRulePrefill({ description: r.description, categoryId: r.category_id })} />
+            <RecurringTable rows={uncovered.data} catName={catName}
+              onCreateRule={(r) => setRulePrefill({ description: r.rule_pattern, categoryId: r.category_id })} />
           )}
         </TabsContent>
 
@@ -442,8 +443,11 @@ export default function AnalysesPage() {
   );
 }
 
-function RecurringTable({ rows, currency, catName, onCreateRule }: {
-  rows: RecurringTransaction[]; currency: string; catName: (id: number | null) => string;
+/** Amounts are each group's own average in its own currency (a group never
+ *  mixes two), and "Règle" prefills `rule_pattern` — a fragment found in every
+ *  real label of the group, unlike the cleaned-up keyword shown as description. */
+function RecurringTable({ rows, catName, onCreateRule }: {
+  rows: RecurringTransaction[]; catName: (id: number | null) => string;
   onCreateRule: (r: RecurringTransaction) => void;
 }) {
   return (
@@ -456,7 +460,7 @@ function RecurringTable({ rows, currency, catName, onCreateRule }: {
               <TableCell className="max-w-xs"><span className="line-clamp-1 font-medium">{r.description}</span></TableCell>
               <TableCell className="text-muted-foreground">{catName(r.category_id)}</TableCell>
               <TableCell className="nums text-right">{r.occurrences}×</TableCell>
-              <TableCell className="nums blurable text-right font-semibold">{formatCents(r.avg_amount_cents, currency)}</TableCell>
+              <TableCell className="nums blurable text-right font-semibold">{formatCents(r.avg_amount_cents, r.currency)}</TableCell>
               <TableCell className="nums text-right text-muted-foreground">{r.last_date}</TableCell>
               <TableCell className="pr-2 text-right">
                 <Button variant="ghost" size="sm" className="gap-1.5 opacity-0 transition-opacity group-hover:opacity-100"

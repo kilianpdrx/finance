@@ -1,6 +1,6 @@
 "use client";
 
-import { Landmark, TrendingUp, TrendingDown, Scale, PieChart as PieIcon, Inbox, Upload, Wallet, Table2, ArrowRight, AlertTriangle } from "lucide-react";
+import { Landmark, TrendingUp, TrendingDown, Scale, PieChart as PieIcon, Inbox, Upload, Wallet, Table2, ArrowRight, AlertTriangle, Info, X } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -24,9 +24,11 @@ import {
   useByCategory,
   useNetWorth,
   useActiveProfile,
+  useSettings,
 } from "@/lib/api/hooks";
 import { patrimoineByType } from "@/lib/networth";
 import { DEFAULT_MODULES } from "@/lib/nav";
+import { useHintsStore } from "@/lib/stores";
 
 const fade = {
   hidden: { opacity: 0, y: 12 },
@@ -40,6 +42,8 @@ export default function DashboardPage() {
   const byCategory = useByCategory(query);
   const netWorth = useNetWorth(query);
   const activeProfile = useActiveProfile();
+  const baseCurrency = useSettings().data?.base_currency;
+  const { dismissed: dismissedHints, dismiss: dismissHint } = useHintsStore();
   const modules = activeProfile?.enabled_modules ?? DEFAULT_MODULES;
   const showGoals = modules.includes("goals");
   const showLoans = modules.includes("loans");
@@ -58,6 +62,17 @@ export default function DashboardPage() {
   if (accountsLoaded && accounts.length === 0) {
     return <GettingStarted showBudget={modules.includes("budgeting")} />;
   }
+
+  // Every total here is converted to the base currency. When no account is held
+  // in it — typically an install whose base currency was never chosen — the
+  // figures look wrong for no visible reason, so say it and point to the setting.
+  // `baseCurrency` is undefined until the settings have really loaded.
+  const mismatchHintId = `base-currency:${activeProfile?.id ?? 0}:${baseCurrency}`;
+  const currencyMismatch =
+    baseCurrency !== undefined &&
+    accounts.length > 0 &&
+    !accounts.some((a) => a.currency === baseCurrency) &&
+    !dismissedHints.includes(mismatchHintId);
 
   const s = summary.data;
   const nw = netWorth.data ?? [];
@@ -87,6 +102,19 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
           <AlertTriangle className="size-4 shrink-0" />
           <span>Taux de change indisponibles pour certains montants — les totaux multidevises sont provisoires.</span>
+        </div>
+      )}
+
+      {currencyMismatch && (
+        <div className="flex items-center gap-2 rounded-xl border border-info/30 bg-info/10 px-3 py-2 text-xs text-info">
+          <Info className="size-4 shrink-0" />
+          <span className="flex-1">
+            Les montants sont convertis en {baseCurrency}, mais aucun de vos comptes n&apos;est dans cette devise.{" "}
+            <Link href="/parametres" className="font-medium underline underline-offset-2">Changer la devise de base</Link>
+          </span>
+          <button type="button" onClick={() => dismissHint(mismatchHintId)} className="shrink-0 rounded p-0.5 hover:bg-info/15" aria-label="Masquer ce message">
+            <X className="size-3.5" />
+          </button>
         </div>
       )}
 
@@ -227,7 +255,7 @@ function GettingStarted({ showBudget }: { showBudget: boolean }) {
     {
       icon: Wallet,
       title: "Créez un compte",
-      description: "Ajoutez votre compte bancaire (nom, banque, type, devise). C'est la destination de vos imports.",
+      description: "Ajoutez votre compte bancaire (nom, banque, type, devise). C'est la destination de vos imports, et sa devise devient votre devise de base (modifiable dans Paramètres).",
       href: "/comptes",
       cta: "Créer un compte",
       primary: true,

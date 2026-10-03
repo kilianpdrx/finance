@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSettings, useSettingMutation, useActiveProfile, useProfileMutations, useAppVersion } from "@/lib/api/hooks";
-import { CURRENCIES } from "@/lib/format";
+import { CURRENCIES, DEFAULT_CURRENCY } from "@/lib/format";
 import { DEFAULT_MODULES } from "@/lib/nav";
 import { TrendingUp, Wallet, Check, Target, BadgeMinus, Info, ShieldAlert, type LucideIcon } from "lucide-react";
 
@@ -23,7 +23,7 @@ export function GeneralTab() {
   const mutation = useSettingMutation();
   const activeProfile = useActiveProfile();
   const profileMutations = useProfileMutations();
-  const baseCurrency = settings?.base_currency ?? "CHF";
+  const baseCurrency = settings?.base_currency ?? DEFAULT_CURRENCY;
 
   const enabledModules = activeProfile?.enabled_modules ?? DEFAULT_MODULES;
 

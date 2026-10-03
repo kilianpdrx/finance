@@ -60,6 +60,48 @@ export class Api {
     expect(res.ok(), await res.text()).toBeTruthy();
     return res.json();
   }
+
+  /** Import a `Date;Libelle;Montant` statement (ISO dates) into an account. */
+  async importCsv(accountId: number, csv: string) {
+    const res = await this.request.post(`${BACKEND}/api/upload/confirm`, {
+      headers: this.headers(),
+      multipart: {
+        file: { name: "releve.csv", mimeType: "text/csv", buffer: Buffer.from(csv, "utf-8") },
+        account_id: String(accountId),
+        column_mapping: JSON.stringify({ date: "Date", description: "Libelle", amount: "Montant" }),
+        date_format: "%Y-%m-%d",
+        delimiter: ";",
+        encoding: "utf-8",
+      },
+    });
+    expect(res.ok(), await res.text()).toBeTruthy();
+    return res.json();
+  }
+
+  /** A "libellé contient …" rule towards the category with this name. */
+  async createContainsRule(categoryName: string, value: string) {
+    const cats: { id: number; name: string }[] = await this.categories();
+    const cat = cats.find((c) => c.name === categoryName);
+    expect(cat, `category ${categoryName} must exist`).toBeTruthy();
+    const res = await this.request.post(`${BACKEND}/api/categories/${cat!.id}/rules`, {
+      headers: this.headers(),
+      data: {
+        category_id: cat!.id,
+        logic_operator: "AND",
+        conditions: [{ field: "description", operator: "contains", value }],
+      },
+    });
+    expect(res.status(), await res.text()).toBe(201);
+    return res.json();
+  }
+
+  async setBaseCurrency(currency: string) {
+    const res = await this.request.put(`${BACKEND}/api/settings/base_currency`, {
+      headers: this.headers(),
+      data: { value: currency },
+    });
+    expect(res.ok(), await res.text()).toBeTruthy();
+  }
 }
 
 /** The app stores the active profile in localStorage; set it before the first paint. */

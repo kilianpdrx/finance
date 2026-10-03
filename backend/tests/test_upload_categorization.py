@@ -30,7 +30,7 @@ async def _add_scoped_rule(db: AsyncSession, seed_data: dict):
         profile_id=seed_data["profile"].id,
         category_id=seed_data["cat_courses"].id,
         account_id=seed_data["account_courant"].id,
-        priority=100, is_active=True, logic_operator="AND",
+        is_active=True, logic_operator="AND",
         conditions=[{"field": "description", "operator": "contains", "value": "SNCB"}],
     ))
     await db.commit()

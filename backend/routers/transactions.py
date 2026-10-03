@@ -242,15 +242,16 @@ async def list_transactions(
           "is_debit": r.is_debit, "currency": r.currency, "account_id": r.account_id} for r in rows],
         db, pid,
     )
-    conflict_ids = {cid for _, _, matches in evals if len(matches) >= 2 for cid in matches}
+    conflict_ids = {cid for ev in evals if ev.conflict for cid in ev.category_ids}
     names: dict[int, str] = {}
     if conflict_ids:
         cat_rows = await db.execute(select(Category.id, Category.name).where(Category.id.in_(conflict_ids)))
         names = {cid: name for cid, name in cat_rows}
-    for out, (_, _, matches) in zip(outs, evals):
-        if len(matches) >= 2:
+    for out, ev in zip(outs, evals):
+        if ev.conflict:
             out.category_conflict = True
-            out.conflict_categories = sorted(names.get(cid, str(cid)) for cid in matches)
+            out.conflict_categories = sorted(names.get(cid, str(cid)) for cid in ev.category_ids)
+            out.conflict_rule_ids = ev.rule_ids
     return outs
 
 

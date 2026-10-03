@@ -11,6 +11,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import init_db, AsyncSessionLocal, sync_schema
 from routers import accounts, transactions, categories, upload, analytics
 from routers import bank_profiles, investments, settings, system, profiles, goals, loans, planned
+from services.base_currency import DEFAULT_BASE_CURRENCY
 
 logger = logging.getLogger(__name__)
 
@@ -108,11 +109,9 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Parent-group normalization failed: %s", e)
 
-        # Ensure base_currency setting exists
-        await db.execute(text(
-            "INSERT OR IGNORE INTO settings (profile_id, key, value) VALUES (:p, 'base_currency', 'CHF')"
-        ), {"p": default_pid})
-        await db.commit()
+        # No base currency is written here: the first account a profile creates
+        # sets it (`services.base_currency`). Stamping a default at startup made
+        # every new install report in a currency the user never chose.
 
         # Seed ISIN→ticker lookup map
         from services.holdings_csv_parser import ISIN_TICKER_MAP
@@ -145,7 +144,7 @@ async def lifespan(app: FastAPI):
                 currencies = [r[0] for r in acc_rows]
 
                 base_row = await db.execute(sql_text("SELECT value FROM settings WHERE key='base_currency'"))
-                base_ccy = (base_row.scalar() or "CHF")
+                base_ccy = (base_row.scalar() or DEFAULT_BASE_CURRENCY)
 
                 if min_date and max_date:
                     from_d = date_type.fromisoformat(str(min_date))
@@ -229,7 +228,7 @@ async def lifespan(app: FastAPI):
                 acc_rows = await db.execute(sql_text("SELECT DISTINCT currency FROM accounts WHERE currency IS NOT NULL"))
                 currencies = [r[0] for r in acc_rows]
                 base_row = await db.execute(sql_text("SELECT value FROM settings WHERE key='base_currency'"))
-                base_ccy = (base_row.scalar() or "CHF")
+                base_ccy = (base_row.scalar() or DEFAULT_BASE_CURRENCY)
                 await refresh_latest(db, currencies, base_ccy)
                 logger.info("Scheduled FX refresh complete")
             except Exception as e:

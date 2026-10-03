@@ -1,8 +1,8 @@
 """The two things a user actually struggles with.
 
-Rule tester: rules are evaluated by ascending priority and the first match wins,
-so losing rules are invisible in the list — which is why a mis-ordered rule is
-impossible to diagnose by reading it.
+Rule tester: rules have no priority, so a label matched by rules of two different
+categories is classified by neither. Reading the rule list doesn't reveal that —
+the tester has to show every rule involved.
 
 Presets: column mapping is the hardest step of an import. A preset must only ever
 be applied when its columns genuinely match, since a wrong column silently
@@ -17,13 +17,13 @@ from bank_presets import BANK_PRESETS, match_preset
 # ── Rule tester ─────────────────────────────────────────────────────────────
 @pytest.fixture
 async def two_competing_rules(db_session, seed_data):
-    """Two rules matching the same text, at different priorities."""
+    """Two rules matching the same text, pointing to different categories."""
     pid = seed_data["profile"].id
     db_session.add_all([
-        CategoryRule(profile_id=pid, category_id=seed_data["cat_courses"].id, priority=50,
+        CategoryRule(profile_id=pid, category_id=seed_data["cat_courses"].id,
                      is_active=True, logic_operator="OR",
                      conditions=[{"field": "description", "operator": "contains", "value": "amazon"}]),
-        CategoryRule(profile_id=pid, category_id=seed_data["cat_salaire"].id, priority=45,
+        CategoryRule(profile_id=pid, category_id=seed_data["cat_salaire"].id,
                      is_active=True, logic_operator="OR",
                      conditions=[{"field": "description", "operator": "contains", "value": "amazon prime"}]),
     ])
@@ -32,19 +32,46 @@ async def two_competing_rules(db_session, seed_data):
 
 
 @pytest.mark.asyncio
-async def test_tester_reports_the_winner_and_the_losers(client, seed_data, two_competing_rules):
+async def test_tester_reports_a_conflict_with_every_rule_involved(client, seed_data, two_competing_rules):
     h = {"X-Profile-Id": str(two_competing_rules)}
     res = await client.post("/api/categories/rules/test", headers=h,
                             json={"description": "PAIEMENT CB AMAZON PRIME VIDEO"})
     assert res.status_code == 200
     body = res.json()
 
-    # Lower priority number wins.
-    assert body["matched"]["priority"] == 45
-    assert body["matched"]["category_name"] == seed_data["cat_salaire"].name
-    # The rule that loses is still reported — that's the whole point.
+    # Neither rule wins: the transaction would stay uncategorised.
+    assert body["conflict"] is True
+    assert body["matched"] is None
+    # Both rules are reported — that's what lets the user fix one of them.
+    assert {m["category_name"] for m in body["all_matches"]} == {
+        seed_data["cat_courses"].name, seed_data["cat_salaire"].name}
+    assert all("priority" not in m for m in body["all_matches"])
+
+
+@pytest.mark.asyncio
+async def test_tester_single_category_is_not_a_conflict(client, seed_data, two_competing_rules):
+    """Only the "amazon" rule matches here, so the label is classified."""
+    h = {"X-Profile-Id": str(two_competing_rules)}
+    body = (await client.post("/api/categories/rules/test", headers=h,
+                              json={"description": "ACHAT AMAZON.FR"})).json()
+    assert body["conflict"] is False
+    assert body["matched"]["category_name"] == seed_data["cat_courses"].name
+
+
+@pytest.mark.asyncio
+async def test_tester_rules_agreeing_on_the_category_do_not_conflict(client, db_session, seed_data):
+    pid = seed_data["profile"].id
+    for value in ("amazon", "amazon prime"):
+        db_session.add(CategoryRule(
+            profile_id=pid, category_id=seed_data["cat_courses"].id, is_active=True, logic_operator="OR",
+            conditions=[{"field": "description", "operator": "contains", "value": value}]))
+    await db_session.commit()
+
+    body = (await client.post("/api/categories/rules/test", headers={"X-Profile-Id": str(pid)},
+                              json={"description": "AMAZON PRIME VIDEO"})).json()
+    assert body["conflict"] is False
+    assert body["matched"]["category_name"] == seed_data["cat_courses"].name
     assert len(body["all_matches"]) == 2
-    assert body["all_matches"][1]["priority"] == 50
 
 
 @pytest.mark.asyncio
@@ -61,7 +88,7 @@ async def test_tester_reports_no_match(client, seed_data, two_competing_rules):
 async def test_tester_ignores_inactive_rules(client, db_session, seed_data):
     pid = seed_data["profile"].id
     db_session.add(CategoryRule(
-        profile_id=pid, category_id=seed_data["cat_courses"].id, priority=10,
+        profile_id=pid, category_id=seed_data["cat_courses"].id,
         is_active=False, logic_operator="OR",
         conditions=[{"field": "description", "operator": "contains", "value": "carrefour"}]))
     await db_session.commit()
@@ -81,7 +108,7 @@ async def test_tester_is_profile_scoped(client, db_session, seed_data, extra_pro
     await db_session.commit()
     await db_session.refresh(foreign_cat)
     db_session.add(CategoryRule(
-        profile_id=extra_profile.id, category_id=foreign_cat.id, priority=1,
+        profile_id=extra_profile.id, category_id=foreign_cat.id,
         is_active=True, logic_operator="OR",
         conditions=[{"field": "description", "operator": "contains", "value": "test"}]))
     await db_session.commit()
@@ -132,7 +159,7 @@ async def test_account_scoped_rules_are_evaluated_and_flagged(client, db_session
     pid = seed_data["profile"].id
     acc = seed_data["account_courant"]
     db_session.add(CategoryRule(
-        profile_id=pid, category_id=seed_data["cat_courses"].id, priority=10,
+        profile_id=pid, category_id=seed_data["cat_courses"].id,
         is_active=True, logic_operator="OR", account_id=acc.id,
         conditions=[{"field": "description", "operator": "contains", "value": "SUPERMARCHE"}]))
     await db_session.commit()

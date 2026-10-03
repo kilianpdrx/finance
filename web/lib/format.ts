@@ -49,6 +49,11 @@ export function parseAmountToCents(s: string): number {
   return Math.round(parseFloat(cleaned || "0") * 100);
 }
 
+/** Shown only until the profile's real currency is known (settings still loading,
+ *  or a brand-new profile with no account yet). The backend derives the base
+ *  currency from the first account — it is never hardcoded per install. */
+export const DEFAULT_CURRENCY = "EUR";
+
 export const CURRENCIES = [
   { code: "EUR", symbol: "€" },
   { code: "CHF", symbol: "CHF" },

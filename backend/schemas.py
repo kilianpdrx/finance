@@ -229,6 +229,7 @@ class TransactionOut(TransactionBase):
     is_internal_transfer: bool = False
     category_conflict: bool = False  # >= 2 distinct categories match via rules
     conflict_categories: List[str] = []  # names of the categories in conflict
+    conflict_rule_ids: List[int] = []    # the rules that disagree, so the UI can open them
     import_hash: str
     import_batch_id: Optional[int] = None
     created_at: datetime
@@ -283,13 +284,12 @@ class CategoryOut(CategoryBase):
 
 class RuleCondition(BaseModel):
     field: str      # "description", "amount"
-    operator: str   # "contains", "startswith", "regex", "equals", ">", "<", ">=", "<="
+    operator: str   # "contains", "not_contains", "word", "startswith", "regex", "equals", ">", "<", ">=", "<="
     value: str      # Value to match against
 
 class CategoryRuleBase(BaseModel):
     conditions: List[RuleCondition] = []
     category_id: int
-    priority: int = 100
     is_active: bool = True
     account_id: Optional[int] = None
     logic_operator: str = "AND"
@@ -300,7 +300,6 @@ class CategoryRuleCreate(CategoryRuleBase):
 class CategoryRuleUpdate(BaseModel):
     conditions: Optional[List[RuleCondition]] = None
     category_id: Optional[int] = None
-    priority: Optional[int] = None
     is_active: Optional[bool] = None
     account_id: Optional[int] = None
     logic_operator: Optional[str] = None
@@ -378,9 +377,14 @@ class CategoryBreakdown(BaseModel):
     percentage: float
 
 class RecurringTransaction(BaseModel):
-    description: str
+    description: str          # cleaned-up keyword, for display
+    # A fragment that really appears in every label of the group — what a
+    # "contains" rule must be built from. `description` drops reference numbers
+    # from the middle of the label, so it often matches no real transaction.
+    rule_pattern: str
     occurrences: int
     avg_amount_cents: int
+    currency: str             # the group's own currency (groups never mix two)
     last_date: date
     category_id: Optional[int]
 

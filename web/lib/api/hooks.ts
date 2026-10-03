@@ -5,6 +5,7 @@ import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/rea
 import { api, unwrap } from "./client";
 import type { components } from "./schema";
 import { useDateRangeStore, useSelectedAccountsStore } from "../stores";
+import { DEFAULT_CURRENCY } from "../format";
 
 // ── Types (re-exported from generated schema) ─────────────────────────────────
 export type Account = components["schemas"]["AccountOut"];
@@ -393,7 +394,7 @@ export function useSettings() {
 }
 export function useBaseCurrency() {
   const { data } = useSettings();
-  return data?.base_currency ?? "CHF";
+  return data?.base_currency ?? DEFAULT_CURRENCY;
 }
 
 // ── Mutations ─────────────────────────────────────────────────────────────────
@@ -404,7 +405,8 @@ function useInvalidate() {
 
 export function useAccountMutations() {
   const invalidate = useInvalidate();
-  const onSuccess = () => invalidate("accounts", "analytics", "investments", "snapshots", "loans");
+  // "settings": a profile's first account sets its base currency.
+  const onSuccess = () => invalidate("accounts", "analytics", "investments", "snapshots", "loans", "settings");
   return {
     create: useMutation({ mutationFn: (body: AccountCreate) => unwrap(api.POST("/api/accounts", { body })), onSuccess }),
     update: useMutation({ mutationFn: ({ id, body }: { id: number; body: AccountUpdate }) => unwrap(api.PUT("/api/accounts/{account_id}", { params: { path: { account_id: id } }, body })), onSuccess }),
@@ -439,9 +441,19 @@ export function useCategoryMutations() {
   };
 }
 
+export interface RescanResult { updated: number; total: number; conflicts: number }
+
+/** What applying the rules to uncategorised transactions WOULD do, without
+ *  writing anything — used to offer "apply now" right after a rule is saved. */
+export async function previewRescan(): Promise<RescanResult> {
+  return (await unwrap(api.POST("/api/categories/rescan", { params: { query: { dry_run: true } } }))) as RescanResult;
+}
+
 export function useRuleMutations() {
   const invalidate = useInvalidate();
-  const onSuccess = () => invalidate("rules", "categories");
+  // Conflict flags and "sans règle" are computed server-side from the ruleset,
+  // so the transaction list and analytics go stale when a rule changes.
+  const onSuccess = () => invalidate("rules", "categories", "transactions", "analytics");
   return {
     create: useMutation({ mutationFn: ({ categoryId, body }: { categoryId: number; body: CategoryRuleCreate }) => unwrap(api.POST("/api/categories/{category_id}/rules", { params: { path: { category_id: categoryId } }, body })), onSuccess }),
     update: useMutation({ mutationFn: ({ ruleId, body }: { ruleId: number; body: components["schemas"]["CategoryRuleUpdate"] }) => unwrap(api.PUT("/api/categories/rules/{rule_id}", { params: { path: { rule_id: ruleId } }, body })), onSuccess }),

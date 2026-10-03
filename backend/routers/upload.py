@@ -238,8 +238,8 @@ async def parse_preview(
 
     # Evaluate rules once for EVERY row against the DESTINATION account (parse_csv
     # leaves account_id=0), so account-scoped rules fire here exactly as on confirm.
-    # We get both the winning category and the set of all matching categories, so a
-    # row where several distinct categories apply can be flagged (category_conflict).
+    # A row whose matching rules disagree gets no category and is flagged
+    # (category_conflict), with the rules involved so the review step can show them.
     eval_dicts = []
     for t in transactions:
         d = t.model_dump()
@@ -251,11 +251,11 @@ async def parse_preview(
     result_rows = []
     for i, (t, h) in enumerate(zip(transactions, hashes)):
         is_duplicate = dup_flags[i]
-        chosen, source, matches = rule_eval[i]
+        ev = rule_eval[i]
         cat_id = t.category_id
         cat_source = None
         if cat_id is None and not is_duplicate:
-            cat_id, cat_source = chosen, source
+            cat_id, cat_source = ev.category_id, ev.source
         result_rows.append({
             "date": str(t.date),
             "description": t.description,
@@ -267,7 +267,8 @@ async def parse_preview(
             "category_name": cat_map.get(cat_id, {}).get("name") if cat_id else None,
             "is_duplicate": is_duplicate,
             "categorization_source": cat_source,
-            "category_conflict": len(matches) >= 2,
+            "category_conflict": ev.conflict,
+            "conflict_rule_ids": ev.rule_ids if ev.conflict else [],
         })
 
 

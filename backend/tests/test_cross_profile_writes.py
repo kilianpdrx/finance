@@ -57,7 +57,7 @@ async def test_cannot_budget_or_rule_on_foreign_category(client, seed_data, fore
         "expected_amount_cents": 5000})).status_code == 404
     assert (await client.post(f"/api/categories/{foreign['category'].id}/rules", headers=h, json={
         "conditions": [{"field": "description", "operator": "contains", "value": "x"}],
-        "category_id": foreign["category"].id, "priority": 100,
+        "category_id": foreign["category"].id,
         "is_active": True, "logic_operator": "AND"})).status_code == 404
 
 

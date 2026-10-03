@@ -459,8 +459,37 @@ export interface paths {
          *     transactions that have no category yet — it never rewrites already-categorised
          *     history (the ledger stays intact). `scope="all"` re-applies to every
          *     non-manually-reviewed transaction and may change past categorisations.
+         *
+         *     A transaction whose matching rules disagree is never written, whatever the
+         *     scope: it is counted in `conflicts` and keeps the category it has.
+         *     `dry_run=true` returns the same counts without writing anything.
          */
         post: operations["rescan_categories_api_categories_rescan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/categories/rules/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Rules
+         * @description Answer "which rule would classify this?" for a typed description.
+         *
+         *     Rules have no order: a description is classified only when every matching
+         *     rule agrees on the category. Returns every match, and `conflict=True` (with
+         *     `matched=None`) when they point to different categories — the transaction
+         *     would then stay uncategorised until one of those rules is edited.
+         */
+        post: operations["test_rules_api_categories_rules_test_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -551,7 +580,7 @@ export interface paths {
         put?: never;
         /**
          * Merge Rules
-         * @description Merge multiple rules into one. All conditions are combined. Uses the first rule's category/priority/account.
+         * @description Merge multiple rules into one. All conditions are combined. Uses the oldest rule's category/account.
          */
         post: operations["merge_rules_api_categories_rules_merge_post"];
         delete?: never;
@@ -745,8 +774,13 @@ export interface paths {
         };
         /**
          * Recurring Uncovered
-         * @description Recurring EXPENSES whose description isn't matched by any active rule —
-         *     good candidates for creating a new categorization rule.
+         * @description Recurring EXPENSES that no active rule matches — good candidates for
+         *     creating a new categorization rule.
+         *
+         *     Coverage is tested on the group's REAL transactions (their own label,
+         *     account, amount), never on the cleaned-up keyword: a rule can match the
+         *     keyword while matching no actual row, and the group would then vanish from
+         *     this list although nothing classifies it.
          */
         get: operations["recurring_uncovered_api_analytics_recurring_uncovered_get"];
         put?: never;
@@ -783,6 +817,29 @@ export interface paths {
         };
         /** Budget Full */
         get: operations["budget_full_api_analytics_budget_full_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bank-profiles/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Presets
+         * @description Verified column mappings for known banks, for the importer's one-click setup.
+         *
+         *     Static and profile-independent: a mapping is a list of column names, not user
+         *     data, so it needs no scoping.
+         */
+        get: operations["list_presets_api_bank_profiles_presets_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2122,11 +2179,6 @@ export interface components {
             /** Category Id */
             category_id: number;
             /**
-             * Priority
-             * @default 100
-             */
-            priority: number;
-            /**
              * Is Active
              * @default true
              */
@@ -2149,11 +2201,6 @@ export interface components {
             /** Category Id */
             category_id: number;
             /**
-             * Priority
-             * @default 100
-             */
-            priority: number;
-            /**
              * Is Active
              * @default true
              */
@@ -2174,8 +2221,6 @@ export interface components {
             conditions?: components["schemas"]["RuleCondition"][] | null;
             /** Category Id */
             category_id?: number | null;
-            /** Priority */
-            priority?: number | null;
             /** Is Active */
             is_active?: boolean | null;
             /** Account Id */
@@ -2695,10 +2740,14 @@ export interface components {
         RecurringTransaction: {
             /** Description */
             description: string;
+            /** Rule Pattern */
+            rule_pattern: string;
             /** Occurrences */
             occurrences: number;
             /** Avg Amount Cents */
             avg_amount_cents: number;
+            /** Currency */
+            currency: string;
             /**
              * Last Date
              * Format: date
@@ -2727,6 +2776,23 @@ export interface components {
              * @default AND
              */
             logic_operator: string;
+        };
+        /** RuleTestRequest */
+        RuleTestRequest: {
+            /** Description */
+            description: string;
+            /**
+             * Amount Cents
+             * @default 0
+             */
+            amount_cents: number;
+            /**
+             * Is Debit
+             * @default true
+             */
+            is_debit: boolean;
+            /** Account Id */
+            account_id?: number | null;
         };
         /** TransactionCreateManual */
         TransactionCreateManual: {
@@ -2819,6 +2885,11 @@ export interface components {
              * @default []
              */
             conflict_categories: string[];
+            /**
+             * Conflict Rule Ids
+             * @default []
+             */
+            conflict_rule_ids: number[];
             /** Import Hash */
             import_hash: string;
             /** Import Batch Id */
@@ -4004,6 +4075,7 @@ export interface operations {
         parameters: {
             query?: {
                 scope?: string;
+                dry_run?: boolean;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
@@ -4012,6 +4084,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_rules_api_categories_rules_test_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleTestRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -4724,6 +4831,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_presets_api_bank_profiles_presets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

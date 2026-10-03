@@ -4,23 +4,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
 from models import Setting
+from services.base_currency import ALLOWED_CURRENCIES, get_base_currency
 
 router = APIRouter()
-
-# Currencies the FX provider (Frankfurter) quotes, plus the ones accounts can be
-# held in. A typo here silently breaks every conversion in the app, so it's
-# validated rather than stored blindly.
-_ALLOWED_CURRENCIES = {
-    "AUD", "BGN", "BRL", "CAD", "CHF", "CNY", "CZK", "DKK", "EUR", "GBP", "HKD",
-    "HUF", "IDR", "ILS", "INR", "ISK", "JPY", "KRW", "MXN", "MYR", "NOK", "NZD",
-    "PHP", "PLN", "RON", "SEK", "SGD", "THB", "TRY", "USD", "ZAR",
-}
 
 
 @router.get("")
 async def get_all_settings(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     result = await db.execute(select(Setting).where(Setting.profile_id == pid))
-    return {s.key: s.value for s in result.scalars()}
+    settings = {s.key: s.value for s in result.scalars()}
+    # Always answer with the currency the profile actually reports in, even
+    # before one is stored, so no client has to guess a fallback.
+    settings.setdefault("base_currency", await get_base_currency(db, pid))
+    return settings
 
 
 @router.get("/{key}")
@@ -28,6 +24,8 @@ async def get_setting(key: str, db: AsyncSession = Depends(get_db), pid: int = D
     result = await db.execute(select(Setting).where(Setting.key == key, Setting.profile_id == pid))
     setting = result.scalar_one_or_none()
     if not setting:
+        if key == "base_currency":
+            return {"key": key, "value": await get_base_currency(db, pid)}
         raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
     return {"key": setting.key, "value": setting.value}
 
@@ -39,7 +37,7 @@ async def update_setting(key: str, body: dict, db: AsyncSession = Depends(get_db
         raise HTTPException(status_code=422, detail="Missing 'value' field")
     if key == "base_currency":
         value = str(value).strip().upper()
-        if value not in _ALLOWED_CURRENCIES:
+        if value not in ALLOWED_CURRENCIES:
             raise HTTPException(
                 status_code=400,
                 detail=f"Devise « {value} » inconnue. Utilisez un code ISO à 3 lettres (ex. EUR, CHF, USD).",

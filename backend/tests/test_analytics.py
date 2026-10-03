@@ -143,6 +143,97 @@ async def test_recurring_merges_broad_keyword(client: AsyncClient, seed_data: di
     assert "0512" not in carrefour[0]["description"] and "PAIEMENT" not in carrefour[0]["description"]
 
 
+FRANPRIX_LABELS = [
+    "CARTE X1234 12/09 FRANPRIX 5106 PARIS 11",
+    "CARTE X1234 03/10 FRANPRIX 5106 PARIS 11",
+    "CARTE X1234 21/10 FRANPRIX 5106 PARIS 11",
+]
+
+
+async def _add_franprix(db_session: AsyncSession, seed_data: dict):
+    """Three card payments whose label carries a reference in the MIDDLE."""
+    for i, label in enumerate(FRANPRIX_LABELS):
+        db_session.add(Transaction(
+            profile_id=seed_data["profile"].id, account_id=seed_data["account_courant"].id,
+            date=date(2026, 9 + (i > 0), 12 + i), amount_cents=1500 + i, is_debit=True,
+            currency="EUR", description=label, import_hash=f"franprix_{i}",
+        ))
+    await db_session.commit()
+
+
+def _contains_rule(seed_data: dict, value: str, account_id=None):
+    from models import CategoryRule
+    return CategoryRule(
+        profile_id=seed_data["profile"].id, category_id=seed_data["cat_courses"].id,
+        account_id=account_id, is_active=True, logic_operator="AND",
+        conditions=[{"field": "description", "operator": "contains", "value": value}],
+    )
+
+
+async def test_recurring_rule_pattern_matches_every_row_of_its_group(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """The cleaned-up keyword drops the reference from the middle of the label, so
+    it appears in no real transaction. The rule must be built from `rule_pattern`."""
+    await _add_franprix(db_session, seed_data)
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+
+    group = next(g for g in (await client.get("/api/analytics/recurring", headers=h)).json()
+                 if "FRANPRIX" in g["description"])
+    assert group["description"] == "FRANPRIX PARIS"
+    assert group["occurrences"] == 3 and group["currency"] == "EUR"
+    assert all(group["rule_pattern"].lower() in label.lower() for label in FRANPRIX_LABELS)
+
+    async def matches(value: str) -> int:
+        r = await client.post("/api/categories/rules/preview", headers=h, json={
+            "conditions": [{"field": "description", "operator": "contains", "value": value}],
+            "logic_operator": "AND"})
+        return len(r.json())
+
+    assert await matches(group["rule_pattern"]) == 3
+    assert await matches(group["description"]) == 0   # why the keyword can't be the prefill
+
+
+async def test_recurring_uncovered_checks_real_rows_not_the_keyword(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """A rule that matches the keyword but no real row classifies nothing, so the
+    group must stay listed until a rule really covers it."""
+    await _add_franprix(db_session, seed_data)
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+
+    async def listed() -> bool:
+        rows = (await client.get("/api/analytics/recurring-uncovered", headers=h)).json()
+        return any("FRANPRIX" in g["description"] for g in rows)
+
+    assert await listed()
+
+    db_session.add(_contains_rule(seed_data, "FRANPRIX PARIS"))   # matches no real label
+    await db_session.commit()
+    assert await listed()
+
+    # Bound to another account: it never fires on these rows.
+    db_session.add(_contains_rule(seed_data, "FRANPRIX", account_id=seed_data["account_inv"].id))
+    await db_session.commit()
+    assert await listed()
+
+    db_session.add(_contains_rule(seed_data, "FRANPRIX"))
+    await db_session.commit()
+    assert not await listed()
+
+
+async def test_recurring_never_averages_two_currencies(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    acc = seed_data["account_courant"]
+    for i, (ccy, cents) in enumerate([("EUR", 1000), ("EUR", 1200), ("CHF", 5000), ("CHF", 7000)]):
+        db_session.add(Transaction(
+            profile_id=seed_data["profile"].id, account_id=acc.id, date=date(2026, 1 + i, 5),
+            amount_cents=cents, is_debit=True, currency=ccy,
+            description="NETFLIX.COM", import_hash=f"netflix_{i}",
+        ))
+    await db_session.commit()
+
+    rows = (await client.get("/api/analytics/recurring",
+                             headers={"X-Profile-Id": str(seed_data["profile"].id)})).json()
+    netflix = {g["currency"]: g["avg_amount_cents"] for g in rows if g["description"] == "NETFLIX"}
+    assert netflix == {"EUR": 1100, "CHF": 6000}
+
+
 async def test_analytics_cash_flow(client: AsyncClient, seed_data: dict, analytics_data: dict):
     profile = seed_data["profile"]
     res = await client.get("/api/analytics/cash-flow", headers={"X-Profile-Id": str(profile.id)})

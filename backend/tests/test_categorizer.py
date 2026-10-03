@@ -1,5 +1,5 @@
 import pytest
-from services.categorizer import categorize_batch, evaluate_conditions
+from services.categorizer import categorize_batch, evaluate_conditions, evaluate_rules_batch
 from models import CategoryRule
 
 
@@ -33,7 +33,6 @@ async def test_categorize_batch_rules(db_session, seed_data):
         profile_id=pid,
         category_id=cat.id,
         category=cat,
-        priority=10,
         is_active=True,
         logic_operator="AND",
         conditions=[{"field": "description", "operator": "contains", "value": "MONOPRIX"}]
@@ -56,3 +55,49 @@ async def test_categorize_batch_rules(db_session, seed_data):
     assert cat_id_1 is None
 
 
+def test_evaluate_conditions_not_contains():
+    """The exclusion that tells "amazon" apart from "amazon prime"."""
+    conds = [{"field": "description", "operator": "contains", "value": "amazon"},
+             {"field": "description", "operator": "not_contains", "value": "prime"}]
+    assert evaluate_conditions({"description": "ACHAT AMAZON.FR"}, conds, "AND") is True
+    assert evaluate_conditions({"description": "AMAZON PRIME VIDEO"}, conds, "AND") is False
+
+
+def test_evaluate_conditions_whole_word():
+    """A short keyword must not fire inside a longer word."""
+    eau = [{"field": "description", "operator": "word", "value": "eau"}]
+    assert evaluate_conditions({"description": "VEOLIA EAU PARIS"}, eau, "AND") is True
+    assert evaluate_conditions({"description": "FACTURE EAU."}, eau, "AND") is True
+    assert evaluate_conditions({"description": "INSTITUT BEAUTE"}, eau, "AND") is False
+    assert evaluate_conditions({"description": "BUREAU VALLEE"}, eau, "AND") is False
+    # Several words are matched as one unit, and regex characters are literal.
+    assert evaluate_conditions({"description": "CANAL+ SAT"},
+                               [{"field": "description", "operator": "word", "value": "canal+"}], "AND") is True
+    # An empty value never matches (it would otherwise match everything).
+    assert evaluate_conditions({"description": "X"},
+                               [{"field": "description", "operator": "word", "value": ""}], "AND") is False
+
+
+@pytest.mark.asyncio
+async def test_rules_of_different_categories_conflict_instead_of_one_winning(db_session, seed_data):
+    """Rules have no priority: when two categories match, none is assigned."""
+    pid = seed_data["profile"].id
+    courses, salaire = seed_data["cat_courses"], seed_data["cat_salaire"]
+    amazon = CategoryRule(profile_id=pid, category_id=courses.id, is_active=True, logic_operator="AND",
+                          conditions=[{"field": "description", "operator": "contains", "value": "amazon"}])
+    prime = CategoryRule(profile_id=pid, category_id=salaire.id, is_active=True, logic_operator="AND",
+                         conditions=[{"field": "description", "operator": "contains", "value": "prime"}])
+    db_session.add_all([amazon, prime])
+    await db_session.commit()
+
+    both, one = await evaluate_rules_batch(
+        [{"description": "AMAZON PRIME VIDEO"}, {"description": "AMAZON MARKETPLACE"}],
+        db_session, profile_id=pid)
+
+    assert both.conflict and both.category_id is None and both.source is None
+    assert both.category_ids == {courses.id, salaire.id}
+    assert both.rule_ids == [amazon.id, prime.id]
+    assert not one.conflict and one.category_id == courses.id and one.source == "rule"
+
+    # The simple API reports the same thing: no category on a conflict.
+    assert await categorize_batch([{"description": "AMAZON PRIME VIDEO"}], db_session, profile_id=pid) == [(None, None)]

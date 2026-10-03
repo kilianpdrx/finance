@@ -183,7 +183,7 @@ export function ReviewStep({
                     <td className="max-w-xs px-4 py-2 text-xs">
                       <span className="flex items-center gap-1.5">
                         <span className="truncate" title={t.description}>{t.description}</span>
-                        {t.category_conflict && <ConflictBadge className="shrink-0 text-[10px]" />}
+                        {t.category_conflict && <ConflictBadge className="shrink-0 text-[10px]" ruleIds={t.conflict_rule_ids} />}
                       </span>
                     </td>
                     <td className={cn("nums whitespace-nowrap px-4 py-2 text-right text-xs font-medium", t.is_debit ? "text-negative" : "text-positive")}>{money(t.amount_cents, t.is_debit, destCurrency)}</td>

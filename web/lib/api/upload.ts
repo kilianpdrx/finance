@@ -25,6 +25,8 @@ export interface ParsePreviewTransaction {
   is_duplicate: boolean;
   categorization_source: "rule" | "ml" | null;
   category_conflict: boolean;
+  /** The rules that disagree on this row (empty unless `category_conflict`). */
+  conflict_rule_ids: number[];
 }
 
 /** Rows the parser had to drop, per reason, with a few raw examples each.

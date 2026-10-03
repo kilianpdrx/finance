@@ -1,18 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { FlaskConical, ArrowRight } from "lucide-react";
+import { FlaskConical, ArrowRight, AlertTriangle, Pencil } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ruleSummary, type RuleCondition } from "@/lib/rules";
 
 interface Match {
   rule_id: number;
-  priority: number;
   category_id: number;
   category_name: string;
   logic_operator: string;
-  conditions: { field: string; operator: string; value: string }[];
+  conditions: RuleCondition[];
   account_id: number | null;
   account_name: string | null;
   /** Rule is bound to one account and no account was given for the test. */
@@ -21,19 +21,21 @@ interface Match {
 
 interface Result {
   matched: Match | null;
+  /** Rules of different categories match: none is applied. */
+  conflict: boolean;
   all_matches: Match[];
   rules_evaluated: number;
 }
 
 /**
- * "Paste a description, see which rule wins."
+ * "Paste a description, see which rule classifies it."
  *
- * Rules are evaluated by ascending priority and the first match wins, so the
- * losing rules are invisible in the list — which is what makes a mis-ordered
- * rule impossible to diagnose by reading it. Showing the winner AND the other
- * matches turns that into something you can see.
+ * Rules have no priority: a label is classified only when every matching rule
+ * agrees on the category. When they don't, the transaction stays uncategorised —
+ * and nothing in the rule list shows that two rules overlap. The tester does: it
+ * lists every rule involved, each one a click away from being edited.
  */
-export function RuleTester() {
+export function RuleTester({ onEditRule }: { onEditRule?: (ruleId: number) => void }) {
   const [description, setDescription] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,7 +61,12 @@ export function RuleTester() {
     }
   };
 
-  const losers = result?.all_matches.slice(1) ?? [];
+  const scope = (m: Match) =>
+    m.account_scoped_unverified && m.account_name ? (
+      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+        uniquement sur « {m.account_name} »
+      </span>
+    ) : null;
 
   return (
     <Card className="space-y-3 p-4">
@@ -88,16 +95,41 @@ export function RuleTester() {
 
       {result && (
         <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">
-          {result.matched ? (
+          {result.conflict ? (
+            <>
+              <div className="flex items-center gap-2 text-sm font-semibold text-warning">
+                <AlertTriangle className="size-4" />
+                Conflit — la transaction resterait sans catégorie
+              </div>
+              <ul className="space-y-1.5">
+                {result.all_matches.map((m) => (
+                  <li key={m.rule_id} className="flex items-start gap-2 text-xs">
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium text-foreground">{m.category_name}</span>{" "}
+                      <span className="text-muted-foreground">— {ruleSummary(m)}</span> {scope(m)}
+                    </span>
+                    {onEditRule && (
+                      <Button variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => onEditRule(m.rule_id)}>
+                        <Pencil className="size-3" /> Modifier
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[11px] text-muted-foreground">
+                Les règles n&apos;ont pas de priorité. Pour lever le conflit, modifiez l&apos;une d&apos;elles :
+                un mot-clé plus précis, une condition « ne contient pas », ou un compte.
+              </p>
+            </>
+          ) : result.matched ? (
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <ArrowRight className="size-4 text-positive" />
               <span className="font-semibold text-positive">{result.matched.category_name}</span>
-              <span className="text-xs text-muted-foreground">
-                priorité {result.matched.priority} · règle #{result.matched.rule_id}
-              </span>
-              {result.matched.account_scoped_unverified && result.matched.account_name && (
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                  uniquement sur « {result.matched.account_name} »
+              <span className="text-xs text-muted-foreground">{ruleSummary(result.matched)}</span>
+              {scope(result.matched)}
+              {result.all_matches.length > 1 && (
+                <span className="text-xs text-muted-foreground">
+                  · {result.all_matches.length} règles de cette catégorie correspondent
                 </span>
               )}
             </div>
@@ -105,29 +137,6 @@ export function RuleTester() {
             <p className="text-sm text-muted-foreground">
               Aucune règle ne correspond — la transaction resterait sans catégorie.
             </p>
-          )}
-
-          {losers.length > 0 && (
-            <div className="border-t border-border pt-2">
-              <p className="text-xs font-medium text-warning">
-                {losers.length} autre(s) règle(s) correspondent aussi, mais perdent :
-              </p>
-              <ul className="mt-1 space-y-0.5">
-                {losers.map((m) => (
-                  <li key={m.rule_id} className="text-xs text-muted-foreground">
-                    {m.category_name}{" "}
-                    <span className="opacity-70">
-                      (priorité {m.priority} · règle #{m.rule_id}
-                      {m.account_name ? ` · compte ${m.account_name}` : ""})
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                La règle de plus petite priorité gagne. Baissez la priorité d&apos;une règle
-                pour lui faire gagner.
-              </p>
-            </div>
           )}
 
           <p className="text-[11px] text-muted-foreground">

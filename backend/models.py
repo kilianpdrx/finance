@@ -207,7 +207,6 @@ class CategoryRule(Base):
     # [{"field": "description"|"amount", "operator": "contains"|">"|etc, "value": "Achat"}, ...]
     conditions = Column(JSON, nullable=False, default=list)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
-    priority = Column(Integer, default=100)
     is_active = Column(Boolean, default=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)  # null = all accounts
     logic_operator = Column(String, default="AND")  # "AND" or "OR"

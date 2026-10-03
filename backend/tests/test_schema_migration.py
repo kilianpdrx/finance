@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 import database
 from models import Base
 
-HEAD = "013_txn_original_currency"
+HEAD = "014_drop_rule_priority"
 
 
 @pytest.fixture
@@ -68,3 +68,40 @@ def test_upgrade_from_old_revision_is_idempotent(temp_db):
     database._sync_schema_blocking()  # upgrade path
 
     assert _version(temp_db) == HEAD
+
+
+def test_rule_priority_column_is_dropped_and_rules_survive(temp_db):
+    """An existing install still has `category_rules.priority`. Upgrading must
+    remove it without losing a rule."""
+    eng = create_engine(f"sqlite:///{temp_db}")
+    Base.metadata.create_all(eng)
+    with eng.begin() as c:
+        # Rebuild the pre-014 shape: the column, and a rule that uses it.
+        c.execute(text("ALTER TABLE category_rules ADD COLUMN priority INTEGER"))
+        c.execute(text("INSERT INTO profiles (id, name, color, is_default) VALUES (1, 'P', '#000', 1)"))
+        c.execute(text("INSERT INTO categories (id, profile_id, name, color) VALUES (1, 1, 'Courses', '#000')"))
+        c.execute(text(
+            "INSERT INTO category_rules (id, profile_id, conditions, category_id, priority, is_active, logic_operator)"
+            " VALUES (7, 1, :cond, 1, 45, 1, 'OR')"
+        ), {"cond": '[{"field": "description", "operator": "contains", "value": "amazon"}]'})
+    eng.dispose()
+    database._sync_schema_blocking()  # stamps head (no alembic_version yet)
+    eng = create_engine(f"sqlite:///{temp_db}")
+    with eng.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num='013_txn_original_currency'"))
+    eng.dispose()
+
+    database._sync_schema_blocking()  # upgrade path: runs 014
+
+    assert _version(temp_db) == HEAD
+    eng = create_engine(f"sqlite:///{temp_db}")
+    try:
+        cols = {c["name"] for c in inspect(eng).get_columns("category_rules")}
+        with eng.connect() as c:
+            rule = c.execute(text("SELECT id, category_id, logic_operator, conditions FROM category_rules")).one()
+    finally:
+        eng.dispose()
+    assert "priority" not in cols
+    assert (rule.id, rule.category_id, rule.logic_operator) == (7, 1, "OR")
+    assert "amazon" in rule.conditions
+

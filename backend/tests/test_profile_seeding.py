@@ -38,8 +38,8 @@ async def test_new_profile_gets_the_default_categories_and_rules(client, db_sess
 
 
 async def test_new_profile_inherits_the_household_base_currency(client, db_session, seed_data):
-    """A profile with no settings row reads as "CHF" whatever the rest of the
-    install uses, which is invisible until every amount looks wrong."""
+    """A new household member must report in the same currency as everyone
+    else, not in whatever its own first account happens to be."""
     profile = seed_data["profile"]
     await db_session.execute(text(
         "INSERT OR REPLACE INTO settings (profile_id, key, value)"
@@ -57,6 +57,21 @@ async def test_new_profile_inherits_the_household_base_currency(client, db_sessi
                                     Setting.key == "base_currency")
     )).scalar()
     assert value == "EUR"
+
+
+async def test_new_profile_stays_unset_when_the_household_has_no_base_currency(client, db_session):
+    """Nothing to inherit yet (no account created so far): don't stamp a default —
+    the profile's first account decides."""
+    from models import Profile
+    db_session.add(Profile(name="Principal", color="#6366f1", is_default=True))
+    await db_session.commit()
+
+    new_id = (await client.post("/api/profiles", json={"name": "Colocataire"})).json()["id"]
+
+    stored = (await db_session.execute(
+        select(Setting.value).where(Setting.profile_id == new_id, Setting.key == "base_currency")
+    )).scalar()
+    assert stored is None
 
 
 async def test_seeding_never_rewrites_an_existing_profile(db_session, seed_data):
