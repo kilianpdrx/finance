@@ -76,10 +76,11 @@ cd ../web && npx tsc --noEmit && npx vitest run && npm run test:e2e
 migrations ne se jouent que vers l'avant :
 
 Sur une **copie** de votre base réelle — celle de l'installation, pas celle du dépôt
-(`~/Desktop/Finance/data/finance.db` ; adaptez si vous l'avez rangée ailleurs) :
+(`~/Desktop/Suivi finance/data/finance.db` ; adaptez si vous l'avez rangée ailleurs —
+`docker inspect finance-backend` montre le dossier monté) :
 
 ```bash
-sqlite3 ~/Desktop/Finance/data/finance.db ".backup '/tmp/migration-test.db'"
+sqlite3 ~/Desktop/"Suivi finance"/data/finance.db ".backup '/tmp/migration-test.db'"
 cd backend && python - <<'PY'
 from pathlib import Path
 import database; database.DB_PATH = Path("/tmp/migration-test.db")
@@ -133,7 +134,7 @@ bash ./Finance.command
 Puis contrôler :
 - **Paramètres → Général → À propos** affiche bien le tag publié
 - l'application répond sur `127.0.0.1:3000` mais **pas** sur votre IP locale
-- un nouvel utilisateur obtient 14 catégories et 26 règles
+- un nouvel utilisateur obtient 14 catégories et 16 règles
 - créer un second profil : il doit lui aussi arriver avec ses 14 catégories
 
 Enfin `bash ./Arreter.command`, puis `rm -rf /tmp/verif`.
