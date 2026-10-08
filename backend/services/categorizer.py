@@ -24,6 +24,15 @@ class RuleEval(NamedTuple):
         return len(self.category_ids) >= 2
 
 
+def _amount_threshold(value) -> Optional[float]:
+    """A rule's amount as typed in the editor: "12,5", "12.5", "1 850"."""
+    text = str(value).strip().replace("\u00a0", "").replace("\u202f", "").replace(" ", "").replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
 def evaluate_conditions(txn_data: dict, conditions: List[dict], logic_operator: str = "AND") -> bool:
     """Evaluate a list of conditions against a transaction dict.
     logic_operator='AND': all must match. logic_operator='OR': at least one must match."""
@@ -46,11 +55,16 @@ def evaluate_conditions(txn_data: dict, conditions: List[dict], logic_operator: 
             target = description
             val = str(val).lower()
         elif field_name == 'amount':
+            # The amount is compared WITHOUT its sign (amounts are stored unsigned):
+            # "plus de 600" holds for an expense and an income alike. Direction is
+            # its own condition (`is_debit`, shown as « Sens »).
             target = t_amount
-            try:
-                val = float(val)
-            except ValueError:
-                val = 0.0
+            val = _amount_threshold(val)
+            if val is None:
+                # Not a number: the condition cannot hold. It used to be read as
+                # 0, which made "montant > abc" match every transaction.
+                results.append(False)
+                continue
         elif field_name == 'date':
             target = date_val
             val = str(val)

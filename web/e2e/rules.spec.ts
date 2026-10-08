@@ -93,6 +93,50 @@ test.describe("Règles", () => {
     }
   });
 
+
+  test("« montant > 0 » : l'éditeur propose Sens = Revenu, et la règle laisse les dépenses", async ({ page, api }) => {
+    const { profile, account } = await freshProfile(api, "Sens E2E");
+    try {
+      // The same label once as income and once as an expense.
+      await api.importCsv(account.id, csv([
+        "2026-09-01;VERSEMENT ACME CORP;1850,00",
+        "2026-09-05;PRELEVEMENT ACME CORP;-40,00",
+      ]));
+
+      await useProfile(page, profile.id);
+      await page.goto("/transactions");
+      await expectAppReady(page);
+      await page.getByRole("button", { name: "Nouvelle règle" }).click();
+      const dialog = page.getByRole("dialog", { name: "Nouvelle règle" });
+
+      await dialog.getByPlaceholder("Valeur").fill("acme corp");
+      await dialog.getByRole("combobox").first().click();
+      await page.getByRole("option", { name: /Revenus/ }).click();
+
+      // Second condition: Montant > 0 — what one writes to mean "money coming in".
+      await dialog.getByRole("button", { name: "Condition" }).click();
+      await dialog.getByRole("combobox").nth(4).click();
+      await page.getByRole("option", { name: "Montant" }).click();
+      await dialog.getByPlaceholder("Valeur").nth(1).fill("0");
+
+      // An amount has no sign in a rule: the editor says so and offers the fix.
+      await expect(dialog.getByText(/Un montant se compare sans son signe/)).toBeVisible();
+      await dialog.getByRole("button", { name: "Remplacer par Sens = Revenu" }).click();
+      await expect(dialog.getByText(/Un montant se compare sans son signe/)).toHaveCount(0);
+      await expect(dialog.getByRole("combobox", { name: "Sens" })).toHaveText("Revenu");
+
+      await dialog.getByRole("button", { name: "Enregistrer" }).click();
+      const confirm = page.getByRole("dialog", { name: "Règle créée" });
+      await expect(confirm.getByText(/1 transaction\(s\) sans catégorie/)).toBeVisible();
+      await confirm.getByRole("button", { name: "Appliquer" }).click();
+
+      // The income is classified; the expense with the same label is left alone.
+      await expect(page.getByRole("row", { name: /VERSEMENT ACME CORP/ }).getByText("Revenus")).toBeVisible();
+      await expect(page.getByRole("row", { name: /PRELEVEMENT ACME CORP/ }).getByText("Sans catégorie")).toBeVisible();
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
 });
 
 test.describe("Devise de base", () => {

@@ -10,7 +10,7 @@ export interface RuleCondition {
 export const RULE_FIELDS = [
   { value: "description", label: "Libellé" },
   { value: "amount", label: "Montant" },
-  { value: "is_debit", label: "Débit ?" },
+  { value: "is_debit", label: "Sens" },
   { value: "currency", label: "Devise" },
   { value: "account_id", label: "Compte (ID)" },
   { value: "date", label: "Date" },
@@ -21,7 +21,7 @@ export const RULE_FIELDS = [
 // prime"), "mot entier" keeps a short keyword from firing inside another word.
 export function operatorsFor(field: string) {
   if (field === "amount") return [{ value: ">", label: ">" }, { value: ">=", label: "≥" }, { value: "<", label: "<" }, { value: "<=", label: "≤" }, { value: "equals", label: "=" }];
-  if (field === "is_debit") return [{ value: "equals", label: "est (true/false)" }];
+  if (field === "is_debit") return [{ value: "equals", label: "est" }];
   return [
     { value: "contains", label: "contient" },
     { value: "not_contains", label: "ne contient pas" },
@@ -32,11 +32,49 @@ export function operatorsFor(field: string) {
   ];
 }
 
+/** The two values of a « Sens » condition. It is stored as the `is_debit` field
+ *  ("true" / "false"); the user only ever sees Dépense / Revenu. */
+export const DIRECTIONS = [
+  { value: "true", label: "Dépense" },
+  { value: "false", label: "Revenu" },
+];
+export function directionLabel(value: string): string {
+  return String(value).toLowerCase() === "true" ? "Dépense" : "Revenu";
+}
+
+/** An amount as typed in the editor ("12,5", "12.5", "1 850"); null if not a number. */
+export function parseRuleAmount(value: string): number | null {
+  const text = String(value).trim().replace(/[\s\u00a0\u202f]/g, "").replace(",", ".");
+  if (text === "") return null;
+  const n = Number(text);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Why an amount condition cannot do what it looks like it does.
+ *
+ *  A rule compares the amount WITHOUT its sign — an expense of 40 € and an income
+ *  of 40 € are both "40". So "montant > 0" is true for everything ("always") and
+ *  "montant < 0" for nothing ("never"): neither tells income from expense, which
+ *  is what « Sens » is for. "invalid" is a threshold that is not a number. */
+export function amountConditionIssue(c: RuleCondition): "always" | "never" | "invalid" | null {
+  if (c.field !== "amount") return null;
+  const v = parseRuleAmount(c.value);
+  if (v == null) return String(c.value).trim() === "" ? null : "invalid";
+  switch (c.operator) {
+    case ">": return v <= 0 ? "always" : null;
+    case ">=": return v <= 0 ? "always" : null;
+    case "<": return v <= 0 ? "never" : null;
+    case "<=": return v <= 0 ? "never" : null;
+    case "equals": return v < 0 ? "never" : null;
+    default: return null;
+  }
+}
+
 /** One-line, human-readable form of a rule's conditions. */
 export function ruleSummary(rule: { conditions: RuleCondition[]; logic_operator?: string | null }): string {
   const one = (c: RuleCondition) => {
     const field = RULE_FIELDS.find((f) => f.value === c.field)?.label ?? c.field;
-    if (c.field === "is_debit") return `${field} = ${c.value}`;
+    if (c.field === "is_debit") return `${field} = ${directionLabel(c.value)}`;
     const op = operatorsFor(c.field).find((o) => o.value === c.operator)?.label ?? c.operator;
     return `${field} ${op} « ${c.value} »`;
   };

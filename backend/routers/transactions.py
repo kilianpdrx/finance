@@ -5,7 +5,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
@@ -16,7 +16,7 @@ from schemas import (
     UncategorizedGroup, SimilarUncategorized,
 )
 from ownership import require_account, require_category
-from utils import generate_import_hash, csv_safe_cell
+from utils import generate_import_hash, csv_safe_cell, parse_amount_query
 from services.label_groups import group_by_label, label_key, rule_pattern
 
 router = APIRouter()
@@ -87,7 +87,20 @@ async def _build_txn_filters(
     if month is not None:
         filters.append(func.strftime("%Y-%m", Transaction.date) == month)  # YYYY-MM
     if search:
-        filters.append(Transaction.description.ilike(f"%{search}%"))
+        # The search box finds a label OR an amount ("23,40", "-1 850", "23").
+        label = Transaction.description.ilike(f"%{search}%")
+        amount = parse_amount_query(search)
+        if amount is None:
+            filters.append(label)
+        else:
+            # The amount charged abroad is searched too: it is what a card slip shows.
+            in_range = or_(
+                Transaction.amount_cents.between(amount.lo_cents, amount.hi_cents),
+                Transaction.original_amount_cents.between(amount.lo_cents, amount.hi_cents),
+            )
+            if amount.is_debit is not None:
+                in_range = and_(in_range, Transaction.is_debit == amount.is_debit)
+            filters.append(in_range if amount.amount_only else or_(label, in_range))
     if is_debit is not None:
         filters.append(Transaction.is_debit == is_debit)
     if is_internal_transfer is not None:

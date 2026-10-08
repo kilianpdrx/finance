@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2, Pencil, Merge, RefreshCw, Search, ChevronDown } from "lucide-react";
+import { Plus, Trash2, Pencil, Merge, RefreshCw, Search, ChevronDown, AlertTriangle } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { RuleDialog } from "@/components/settings/rule-dialog";
 import { RuleTester } from "@/components/settings/rule-tester";
 import { ArchivedBadge } from "@/components/transactions/category-select";
-import { ruleSummary } from "@/lib/rules";
+import { amountConditionIssue, ruleSummary } from "@/lib/rules";
 
 export function RulesTab({ accounts }: { accounts: Account[] }) {
   const { data: rules = [] } = useAllRules();
@@ -145,6 +145,15 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
                   <span className="flex-1 truncate text-xs text-muted-foreground" title={ruleSummary(r)}>
                     {ruleSummary(r)}
                   </span>
+                  {/* An amount has no sign in a rule: "> 0" filters nothing. Point
+                      at the rules written that way; the editor offers the fix. */}
+                  {r.conditions.some((c) => amountConditionIssue(c)) && (
+                    <button type="button" onClick={() => openEdit(r)}
+                      className="inline-flex shrink-0 items-center gap-1 rounded bg-warning/15 px-1.5 py-0.5 text-[11px] font-medium text-warning hover:bg-warning/25"
+                      title="Une condition sur le montant ne filtre rien : un montant se compare sans son signe. Ouvrez la règle pour la corriger.">
+                      <AlertTriangle className="size-3" /> condition sans effet
+                    </button>
+                  )}
                   <Switch checked={r.is_active} onCheckedChange={(v) => update.mutate({ ruleId: r.id, body: { is_active: v } })} />
                   <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label="Modifier la règle" onClick={() => openEdit(r)}><Pencil className="size-4" /></Button>
                   <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-negative" aria-label="Supprimer la règle" onClick={() => remove.mutate(r.id)}><Trash2 className="size-4" /></Button>

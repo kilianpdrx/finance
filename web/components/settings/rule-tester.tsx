@@ -5,7 +5,9 @@ import { FlaskConical, ArrowRight, AlertTriangle, Pencil } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ruleSummary, type RuleCondition } from "@/lib/rules";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DIRECTIONS, ruleSummary, type RuleCondition } from "@/lib/rules";
+import { parseAmountToCents } from "@/lib/format";
 
 interface Match {
   rule_id: number;
@@ -37,6 +39,11 @@ interface Result {
  */
 export function RuleTester({ onEditRule }: { onEditRule?: (ruleId: number) => void }) {
   const [description, setDescription] = useState("");
+  // A rule can also test the amount and the direction, so the test must be able
+  // to state them — it used to send 0 and "dépense", which made every rule with
+  // an amount or a « Sens » condition look like it matched nothing.
+  const [amount, setAmount] = useState("");
+  const [isDebit, setIsDebit] = useState("true");
   const [result, setResult] = useState<Result | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -49,7 +56,7 @@ export function RuleTester({ onEditRule }: { onEditRule?: (ruleId: number) => vo
       const res = await fetch("/api/categories/rules/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description, amount_cents: 0, is_debit: true }),
+        body: JSON.stringify({ description, amount_cents: Math.abs(parseAmountToCents(amount)), is_debit: isDebit === "true" }),
       });
       if (!res.ok) throw new Error(`Erreur ${res.status}`);
       setResult(await res.json());
@@ -74,18 +81,31 @@ export function RuleTester({ onEditRule }: { onEditRule?: (ruleId: number) => vo
         <FlaskConical className="size-4 text-muted-foreground" />
         <p className="text-sm font-semibold">Tester une règle</p>
         <span className="text-xs text-muted-foreground">
-          Collez un libellé de transaction pour voir quelle règle s&apos;applique.
+          Collez un libellé de transaction pour voir quelle règle s&apos;applique. Le montant et le sens comptent pour les règles qui les testent.
         </span>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Input
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && run()}
           placeholder="Ex : PAIEMENT CB AMAZON PRIME VIDEO"
-          className="h-9 flex-1"
+          className="h-9 min-w-[14rem] flex-1"
         />
+        <Input
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && run()}
+          placeholder="Montant"
+          inputMode="decimal"
+          aria-label="Montant de la transaction à tester"
+          className="h-9 w-28"
+        />
+        <Select value={isDebit} onValueChange={setIsDebit}>
+          <SelectTrigger className="h-9 w-32" aria-label="Sens de la transaction à tester"><SelectValue /></SelectTrigger>
+          <SelectContent>{DIRECTIONS.map((d) => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}</SelectContent>
+        </Select>
         <Button variant="outline" size="sm" onClick={run} disabled={busy || !description.trim()}>
           {busy ? "Test…" : "Tester"}
         </Button>

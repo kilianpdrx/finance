@@ -12,6 +12,9 @@ const thisMonth = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
 const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 const lastMonth = `${prev.getFullYear()}-${pad(prev.getMonth() + 1)}`;
 
+// Too long for the panel's one-line rows: it is cut there, and shown whole on hover.
+const LONG_LABEL = "CARTE X1234 FRANPRIX 5107 PARIS 12 AVENUE DE LA REPUBLIQUE MAGASIN DU CENTRE VILLE";
+
 async function budgetProfile(api: Api, name: string) {
   const profile = await api.createProfile(name);
   api.profileId = profile.id;
@@ -25,7 +28,7 @@ async function budgetProfile(api: Api, name: string) {
     `${thisMonth}-01;VIREMENT SALAIRE ACME;1850,00`,
     `${thisMonth}-01;PRLV SEPA LOYER DUPONT;-620,00`,
     `${thisMonth}-01;CARTE X1234 FRANPRIX 5106 PARIS 11;-23,40`,
-    `${thisMonth}-02;CARTE X1234 FRANPRIX 5107 PARIS 12;-18,10`,
+    `${thisMonth}-02;${LONG_LABEL};-18,10`,
   ].join("\n") + "\n");
   return profile;
 }
@@ -64,6 +67,40 @@ test.describe("Budget", () => {
       // A single click selects; a double click still opens the manual adjustment.
       await groceries.first().dblclick();
       await expect(page.locator("tbody input")).toBeVisible();
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
+  test("une transaction du panneau montre son libellé entier et change de catégorie", async ({ page, api }) => {
+    const profile = await budgetProfile(api, "Budget édition E2E");
+    try {
+      await useProfile(page, profile.id);
+      await page.goto("/budget");
+      await expectAppReady(page);
+
+      const panel = page.getByRole("complementary", { name: "Transactions de la cellule sélectionnée" });
+      const groceries = page.getByRole("row", { name: /Alimentation/ }).locator("td", { hasText: "41,5" });
+      await groceries.first().click();
+      await expect(panel.getByText("2 transactions")).toBeVisible();
+
+      // Hover: the label is cut in the list, the whole of it floats next to the row.
+      const row = panel.getByRole("button", { name: /FRANPRIX 5107/ });
+      await row.hover();
+      await expect(page.getByRole("tooltip")).toHaveText(LONG_LABEL);
+
+      // Click: a category picker opens in place. Moving the transaction updates
+      // the table, the panel's list and the panel's amount together.
+      await row.click();
+      await panel.getByRole("combobox").click();
+      await page.getByRole("option", { name: /Restaurants/ }).click();
+      await expect(page.getByText("Classée en Restaurants")).toBeVisible();
+
+      await expect(panel.getByText("1 transaction", { exact: true })).toBeVisible();
+      await expect(panel.getByText(/FRANPRIX 5107/)).toHaveCount(0);
+      await expect(panel.getByText(/23,40/).first()).toBeVisible();
+      await expect(page.getByRole("row", { name: /Alimentation/ }).locator("td", { hasText: "23,4" }).first()).toBeVisible();
+      await expect(page.getByRole("row", { name: /Restaurants/ }).locator("td", { hasText: "18,1" }).first()).toBeVisible();
     } finally {
       await api.deleteProfile(profile.id);
     }

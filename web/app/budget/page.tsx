@@ -11,7 +11,7 @@ import { CourantTabs, type CourantSelection } from "@/components/analytics/coura
 import { useAccounts, useBudgetMutation, usePlannedExpenseMutations, type BudgetFullResponse } from "@/lib/api/hooks";
 import { PlanExpenseDialog } from "@/components/budget/plan-expense-dialog";
 import { CellTransactions } from "@/components/budget/cell-transactions";
-import { buildMonths, cellDisplayValue, cellType, mergeYears, parentSubtotalRow, signClass, yearOf, type CellSelection, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
+import { buildMonths, cellDisplayValue, cellType, mergeYears, parentSubtotalRow, selectionAmounts, signClass, yearOf, type CellSelection, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
 import { formatCents, formatMonthLabel, deriveCurrency } from "@/lib/format";
 
 // Column geometry (must match the Tailwind widths used in the table).
@@ -23,14 +23,12 @@ const STEP = 12; // months added per lazy extension
 // The cell whose transactions are listed in the right-hand panel.
 const PICKED = "ring-2 ring-inset ring-brand";
 
-/** Makes a row's cells clickable: the categories they add up, how to name them,
- *  and the part of each month's amount that comes from real transactions. */
+/** Makes a row's cells clickable: the categories they add up and how to name them. */
 interface RowPick {
   rowKey: string;
   label: string;
   color?: string;
   categoryIds: number[];
-  actualAt: (monthIdx: number) => number;
 }
 
 const SECTION: Record<string, { head: string; total: string }> = {
@@ -129,6 +127,9 @@ export default function BudgetPage() {
   }, [results.map((r) => r.dataUpdatedAt).join(","), targetMonths]);
   // Only block the whole table on the very first load — extensions fill in place.
   const loading = !data;
+  // The selected cell's amounts, read from the current data so the panel follows
+  // a category change made from it.
+  const selectedAmounts = useMemo(() => (data && selected ? selectionAmounts(data, selected) : null), [data, selected]);
 
   // On first data, bring the current month into view: a third of the way into
   // the months area, with the previous months to its left. Measured on the real
@@ -186,11 +187,8 @@ export default function BudgetPage() {
   const yearTotal = (cells: MergedCell[], year: string) =>
     cells.filter((c) => yearOf(c.month) === year).reduce((s, c) => s + cellDisplayValue(c, currentMonth), 0);
 
-  const pickCell = (pick: RowPick, period: string, value: number, actual: number) =>
-    setSelected({
-      key: `${pick.rowKey}|${period}`, label: pick.label, color: pick.color, period,
-      categoryIds: pick.categoryIds, value_cents: value, actual_cents: actual,
-    });
+  const pickCell = (pick: RowPick, period: string) =>
+    setSelected({ key: `${pick.rowKey}|${period}`, rowKey: pick.rowKey, label: pick.label, color: pick.color, period, categoryIds: pick.categoryIds });
   const isPicked = (pick: RowPick | undefined, period: string) => pick != null && selected?.key === `${pick.rowKey}|${period}`;
 
   // Renders a row's month cells, inserting a per-year Total cell after each year.
@@ -210,7 +208,7 @@ export default function BudgetPage() {
           {renderCell(cell, mIdx)}
           {yearBoundaries.has(mIdx) && (
             <td
-              onClick={pick ? () => pickCell(pick, year, total, cells.reduce((sum, c, i) => sum + (yearOf(c.month) === year ? pick.actualAt(i) : 0), 0)) : undefined}
+              onClick={pick ? () => pickCell(pick, year) : undefined}
               className={`w-24 border-l-2 border-border bg-muted/60 px-2 py-2 text-right text-sm font-semibold ${typeof totalCls === "function" ? totalCls(total) : totalCls} ${pick ? "cursor-pointer" : ""} ${isPicked(pick, year) ? PICKED : ""}`}
             >
               {fmt(total, true)}
@@ -230,7 +228,7 @@ export default function BudgetPage() {
   function catRow({ row, sIdx, rIdx }: { row: MergedRow; sIdx: number; rIdx: number }) {
     const pick: RowPick | undefined = row.category_id == null ? undefined : {
       rowKey: `cat:${row.category_id}`, label: row.category_name, color: row.category_color,
-      categoryIds: [row.category_id], actualAt: (i) => row.cells[i].actual_cents,
+      categoryIds: [row.category_id],
     };
     return (
       <tr className="border-b border-border/60 hover:bg-muted/40">
@@ -256,7 +254,7 @@ export default function BudgetPage() {
                 : `hover:bg-muted ${isCurrent ? "bg-brand/8" : ""} ${isFuture ? "bg-muted/30" : ""}`;
           return (
             <td
-              onClick={pick ? () => pickCell(pick, cell.month, value, cell.actual_cents) : undefined}
+              onClick={pick ? () => pickCell(pick, cell.month) : undefined}
               onDoubleClick={() => { setEditing(key); setEditValue(cell.expected_cents ? String(cell.expected_cents / 100) : ""); }}
               className={`group/cell relative w-24 cursor-pointer px-2 py-2 text-right text-sm ${bg} ${isPicked(pick, cell.month) ? PICKED : ""}`}
             >
@@ -326,7 +324,6 @@ export default function BudgetPage() {
     const pick: RowPick = {
       rowKey: `group:${pid}`, label: row.category_name, color: row.category_color,
       categoryIds: members.flatMap((m) => (m.category_id == null ? [] : [m.category_id])),
-      actualAt: (i) => members.reduce((sum, m) => sum + m.cells[i].actual_cents, 0),
     };
     return (
       <tr className="border-b border-border/60 font-semibold hover:bg-muted/40">
@@ -343,9 +340,9 @@ export default function BudgetPage() {
             <span className="truncate text-sm" title={row.category_name}>{row.category_name}</span>
           </div>
         </td>
-        {renderCells(row.cells, (cell, mIdx) => (
+        {renderCells(row.cells, (cell) => (
           <td
-            onClick={() => pickCell(pick, cell.month, cellDisplayValue(cell, currentMonth), pick.actualAt(mIdx))}
+            onClick={() => pickCell(pick, cell.month)}
             className={`w-24 cursor-pointer px-2 py-2 text-right text-sm ${isPicked(pick, cell.month) ? PICKED : ""}`}
           >
             {fmt(cellDisplayValue(cell, currentMonth), true)}
@@ -362,7 +359,7 @@ export default function BudgetPage() {
     row: MergedRow; label: string; cls: string; signed?: boolean; rowKey?: string; categoryIds?: number[];
   }) {
     const pick: RowPick | undefined = rowKey && categoryIds
-      ? { rowKey, label, categoryIds, actualAt: (i) => row.cells[i].actual_cents }
+      ? { rowKey, label, categoryIds }
       : undefined;
     return (
       <tr className={`border-b-2 border-border font-semibold ${cls}`}>
@@ -371,7 +368,7 @@ export default function BudgetPage() {
           const value = cellDisplayValue(cell, currentMonth);
           return (
             <td
-              onClick={pick ? () => pickCell(pick, cell.month, value, cell.actual_cents) : undefined}
+              onClick={pick ? () => pickCell(pick, cell.month) : undefined}
               className={`w-24 px-2 py-2.5 text-right text-sm ${signed ? signClass(value) : ""} ${pick ? "cursor-pointer" : ""} ${isPicked(pick, cell.month) ? PICKED : ""}`}
             >
               <span className="inline-flex items-center justify-end gap-1">{fmt(value, true)}</span>
@@ -519,7 +516,7 @@ export default function BudgetPage() {
       )}
       </div>
       <aside className="lg:sticky lg:top-4 lg:w-80 lg:shrink-0 xl:w-96" aria-label="Transactions de la cellule sélectionnée">
-        <CellTransactions selection={selected} accountId={accountId} accountIds={scopeIds} currency={currency} onClose={() => setSelected(null)} />
+        <CellTransactions selection={selected} amounts={selectedAmounts} accountId={accountId} accountIds={scopeIds} currency={currency} onClose={() => setSelected(null)} />
       </aside>
       </div>
 

@@ -119,6 +119,32 @@ async def test_tester_is_profile_scoped(client, db_session, seed_data, extra_pro
     assert all(m["category_name"] != "ForeignCat" for m in body["all_matches"])
 
 
+@pytest.mark.asyncio
+async def test_tester_takes_the_amount_and_direction_into_account(client, db_session, seed_data):
+    """A rule on amount or direction can only be tested if the test says which
+    amount and which direction — the screen used to send 0 and "dépense"."""
+    pid = seed_data["profile"].id
+    db_session.add_all([
+        CategoryRule(profile_id=pid, category_id=seed_data["cat_salaire"].id, is_active=True, logic_operator="AND",
+                     conditions=[{"field": "description", "operator": "contains", "value": "acme"},
+                                 {"field": "is_debit", "operator": "equals", "value": "false"}]),
+        CategoryRule(profile_id=pid, category_id=seed_data["cat_courses"].id, is_active=True, logic_operator="AND",
+                     conditions=[{"field": "description", "operator": "contains", "value": "acme"},
+                                 {"field": "amount", "operator": ">", "value": "600"}]),
+    ])
+    await db_session.commit()
+    h = {"X-Profile-Id": str(pid)}
+
+    async def matched(**payload):
+        body = (await client.post("/api/categories/rules/test", headers=h, json={"description": "VIREMENT ACME", **payload})).json()
+        return (body["matched"] or {}).get("category_name"), body["conflict"]
+
+    assert await matched(amount_cents=40000, is_debit=False) == (seed_data["cat_salaire"].name, False)
+    assert await matched(amount_cents=70000, is_debit=True) == (seed_data["cat_courses"].name, False)
+    assert await matched(amount_cents=4000, is_debit=True) == (None, False)        # neither rule
+    assert (await matched(amount_cents=70000, is_debit=False))[1] is True           # both: a conflict
+
+
 # ── Bank presets ────────────────────────────────────────────────────────────
 def test_presets_are_well_formed():
     assert BANK_PRESETS, "at least one verified preset should ship"

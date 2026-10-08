@@ -99,6 +99,37 @@ test.describe("Transactions", () => {
     }
   });
 
+  test("la recherche trouve aussi un montant", async ({ page, api }) => {
+    const profile = await profileWith(api, "Recherche montant E2E", [
+      "2026-09-20;BOUTIQUE ALPHA;-10,00",
+      "2026-09-10;BOUTIQUE BETA;-300,00",
+      "2026-09-15;BOUTIQUE GAMMA 300;-50,00",
+    ]);
+    try {
+      await useProfile(page, profile.id);
+      await page.goto("/transactions");
+      await expectAppReady(page);
+      const search = page.getByPlaceholder("Rechercher un libellé ou un montant…");
+      const rows = page.locator("tbody tr");
+
+      // An amount with its cents: that transaction only.
+      await search.fill("300,00");
+      await expect(rows).toHaveCount(1);
+      await expect(rows.first()).toContainText("BOUTIQUE BETA");
+
+      // A bare number: the amount, and the labels that contain it.
+      await search.fill("300");
+      await expect(rows).toHaveCount(2);
+
+      // Text still searches labels.
+      await search.fill("alpha");
+      await expect(rows).toHaveCount(1);
+      await expect(rows.first()).toContainText("BOUTIQUE ALPHA");
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
   test("les colonnes se trient", async ({ page, api }) => {
     const profile = await profileWith(api, "Tri E2E", [
       "2026-09-20;BOUTIQUE ALPHA;-10,00",

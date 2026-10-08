@@ -101,3 +101,37 @@ async def test_rules_of_different_categories_conflict_instead_of_one_winning(db_
 
     # The simple API reports the same thing: no category on a conflict.
     assert await categorize_batch([{"description": "AMAZON PRIME VIDEO"}], db_session, profile_id=pid) == [(None, None)]
+
+
+def test_amount_is_compared_without_its_sign():
+    """Amounts are stored unsigned, so an amount condition says nothing about
+    direction: "> 0" holds for an expense and an income alike, and "< 0" for
+    neither. Direction is the `is_debit` condition (« Sens » in the editor)."""
+    positive = [{"field": "amount", "operator": ">", "value": "0"}]
+    assert evaluate_conditions({"description": "x", "amount_cents": 4000, "is_debit": True}, positive, "AND") is True
+    assert evaluate_conditions({"description": "x", "amount_cents": 4000, "is_debit": False}, positive, "AND") is True
+    negative = [{"field": "amount", "operator": "<", "value": "0"}]
+    assert evaluate_conditions({"description": "x", "amount_cents": 4000, "is_debit": True}, negative, "AND") is False
+
+    # What "money coming in with this label" really is:
+    income = [{"field": "description", "operator": "contains", "value": "acme"},
+              {"field": "is_debit", "operator": "equals", "value": "false"}]
+    assert evaluate_conditions({"description": "VIREMENT ACME", "amount_cents": 185000, "is_debit": False}, income, "AND") is True
+    assert evaluate_conditions({"description": "PRLV ACME", "amount_cents": 4000, "is_debit": True}, income, "AND") is False
+
+
+def test_amount_threshold_accepts_a_comma():
+    """ "12,5" used to be read as 0, so "> 12,5" matched a 10,00 amount."""
+    over = [{"field": "amount", "operator": ">", "value": "12,5"}]
+    assert evaluate_conditions({"description": "x", "amount_cents": 1000}, over, "AND") is False
+    assert evaluate_conditions({"description": "x", "amount_cents": 1300}, over, "AND") is True
+    grouped = [{"field": "amount", "operator": ">=", "value": "1 850"}]
+    assert evaluate_conditions({"description": "x", "amount_cents": 185000}, grouped, "AND") is True
+
+
+def test_amount_threshold_that_is_not_a_number_never_matches():
+    """It used to be read as 0, which made "> abc" match every transaction."""
+    for operator in (">", ">=", "<", "<=", "equals"):
+        cond = [{"field": "amount", "operator": operator, "value": "abc"}]
+        assert evaluate_conditions({"description": "x", "amount_cents": 1000}, cond, "AND") is False, operator
+

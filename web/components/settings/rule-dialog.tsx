@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, FlaskConical, X } from "lucide-react";
+import { Plus, FlaskConical, X, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api, unwrap } from "@/lib/api/client";
 import { useCategories, useRuleMutations, useCategoryMutations, previewRescan, type CategoryRule, type Account, type Transaction } from "@/lib/api/hooks";
 import { formatCents } from "@/lib/format";
-import { RULE_FIELDS, operatorsFor, type RuleCondition } from "@/lib/rules";
+import { DIRECTIONS, RULE_FIELDS, amountConditionIssue, operatorsFor, type RuleCondition } from "@/lib/rules";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { CategorySelect } from "@/components/transactions/category-select";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -19,6 +19,28 @@ import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 
 type Cond = RuleCondition;
+
+// Switching a condition's field resets what no longer applies: « Sens » has two
+// possible values (it starts on Dépense), every other field starts empty.
+const withField = (c: Cond, field: string): Cond => ({
+  field,
+  operator: operatorsFor(field)[0].value,
+  value: field === "is_debit" ? "true" : c.field === "is_debit" ? "" : c.value,
+});
+
+// What to say under an amount condition that cannot do what it looks like, and
+// the « Sens » it was most likely meant to be.
+const AMOUNT_ISSUES = {
+  always: {
+    text: "Un montant se compare sans son signe : cette condition est vraie pour toutes les transactions, dépenses comme revenus.",
+    fix: { label: "Remplacer par Sens = Revenu", value: "false" },
+  },
+  never: {
+    text: "Un montant se compare sans son signe : cette condition n'est jamais vraie.",
+    fix: { label: "Remplacer par Sens = Dépense", value: "true" },
+  },
+  invalid: { text: "Ce montant n'est pas un nombre : la condition ne sera jamais vraie.", fix: null },
+} as const;
 
 /** The full categorization-rule editor: conditions builder + live "Tester"
  *  preview. Reused for creating/editing rules and for turning a recurring
@@ -146,9 +168,12 @@ export function RuleDialog({
           </div>
 
           <div className="space-y-2">
-            {conditions.map((cond, idx) => (
-              <div key={idx} className="flex items-center gap-2">
-                <Select value={cond.field} onValueChange={(v) => setConditions((cs) => cs.map((c, i) => i === idx ? { ...c, field: v, operator: operatorsFor(v)[0].value } : c))}>
+            {conditions.map((cond, idx) => {
+              const issue = amountConditionIssue(cond);
+              return (
+              <div key={idx} className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Select value={cond.field} onValueChange={(v) => setConditions((cs) => cs.map((c, i) => i === idx ? withField(c, v) : c))}>
                   <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
                   <SelectContent>{RULE_FIELDS.map((f) => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}</SelectContent>
                 </Select>
@@ -156,10 +181,34 @@ export function RuleDialog({
                   <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
                   <SelectContent>{operatorsFor(cond.field).map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
                 </Select>
-                <Input className="flex-1" placeholder="Valeur" value={cond.value} onChange={(e) => setConditions((cs) => cs.map((c, i) => i === idx ? { ...c, value: e.target.value } : c))} />
+                {cond.field === "is_debit" ? (
+                  <Select value={String(cond.value).toLowerCase() === "true" ? "true" : "false"}
+                    onValueChange={(v) => setConditions((cs) => cs.map((c, i) => i === idx ? { ...c, value: v } : c))}>
+                    <SelectTrigger className="flex-1" aria-label="Sens"><SelectValue /></SelectTrigger>
+                    <SelectContent>{DIRECTIONS.map((d) => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}</SelectContent>
+                  </Select>
+                ) : (
+                  <Input className="flex-1" placeholder="Valeur" value={cond.value}
+                    inputMode={cond.field === "amount" ? "decimal" : undefined}
+                    onChange={(e) => setConditions((cs) => cs.map((c, i) => i === idx ? { ...c, value: e.target.value } : c))} />
+                )}
                 {conditions.length > 1 && <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={() => setConditions((cs) => cs.filter((_, i) => i !== idx))}><X className="size-4" /></Button>}
               </div>
-            ))}
+              {issue && (
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-warning/10 px-2.5 py-1.5 text-xs text-warning">
+                  <AlertTriangle className="size-3.5 shrink-0" />
+                  <span className="min-w-0 flex-1">{AMOUNT_ISSUES[issue].text}</span>
+                  {AMOUNT_ISSUES[issue].fix && (
+                    <button type="button" className="shrink-0 font-semibold underline underline-offset-2"
+                      onClick={() => setConditions((cs) => cs.map((c, i) => i === idx ? { field: "is_debit", operator: "equals", value: AMOUNT_ISSUES[issue].fix!.value } : c))}>
+                      {AMOUNT_ISSUES[issue].fix!.label}
+                    </button>
+                  )}
+                </p>
+              )}
+              </div>
+              );
+            })}
             <Button variant="ghost" size="sm" onClick={() => setConditions((cs) => [...cs, { field: "description", operator: "contains", value: "" }])}><Plus className="size-4" /> Condition</Button>
           </div>
 

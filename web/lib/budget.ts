@@ -54,10 +54,17 @@ export function signClass(cents: number): string {
   return cents < 0 ? "text-negative" : cents > 0 ? "text-positive" : "";
 }
 
-/** A cell the user clicked, to list the transactions behind its amount. */
+/** A cell the user clicked, to list the transactions behind its amount.
+ *
+ *  Only the cell's IDENTITY is kept — its amounts are read from the table's
+ *  current data (`selectionAmounts`), so they stay right when a transaction of
+ *  the cell is re-categorised from the panel. */
 export interface CellSelection {
   /** Identifies the cell (row + period), to highlight it. */
   key: string;
+  /** The row: "cat:ID", "group:ID" (a parent and its sub-categories),
+   *  "total:SECTION" or "total:hors-investissements". */
+  rowKey: string;
   label: string;
   color?: string;
   /** A month ("YYYY-MM") or a whole year ("YYYY", for a Total column). */
@@ -65,11 +72,43 @@ export interface CellSelection {
   /** The categories the cell adds up: one, a parent with its sub-categories, or
    *  every category of a section for a TOTAL row. */
   categoryIds: number[];
+}
+
+export interface CellAmounts {
   /** What the cell displays… */
   value_cents: number;
   /** …and the part of it that comes from real transactions (the rest is a manual
    *  adjustment or a planned amount, which have no transaction to show). */
   actual_cents: number;
+}
+
+/** The amounts of a selected cell, as the table shows them right now. Null when
+ *  the row or the period is no longer in the table. */
+export function selectionAmounts(data: MergedBudget, sel: Pick<CellSelection, "rowKey" | "period">): CellAmounts | null {
+  const wholeYear = sel.period.length === 4;
+  const monthIdx = data.months.flatMap((m, i) => ((wholeYear ? yearOf(m) : m) === sel.period ? [i] : []));
+  const [kind, id] = sel.rowKey.split(":");
+  const allRows = data.sections.flatMap((s) => s.rows);
+
+  // The rows whose displayed values the cell adds up.
+  let rows: MergedRow[];
+  if (kind === "cat") rows = allRows.filter((r) => r.category_id === Number(id));
+  else if (kind === "group") rows = allRows.filter((r) => r.category_id === Number(id) || r.parent_id === Number(id));
+  else if (sel.rowKey === "total:hors-investissements")
+    rows = (data.sections.find((s) => s.section === "depenses_variables")?.rows ?? []).filter((r) => !r.is_investment);
+  else if (kind === "total") rows = data.sections.filter((s) => s.section === id).map((s) => s.section_totals);
+  else rows = [];
+  if (rows.length === 0 || monthIdx.length === 0) return null;
+
+  let value = 0;
+  let actual = 0;
+  for (const row of rows) {
+    for (const i of monthIdx) {
+      value += cellDisplayValue(row.cells[i]);
+      actual += row.cells[i].actual_cents;
+    }
+  }
+  return { value_cents: value, actual_cents: actual };
 }
 
 /** First and last day of a period ("YYYY-MM" or "YYYY"), as ISO dates. */

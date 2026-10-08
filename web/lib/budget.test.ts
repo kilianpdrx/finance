@@ -6,8 +6,10 @@ import {
   cellType,
   parentSubtotalRow,
   periodRange,
+  selectionAmounts,
   signClass,
   yearOf,
+  type MergedBudget,
   type MergedCell,
   type MergedRow,
 } from './budget';
@@ -181,6 +183,52 @@ describe('cellTransactions — les transactions derrière une cellule', () => {
   it('n\'attribue jamais une transaction sans catégorie', () => {
     expect(ids(cellTransactions(txns, [], null))).toEqual([]);
     expect(ids(cellTransactions(txns, [10, 11, 12], null))).not.toContain(4);
+  });
+});
+
+describe('selectionAmounts — les montants de la cellule choisie, lus dans le tableau', () => {
+  const months = ['2026-08', '2026-09', '2027-01'];
+  const row = (id: number, cells: Partial<MergedCell>[], over: Partial<MergedRow> = {}): MergedRow => ({
+    category_id: id, category_name: `cat ${id}`, category_color: '', is_investment: false,
+    cells: cells.map((c, i) => cell({ month: months[i], ...c })), ...over,
+  });
+  const data: MergedBudget = {
+    months,
+    sections: [{
+      section: 'depenses_variables', section_label: 'DÉPENSES VARIABLES',
+      rows: [
+        row(10, [{ actual_cents: 1000 }, { actual_cents: 2000, expected_cents: 500 }, { actual_cents: 300 }]),
+        row(20, [{}, { actual_cents: 100 }, {}]),                                        // a parent…
+        row(21, [{ actual_cents: 40 }, { planned_cents: 700 }, {}], { parent_id: 20 }),   // …and its child
+        row(30, [{ actual_cents: 9000 }, {}, {}], { is_investment: true }),
+      ],
+      section_totals: row(-1, [{ actual_cents: 10040 }, { actual_cents: 2100, expected_cents: 1200 }, { actual_cents: 300 }], { category_id: null }),
+    }],
+    reste_row: row(-2, [{}, {}, {}], { category_id: null }),
+    grand_total_row: row(-3, [{}, {}, {}], { category_id: null }),
+  };
+
+  it('une catégorie sur un mois : réel, ajustement compris dans la valeur', () => {
+    expect(selectionAmounts(data, { rowKey: 'cat:10', period: '2026-09' })).toEqual({ value_cents: 2500, actual_cents: 2000 });
+  });
+
+  it('une colonne Total : toute l\'année, et seulement elle', () => {
+    expect(selectionAmounts(data, { rowKey: 'cat:10', period: '2026' })).toEqual({ value_cents: 3500, actual_cents: 3000 });
+    expect(selectionAmounts(data, { rowKey: 'cat:10', period: '2027' })).toEqual({ value_cents: 300, actual_cents: 300 });
+  });
+
+  it('un groupe : le parent et ses sous-catégories, prévision active comprise', () => {
+    expect(selectionAmounts(data, { rowKey: 'group:20', period: '2026-09' })).toEqual({ value_cents: 800, actual_cents: 100 });
+  });
+
+  it('un total de section, et le total hors investissements', () => {
+    expect(selectionAmounts(data, { rowKey: 'total:depenses_variables', period: '2026-09' })).toEqual({ value_cents: 3300, actual_cents: 2100 });
+    expect(selectionAmounts(data, { rowKey: 'total:hors-investissements', period: '2026-08' })).toEqual({ value_cents: 1040, actual_cents: 1040 });
+  });
+
+  it('rien si la ligne ou la période n\'est plus dans le tableau', () => {
+    expect(selectionAmounts(data, { rowKey: 'cat:999', period: '2026-09' })).toBeNull();
+    expect(selectionAmounts(data, { rowKey: 'cat:10', period: '2030-01' })).toBeNull();
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { operatorsFor, ruleSummary } from './rules';
+import { amountConditionIssue, operatorsFor, parseRuleAmount, ruleSummary } from './rules';
 
 describe('rules.ts', () => {
   describe('operatorsFor', () => {
@@ -36,17 +36,64 @@ describe('rules.ts', () => {
       })).toBe('Libellé contient « amazon » ET Libellé ne contient pas « prime »');
     });
 
-    it('reads a direction condition without the operator label', () => {
-      expect(ruleSummary({
-        logic_operator: 'AND',
-        conditions: [{ field: 'is_debit', operator: 'equals', value: 'false' }],
-      })).toBe('Débit ? = false');
+    it('reads a direction condition as Dépense / Revenu, never true / false', () => {
+      const sens = (value: string) => ruleSummary({ conditions: [{ field: 'is_debit', operator: 'equals', value }] });
+      expect(sens('false')).toBe('Sens = Revenu');
+      expect(sens('true')).toBe('Sens = Dépense');
+      expect(sens('True')).toBe('Sens = Dépense');
     });
 
     it('falls back to the raw names for an unknown field or operator', () => {
       expect(ruleSummary({
         conditions: [{ field: 'memo', operator: 'fuzzy', value: 'x' }],
       })).toBe('memo fuzzy « x »');
+    });
+  });
+
+  describe('parseRuleAmount', () => {
+    it('reads amounts as people type them', () => {
+      expect(parseRuleAmount('12,5')).toBe(12.5);
+      expect(parseRuleAmount('12.5')).toBe(12.5);
+      expect(parseRuleAmount(' 1 850 ')).toBe(1850);
+      expect(parseRuleAmount('-3')).toBe(-3);
+    });
+
+    it('rejects what is not a number', () => {
+      expect(parseRuleAmount('abc')).toBeNull();
+      expect(parseRuleAmount('')).toBeNull();
+      expect(parseRuleAmount('12,5,3')).toBeNull();
+    });
+  });
+
+  describe('amountConditionIssue — an amount has no sign', () => {
+    const amount = (operator: string, value: string) => amountConditionIssue({ field: 'amount', operator, value });
+
+    it('flags a condition that is true for every transaction', () => {
+      expect(amount('>', '0')).toBe('always');       // the classic "money coming in" attempt
+      expect(amount('>=', '0')).toBe('always');
+      expect(amount('>', '-10')).toBe('always');
+    });
+
+    it('flags a condition that can never be true', () => {
+      expect(amount('<', '0')).toBe('never');        // the "money going out" attempt
+      expect(amount('<=', '0')).toBe('never');
+      expect(amount('<', '-5')).toBe('never');
+      expect(amount('equals', '-20')).toBe('never');
+    });
+
+    it('accepts a real threshold', () => {
+      expect(amount('>', '600')).toBeNull();
+      expect(amount('<', '12,5')).toBeNull();
+      expect(amount('equals', '0')).toBeNull();
+    });
+
+    it('flags a threshold that is not a number, but not an empty one being typed', () => {
+      expect(amount('>', 'abc')).toBe('invalid');
+      expect(amount('>', '')).toBeNull();
+    });
+
+    it('only looks at amount conditions', () => {
+      expect(amountConditionIssue({ field: 'description', operator: 'contains', value: '0' })).toBeNull();
     });
   });
 });

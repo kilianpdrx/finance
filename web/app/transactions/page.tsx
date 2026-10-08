@@ -182,7 +182,7 @@ export default function TransactionsPage() {
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
-        <SearchBox onSearch={(v) => { setSearch(v); setPage(0); }} />
+        <SearchBox onSearch={(v) => { setSearch(v); setPage(0); }} placeholder="Rechercher un libellé ou un montant…" />
         <AccountFilter value={account} onChange={(v) => { setAccount(v); setPage(0); }} accounts={txAccounts} width="w-44" />
         <CategoryFilter value={category} onChange={(v) => { setCategory(v); setPage(0); }} categories={categories}
           accountNames={accountNames} accountFilter={account === ALL ? null : Number(account)} width="w-56" />
