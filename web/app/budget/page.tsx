@@ -10,7 +10,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CourantTabs, type CourantSelection } from "@/components/analytics/courant-tabs";
 import { useAccounts, useBudgetMutation, usePlannedExpenseMutations, type BudgetFullResponse } from "@/lib/api/hooks";
 import { PlanExpenseDialog } from "@/components/budget/plan-expense-dialog";
-import { buildMonths, cellDisplayValue, cellType, mergeYears, parentSubtotalRow, yearOf, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
+import { CellTransactions } from "@/components/budget/cell-transactions";
+import { buildMonths, cellDisplayValue, cellType, mergeYears, parentSubtotalRow, signClass, yearOf, type CellSelection, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
 import { formatCents, formatMonthLabel, deriveCurrency } from "@/lib/format";
 
 // Column geometry (must match the Tailwind widths used in the table).
@@ -19,6 +20,19 @@ const STEP = 12; // months added per lazy extension
 
 // Total-row bands use OPAQUE backgrounds (bg-muted) so the sticky TOTAL/label
 // columns don't let the horizontally-scrolled month cells bleed through.
+// The cell whose transactions are listed in the right-hand panel.
+const PICKED = "ring-2 ring-inset ring-brand";
+
+/** Makes a row's cells clickable: the categories they add up, how to name them,
+ *  and the part of each month's amount that comes from real transactions. */
+interface RowPick {
+  rowKey: string;
+  label: string;
+  color?: string;
+  categoryIds: number[];
+  actualAt: (monthIdx: number) => number;
+}
+
 const SECTION: Record<string, { head: string; total: string }> = {
   revenus: { head: "bg-positive text-white", total: "bg-muted text-positive" },
   depenses_fixes: { head: "bg-negative text-white", total: "bg-muted text-negative" },
@@ -32,6 +46,10 @@ export default function BudgetPage() {
   const courantKey = courantIds.join(",");
   const [accountSel, setAccountSel] = useState<CourantSelection>("all");
   const accountId = accountSel === "all" ? undefined : accountSel;
+  // The accounts an "all accounts" budget covers — the same list the API is given.
+  const scopeIds = useMemo(() => (courantKey ? courantKey.split(",").map(Number) : null), [courantKey]);
+  // Clicked cell → its transactions, listed to the right of the table.
+  const [selected, setSelected] = useState<CellSelection | null>(null);
   const budgetMut = useBudgetMutation();
   const plannedMut = usePlannedExpenseMutations();
   const [planOpen, setPlanOpen] = useState(false);
@@ -112,15 +130,23 @@ export default function BudgetPage() {
   // Only block the whole table on the very first load — extensions fill in place.
   const loading = !data;
 
-  // On first data, centre the viewport on the current month.
+  // On first data, bring the current month into view: a third of the way into
+  // the months area, with the previous months to its left. Measured on the real
+  // column rather than computed from COL_W — columns shrink to their content, so
+  // an assumed width lands several months off, and with the transactions panel
+  // taking the right of the screen there is no slack left to hide that. Waits for
+  // every year to have loaded: amounts widen their columns, so measuring after
+  // the first year only would be off again once the others arrive.
+  const allYearsLoaded = results.every((r) => r.data !== undefined);
   useEffect(() => {
-    if (inited.current || !data || !scrollRef.current) return;
-    const curIdx = targetMonths.indexOf(currentMonth);
-    if (curIdx >= 0) {
-      scrollRef.current.scrollLeft = Math.max(0, curIdx * COL_W - scrollRef.current.clientWidth / 3);
-      inited.current = true;
-    }
-  }, [data, targetMonths, currentMonth]);
+    const el = scrollRef.current;
+    if (inited.current || !data || !allYearsLoaded || !el) return;
+    const current = el.querySelector<HTMLElement>("th[data-current-month]");
+    if (!current) return;
+    const labelWidth = el.querySelector<HTMLElement>("thead th")?.offsetWidth ?? 0;
+    el.scrollLeft = Math.max(0, current.offsetLeft - labelWidth - (el.clientWidth - labelWidth) / 3);
+    inited.current = true;
+  }, [data, allYearsLoaded, targetMonths, currentMonth]);
 
   const fmt = (cents: number, isTotal = false) =>
     cents === 0 ? (
@@ -160,20 +186,52 @@ export default function BudgetPage() {
   const yearTotal = (cells: MergedCell[], year: string) =>
     cells.filter((c) => yearOf(c.month) === year).reduce((s, c) => s + cellDisplayValue(c, currentMonth), 0);
 
-  // Renders a row's month cells, inserting a per-year Total cell after each year.
-  const renderCells = (cells: MergedCell[], renderCell: (cell: MergedCell, mIdx: number) => ReactNode, totalCls = "") =>
-    cells.map((cell, mIdx) => (
-      <Fragment key={mIdx}>
-        {renderCell(cell, mIdx)}
-        {yearBoundaries.has(mIdx) && (
-          <td className={`w-24 border-l-2 border-border bg-muted/60 px-2 py-2 text-right text-sm font-semibold ${totalCls}`}>
-            {fmt(yearTotal(cells, yearOf(cell.month)), true)}
-          </td>
-        )}
-      </Fragment>
-    ));
+  const pickCell = (pick: RowPick, period: string, value: number, actual: number) =>
+    setSelected({
+      key: `${pick.rowKey}|${period}`, label: pick.label, color: pick.color, period,
+      categoryIds: pick.categoryIds, value_cents: value, actual_cents: actual,
+    });
+  const isPicked = (pick: RowPick | undefined, period: string) => pick != null && selected?.key === `${pick.rowKey}|${period}`;
 
-  function CatRow({ row, sIdx, rIdx }: { row: MergedRow; sIdx: number; rIdx: number }) {
+  // Renders a row's month cells, inserting a per-year Total cell after each year.
+  // `totalCls` may depend on the total (balance rows are coloured by sign), and
+  // `pick` makes the year totals clickable like the month cells.
+  const renderCells = (
+    cells: MergedCell[],
+    renderCell: (cell: MergedCell, mIdx: number) => ReactNode,
+    totalCls: string | ((total: number) => string) = "",
+    pick?: RowPick,
+  ) =>
+    cells.map((cell, mIdx) => {
+      const year = yearOf(cell.month);
+      const total = yearBoundaries.has(mIdx) ? yearTotal(cells, year) : 0;
+      return (
+        <Fragment key={mIdx}>
+          {renderCell(cell, mIdx)}
+          {yearBoundaries.has(mIdx) && (
+            <td
+              onClick={pick ? () => pickCell(pick, year, total, cells.reduce((sum, c, i) => sum + (yearOf(c.month) === year ? pick.actualAt(i) : 0), 0)) : undefined}
+              className={`w-24 border-l-2 border-border bg-muted/60 px-2 py-2 text-right text-sm font-semibold ${typeof totalCls === "function" ? totalCls(total) : totalCls} ${pick ? "cursor-pointer" : ""} ${isPicked(pick, year) ? PICKED : ""}`}
+            >
+              {fmt(total, true)}
+            </td>
+          )}
+        </Fragment>
+      );
+    });
+
+  const idsOf = (rows: MergedRow[]) => rows.flatMap((r) => (r.category_id == null ? [] : [r.category_id]));
+
+  // The three row renderers below are plain FUNCTIONS, called as `catRow({...})`,
+  // not components rendered as JSX tags. Declared in here, a component would be a
+  // new type on every render, so React would unmount and rebuild every row each
+  // time any state changed — and a cell replaced between two clicks never
+  // receives its double-click (clicking selects the cell, which re-renders).
+  function catRow({ row, sIdx, rIdx }: { row: MergedRow; sIdx: number; rIdx: number }) {
+    const pick: RowPick | undefined = row.category_id == null ? undefined : {
+      rowKey: `cat:${row.category_id}`, label: row.category_name, color: row.category_color,
+      categoryIds: [row.category_id], actualAt: (i) => row.cells[i].actual_cents,
+    };
     return (
       <tr className="border-b border-border/60 hover:bg-muted/40">
         <td className="sticky left-0 z-10 w-52 border-r border-border bg-surface px-4 py-2">
@@ -198,8 +256,9 @@ export default function BudgetPage() {
                 : `hover:bg-muted ${isCurrent ? "bg-brand/8" : ""} ${isFuture ? "bg-muted/30" : ""}`;
           return (
             <td
+              onClick={pick ? () => pickCell(pick, cell.month, value, cell.actual_cents) : undefined}
               onDoubleClick={() => { setEditing(key); setEditValue(cell.expected_cents ? String(cell.expected_cents / 100) : ""); }}
-              className={`group/cell relative w-24 cursor-pointer px-2 py-2 text-right text-sm ${bg}`}
+              className={`group/cell relative w-24 cursor-pointer px-2 py-2 text-right text-sm ${bg} ${isPicked(pick, cell.month) ? PICKED : ""}`}
             >
               {isEditing ? (
                 <input
@@ -253,16 +312,22 @@ export default function BudgetPage() {
               )}
             </td>
           );
-        })}
+        }, "", pick)}
       </tr>
     );
   }
 
   // A grouping category (parent): read-only subtotal header = Σ of its children.
   // Clicking the chevron collapses/expands its sub-categories.
-  function GroupRow({ row }: { row: MergedRow }) {
+  // `members` are the real rows it adds up (itself and its sub-categories).
+  function groupRow({ row, members }: { row: MergedRow; members: MergedRow[] }) {
     const pid = row.category_id;
     const isCollapsed = pid != null && collapsed.has(pid);
+    const pick: RowPick = {
+      rowKey: `group:${pid}`, label: row.category_name, color: row.category_color,
+      categoryIds: members.flatMap((m) => (m.category_id == null ? [] : [m.category_id])),
+      actualAt: (i) => members.reduce((sum, m) => sum + m.cells[i].actual_cents, 0),
+    };
     return (
       <tr className="border-b border-border/60 font-semibold hover:bg-muted/40">
         <td className="sticky left-0 z-10 w-52 border-r border-border bg-surface px-4 py-2">
@@ -278,22 +343,41 @@ export default function BudgetPage() {
             <span className="truncate text-sm" title={row.category_name}>{row.category_name}</span>
           </div>
         </td>
-        {renderCells(row.cells, (cell) => (
-          <td className="w-24 px-2 py-2 text-right text-sm">{fmt(cellDisplayValue(cell, currentMonth), true)}</td>
-        ))}
+        {renderCells(row.cells, (cell, mIdx) => (
+          <td
+            onClick={() => pickCell(pick, cell.month, cellDisplayValue(cell, currentMonth), pick.actualAt(mIdx))}
+            className={`w-24 cursor-pointer px-2 py-2 text-right text-sm ${isPicked(pick, cell.month) ? PICKED : ""}`}
+          >
+            {fmt(cellDisplayValue(cell, currentMonth), true)}
+          </td>
+        ), "", pick)}
       </tr>
     );
   }
 
-  function TotalRow({ row, label, cls }: { row: MergedRow; label: string; cls: string }) {
+  // `signed`: a balance row (RESTE, SOLDE NET) — each amount is red below zero and
+  // green above, instead of the row having one colour. `categoryIds`: the row adds
+  // up those categories, so its cells can be clicked to list their transactions.
+  function totalRow({ row, label, cls, signed = false, rowKey, categoryIds }: {
+    row: MergedRow; label: string; cls: string; signed?: boolean; rowKey?: string; categoryIds?: number[];
+  }) {
+    const pick: RowPick | undefined = rowKey && categoryIds
+      ? { rowKey, label, categoryIds, actualAt: (i) => row.cells[i].actual_cents }
+      : undefined;
     return (
       <tr className={`border-b-2 border-border font-semibold ${cls}`}>
         <td className={`sticky left-0 z-10 w-52 border-r border-border px-4 py-2.5 text-sm ${cls}`}>{label}</td>
-        {renderCells(row.cells, (cell) => (
-          <td className="w-24 px-2 py-2.5 text-right text-sm">
-            <span className="inline-flex items-center justify-end gap-1">{fmt(cellDisplayValue(cell, currentMonth), true)}</span>
-          </td>
-        ), cls)}
+        {renderCells(row.cells, (cell) => {
+          const value = cellDisplayValue(cell, currentMonth);
+          return (
+            <td
+              onClick={pick ? () => pickCell(pick, cell.month, value, cell.actual_cents) : undefined}
+              className={`w-24 px-2 py-2.5 text-right text-sm ${signed ? signClass(value) : ""} ${pick ? "cursor-pointer" : ""} ${isPicked(pick, cell.month) ? PICKED : ""}`}
+            >
+              <span className="inline-flex items-center justify-end gap-1">{fmt(value, true)}</span>
+            </td>
+          );
+        }, signed ? signClass : cls, pick)}
       </tr>
     );
   }
@@ -301,9 +385,9 @@ export default function BudgetPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">Double-cliquez pour un ajustement manuel. Utilisez « Planifier » (ou le bouton sur une cellule vide) pour anticiper une dépense future.</p>
+        <p className="text-sm text-muted-foreground">Cliquez sur un montant pour voir ses transactions, double-cliquez pour un ajustement manuel. Utilisez « Planifier » (ou le bouton sur une cellule vide) pour anticiper une dépense future.</p>
         <div className="flex flex-wrap items-center gap-3">
-          <CourantTabs accounts={accounts} value={accountSel} onChange={setAccountSel} />
+          <CourantTabs accounts={accounts} value={accountSel} onChange={(v) => { setAccountSel(v); setSelected(null); }} />
           <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground">
             <span className="flex items-center gap-1.5"><Pencil className="size-3 text-warning" /> ajustement manuel</span>
             <span className="flex items-center gap-1.5"><span className="inline-block size-3 rounded-sm bg-info/60" /> planifiée</span>
@@ -342,6 +426,9 @@ export default function BudgetPage() {
         </div>
       </div>
 
+      {/* Table on the left; on the right, the transactions of the clicked cell. */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+      <div className="min-w-0 flex-1">
       {loading || !data ? (
         <Skeleton className="h-[28rem] w-full rounded-2xl" />
       ) : (
@@ -361,7 +448,8 @@ export default function BudgetPage() {
                   const isCurrent = m === currentMonth;
                   return (
                     <Fragment key={m}>
-                      <th className={`w-24 px-2 py-2 text-center text-xs font-semibold ${isCurrent ? "border-b-2 border-brand text-brand" : "text-muted-foreground"}`}>
+                      <th data-current-month={isCurrent || undefined}
+                        className={`w-24 px-2 py-2 text-center text-xs font-semibold ${isCurrent ? "border-b-2 border-brand text-brand" : "text-muted-foreground"}`}>
                         {formatMonthLabel(m)}
                       </th>
                       {yearBoundaries.has(i) && (
@@ -388,44 +476,52 @@ export default function BudgetPage() {
                     {section.rows.map((row, rIdx) => {
                       // Hide children of a collapsed parent namespace.
                       if (row.parent_id != null && collapsed.has(row.parent_id)) return null;
-                      return row.category_id != null && parentIds.has(row.category_id) ? (
-                        <GroupRow
-                          key={rIdx}
-                          row={parentSubtotalRow(row, section.rows.filter((r) => r.parent_id === row.category_id), currentMonth)}
-                        />
-                      ) : (
-                        <CatRow key={rIdx} row={row} sIdx={sIdx} rIdx={rIdx} />
+                      const children = section.rows.filter((r) => r.parent_id === row.category_id);
+                      return (
+                        <Fragment key={rIdx}>
+                          {row.category_id != null && parentIds.has(row.category_id)
+                            ? groupRow({ row: parentSubtotalRow(row, children, currentMonth), members: [row, ...children] })
+                            : catRow({ row, sIdx, rIdx })}
+                        </Fragment>
                       );
                     })}
-                    <TotalRow row={section.section_totals} label={`TOTAL ${section.section_label}`} cls={style.total} />
-                    {hasInvest && (
-                      <TotalRow
-                        label="TOTAL HORS INVESTISSEMENTS"
-                        cls="bg-muted text-brand"
-                        row={{
-                          category_id: null, category_name: "", category_color: "", is_investment: false,
-                          cells: data.months.map((m, i) => {
-                            const actual = nonInvest.reduce((s, r) => s + r.cells[i].actual_cents, 0);
-                            const expected = nonInvest.reduce((s, r) => s + r.cells[i].expected_cents, 0);
-                            // Include active planned forecasts (mirrors the backend totals).
-                            const planned = nonInvest.reduce((s, r) => {
-                              const c = r.cells[i];
-                              return s + (c.planned_cents !== 0 && !c.planned_matched && c.actual_cents === 0 ? c.planned_cents : 0);
-                            }, 0);
-                            return { month: m, actual_cents: actual, expected_cents: expected + planned, planned_cents: 0, planned_matched: false, planned_id: null };
-                          }),
-                        }}
-                      />
-                    )}
-                    {section.section === "depenses_fixes" && <TotalRow row={data.reste_row} label="RESTE pour dépenses variables" cls="bg-muted text-positive" />}
+                    {totalRow({
+                      row: section.section_totals, label: `TOTAL ${section.section_label}`, cls: style.total,
+                      rowKey: `total:${section.section}`, categoryIds: idsOf(section.rows),
+                    })}
+                    {hasInvest && totalRow({
+                      label: "TOTAL HORS INVESTISSEMENTS",
+                      cls: "bg-muted text-brand",
+                      rowKey: "total:hors-investissements",
+                      categoryIds: idsOf(nonInvest),
+                      row: {
+                        category_id: null, category_name: "", category_color: "", is_investment: false,
+                        cells: data.months.map((m, i) => {
+                          const actual = nonInvest.reduce((s, r) => s + r.cells[i].actual_cents, 0);
+                          const expected = nonInvest.reduce((s, r) => s + r.cells[i].expected_cents, 0);
+                          // Include active planned forecasts (mirrors the backend totals).
+                          const planned = nonInvest.reduce((s, r) => {
+                            const c = r.cells[i];
+                            return s + (c.planned_cents !== 0 && !c.planned_matched && c.actual_cents === 0 ? c.planned_cents : 0);
+                          }, 0);
+                          return { month: m, actual_cents: actual, expected_cents: expected + planned, planned_cents: 0, planned_matched: false, planned_id: null };
+                        }),
+                      },
+                    })}
+                    {section.section === "depenses_fixes" && totalRow({ row: data.reste_row, label: "RESTE POUR DÉPENSES VARIABLES", cls: "bg-muted text-foreground", signed: true })}
                   </Fragment>
                 );
               })}
-              <TotalRow row={data.grand_total_row} label="SOLDE NET" cls="bg-muted text-brand" />
+              {totalRow({ row: data.grand_total_row, label: "SOLDE NET", cls: "bg-muted text-foreground", signed: true })}
             </tbody>
           </table>
         </div>
       )}
+      </div>
+      <aside className="lg:sticky lg:top-4 lg:w-80 lg:shrink-0 xl:w-96" aria-label="Transactions de la cellule sélectionnée">
+        <CellTransactions selection={selected} accountId={accountId} accountIds={scopeIds} currency={currency} onClose={() => setSelected(null)} />
+      </aside>
+      </div>
 
       <PlanExpenseDialog open={planOpen} onOpenChange={setPlanOpen} accountId={accountId ?? null} prefill={planPrefill} />
     </div>

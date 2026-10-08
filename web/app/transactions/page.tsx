@@ -5,7 +5,7 @@ import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { toast } from "sonner";
 import Link from "next/link";
-import { Plus, Download, Shuffle, Trash2, CheckCheck, ArrowLeftRight, X, Inbox, ChevronLeft, ChevronRight, Pencil, Ban, Undo2, Archive, Upload } from "lucide-react";
+import { Plus, Download, Shuffle, Trash2, CheckCheck, ArrowLeftRight, X, Inbox, ChevronLeft, ChevronRight, Pencil, Ban, Undo2, Archive, Upload, Wand2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -228,6 +228,12 @@ export default function TransactionsPage() {
           </Button>
           <Button variant="outline" size="sm" asChild>
             <a href={exportHref} download><Download className="size-4" /> Exporter</a>
+          </Button>
+          {/* Same dialog as Paramètres → Règles: a rule can be written right where
+              the transactions it should classify are in view. */}
+          <Button variant="outline" size="sm" onClick={() => setRulePrefill({ description: "", categoryId: null })}
+            title="Créer une règle de classement automatique">
+            <Wand2 className="size-4" /> Nouvelle règle
           </Button>
           <Button size="sm" onClick={openCreate}><Plus className="size-4" /> Nouvelle</Button>
         </div>

@@ -48,6 +48,56 @@ export interface MergedBudget {
   grand_total_row: MergedRow;
 }
 
+/** Font colour of a balance row (RESTE, SOLDE NET): red below zero, green above,
+ *  nothing at zero (the cell then shows its muted placeholder). */
+export function signClass(cents: number): string {
+  return cents < 0 ? "text-negative" : cents > 0 ? "text-positive" : "";
+}
+
+/** A cell the user clicked, to list the transactions behind its amount. */
+export interface CellSelection {
+  /** Identifies the cell (row + period), to highlight it. */
+  key: string;
+  label: string;
+  color?: string;
+  /** A month ("YYYY-MM") or a whole year ("YYYY", for a Total column). */
+  period: string;
+  /** The categories the cell adds up: one, a parent with its sub-categories, or
+   *  every category of a section for a TOTAL row. */
+  categoryIds: number[];
+  /** What the cell displays… */
+  value_cents: number;
+  /** …and the part of it that comes from real transactions (the rest is a manual
+   *  adjustment or a planned amount, which have no transaction to show). */
+  actual_cents: number;
+}
+
+/** First and last day of a period ("YYYY-MM" or "YYYY"), as ISO dates. */
+export function periodRange(period: string): { date_from: string; date_to: string } {
+  if (period.length === 4) return { date_from: `${period}-01-01`, date_to: `${period}-12-31` };
+  const [y, m] = period.split("-").map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  return { date_from: `${period}-01`, date_to: `${period}-${String(lastDay).padStart(2, "0")}` };
+}
+
+/** The transactions a budget cell is made of, among those of its period.
+ *
+ *  Mirrors how the backend builds the cell (`budget_full`): the cell's categories,
+ *  and — when the budget covers "all current accounts" rather than one — only
+ *  those accounts (`accountIds`; null = no restriction). Internal transfers are
+ *  already excluded by the request. */
+export function cellTransactions<T extends { category_id?: number | null; account_id: number }>(
+  transactions: T[],
+  categoryIds: number[],
+  accountIds: number[] | null,
+): T[] {
+  const cats = new Set(categoryIds);
+  const accounts = accountIds ? new Set(accountIds) : null;
+  return transactions.filter(
+    (t) => t.category_id != null && cats.has(t.category_id) && (accounts == null || accounts.has(t.account_id)),
+  );
+}
+
 export function yearOf(m: string): string {
   return m.split("-")[0];
 }

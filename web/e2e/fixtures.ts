@@ -95,6 +95,18 @@ export class Api {
     return res.json();
   }
 
+  /** Make a category a fixed expense (the budget's « DÉPENSES FIXES » section). */
+  async setFixedExpense(categoryName: string) {
+    const cats: { id: number; name: string }[] = await this.categories();
+    const cat = cats.find((c) => c.name === categoryName);
+    expect(cat, `category ${categoryName} must exist`).toBeTruthy();
+    const res = await this.request.put(`${BACKEND}/api/categories/${cat!.id}`, {
+      headers: this.headers(),
+      data: { expense_type: "fixed" },
+    });
+    expect(res.ok(), await res.text()).toBeTruthy();
+  }
+
   async setBaseCurrency(currency: string) {
     const res = await this.request.put(`${BACKEND}/api/settings/base_currency`, {
       headers: this.headers(),

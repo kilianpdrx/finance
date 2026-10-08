@@ -2,8 +2,11 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   buildMonths,
   cellDisplayValue,
+  cellTransactions,
   cellType,
   parentSubtotalRow,
+  periodRange,
+  signClass,
   yearOf,
   type MergedCell,
   type MergedRow,
@@ -133,3 +136,51 @@ describe('yearOf', () => {
     expect(yearOf('2026-08')).toBe('2026');
   });
 });
+
+
+describe('signClass — couleur des lignes de solde', () => {
+  it('rouge sous zéro, vert au-dessus, rien à zéro', () => {
+    expect(signClass(-1)).toBe('text-negative');
+    expect(signClass(1)).toBe('text-positive');
+    expect(signClass(0)).toBe('');
+  });
+});
+
+describe('periodRange — bornes d\'un mois ou d\'une année', () => {
+  it('va jusqu\'au dernier jour du mois, années bissextiles comprises', () => {
+    expect(periodRange('2026-09')).toEqual({ date_from: '2026-09-01', date_to: '2026-09-30' });
+    expect(periodRange('2026-12')).toEqual({ date_from: '2026-12-01', date_to: '2026-12-31' });
+    expect(periodRange('2026-02')).toEqual({ date_from: '2026-02-01', date_to: '2026-02-28' });
+    expect(periodRange('2028-02')).toEqual({ date_from: '2028-02-01', date_to: '2028-02-29' });
+  });
+
+  it('couvre l\'année entière pour une colonne Total', () => {
+    expect(periodRange('2026')).toEqual({ date_from: '2026-01-01', date_to: '2026-12-31' });
+  });
+});
+
+describe('cellTransactions — les transactions derrière une cellule', () => {
+  const txns = [
+    { id: 1, category_id: 10, account_id: 1 },
+    { id: 2, category_id: 11, account_id: 1 },
+    { id: 3, category_id: 10, account_id: 2 },
+    { id: 4, category_id: null, account_id: 1 },
+    { id: 5, category_id: 12, account_id: 1 },
+  ];
+  const ids = (rows: { id: number }[]) => rows.map((r) => r.id);
+
+  it('garde les catégories de la cellule (un parent apporte ses sous-catégories)', () => {
+    expect(ids(cellTransactions(txns, [10], null))).toEqual([1, 3]);
+    expect(ids(cellTransactions(txns, [10, 11], null))).toEqual([1, 2, 3]);
+  });
+
+  it('se limite aux comptes du budget quand il en couvre plusieurs', () => {
+    expect(ids(cellTransactions(txns, [10], [1]))).toEqual([1]);
+  });
+
+  it('n\'attribue jamais une transaction sans catégorie', () => {
+    expect(ids(cellTransactions(txns, [], null))).toEqual([]);
+    expect(ids(cellTransactions(txns, [10, 11, 12], null))).not.toContain(4);
+  });
+});
+

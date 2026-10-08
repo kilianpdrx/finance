@@ -74,6 +74,31 @@ test.describe("Transactions", () => {
     }
   });
 
+  test("une règle se crée depuis la page, sans passer par les Paramètres", async ({ page, api }) => {
+    const profile = await profileWith(api, "Règle depuis Transactions E2E", [OTHER]);
+    try {
+      await useProfile(page, profile.id);
+      await page.goto("/transactions");
+      await expectAppReady(page);
+
+      await page.getByRole("button", { name: "Nouvelle règle" }).click();
+      const dialog = page.getByRole("dialog", { name: "Nouvelle règle" });
+      await expect(dialog.getByPlaceholder("Valeur")).toHaveValue("");
+
+      await dialog.getByPlaceholder("Valeur").fill("zzz inconnu");
+      await dialog.getByRole("combobox").first().click();
+      await page.getByRole("option", { name: /Divers/ }).click();
+      await dialog.getByRole("button", { name: "Enregistrer" }).click();
+
+      // The usual follow-up: the rule can be applied straight away.
+      const confirm = page.getByRole("dialog", { name: "Règle créée" });
+      await confirm.getByRole("button", { name: "Appliquer" }).click();
+      await expect(page.getByRole("row", { name: /ZZZ INCONNU/ }).getByText("Divers")).toBeVisible();
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
   test("les colonnes se trient", async ({ page, api }) => {
     const profile = await profileWith(api, "Tri E2E", [
       "2026-09-20;BOUTIQUE ALPHA;-10,00",
