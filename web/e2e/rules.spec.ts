@@ -66,6 +66,136 @@ test.describe("Règles", () => {
     }
   });
 
+  test("« Sans règle » : une ligne se déplie sur ses vraies transactions", async ({ page, api }) => {
+    const { profile, account } = await freshProfile(api, "Déplier E2E");
+    try {
+      await api.importCsv(account.id, csv(BIOCOOP));
+
+      await useProfile(page, profile.id);
+      await page.goto("/transactions");
+      await expectAppReady(page);
+      await page.getByRole("tab", { name: "Sans règle" }).click();
+
+      const toggle = page.getByRole("button", { name: "Voir les transactions de BIOCOOP LYON" });
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await toggle.click();
+
+      // The keyword "BIOCOOP LYON" is a summary: what unfolds is each label as
+      // the bank wrote it, most recent first, with where it stands today.
+      const list = page.getByRole("list", { name: "Transactions de BIOCOOP LYON" });
+      const items = list.getByRole("listitem");
+      await expect(items).toHaveCount(3);
+      await expect(items.nth(0)).toContainText("CARTE X1234 02/09 BIOCOOP 2231 LYON 03");
+      await expect(items.nth(2)).toContainText("CARTE X1234 03/07 BIOCOOP 2231 LYON 03");
+      await expect(items.nth(0)).toContainText("Compte courant");
+      await expect(items.nth(0)).toContainText("Sans catégorie");
+
+      // Clicking the row itself folds it back; "Règle" does not toggle it.
+      await page.getByRole("cell", { name: "3×" }).click();
+      await expect(list).toHaveCount(0);
+      await page.getByRole("cell", { name: "3×" }).click();
+      await expect(items).toHaveCount(3);
+      await page.getByRole("button", { name: /^Règle/ }).click();
+      await expect(page.getByRole("dialog", { name: "Nouvelle règle" })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(items).toHaveCount(3);
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
+  test("tester une règle montre la catégorie actuelle de chaque transaction", async ({ page, api }) => {
+    const { profile, account } = await freshProfile(api, "Catégorie actuelle E2E");
+    try {
+      await api.importCsv(account.id, csv(BIOCOOP));
+      const [latest] = await api.transactions({ search: "02/09" });
+      await api.setCategory(latest.id, "Loisirs");
+
+      await useProfile(page, profile.id);
+      await page.goto("/transactions");
+      await expectAppReady(page);
+      await page.getByRole("button", { name: "Nouvelle règle" }).click();
+      const dialog = page.getByRole("dialog", { name: "Nouvelle règle" });
+      await dialog.getByPlaceholder("Valeur").fill("BIOCOOP");
+      await dialog.getByRole("combobox").first().click();
+      await page.getByRole("option", { name: /Alimentation/ }).click();
+      await dialog.getByRole("button", { name: "Tester" }).click();
+
+      await expect(dialog.getByText("3 transaction(s) correspond(ent) à ces conditions.")).toBeVisible();
+      // What the rule would meet, before anything is applied.
+      await expect(dialog.getByText(/2 sans catégorie · 0 déjà en « Alimentation » · 1 dans une autre catégorie/)).toBeVisible();
+      await expect(dialog.getByRole("columnheader", { name: "Catégorie actuelle" })).toBeVisible();
+      const rows = dialog.locator("tbody tr");
+      await expect(rows).toHaveCount(3);
+      await expect(rows.nth(0)).toContainText("02/09 BIOCOOP");
+      await expect(rows.nth(0).getByRole("cell").nth(3)).toHaveText("Loisirs");
+      await expect(rows.nth(1).getByRole("cell").nth(3)).toHaveText("Sans catégorie");
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
+  test("réappliquer à toutes garde ce qui est classé à la main, et le signale", async ({ page, api }) => {
+    const { profile, account } = await freshProfile(api, "Réappliquer E2E");
+    try {
+      // The rule exists before the import: the three BIOCOOP rows arrive "auto".
+      await api.createContainsRule("Alimentation", "BIOCOOP");
+      await api.importCsv(account.id, csv([...BIOCOOP, "2026-09-09;ZZZ INCONNU;-12,00", "2026-09-11;YYY ARTISAN DUVAL;-30,00"]));
+      // By hand: one against its rule, one that no rule covers.
+      const [against] = await api.transactions({ search: "02/09" });
+      const [alone] = await api.transactions({ search: "ZZZ INCONNU" });
+      const loisirs = await api.setCategory(against.id, "Loisirs");
+      await api.setCategory(alone.id, "Loisirs");
+      // A rule written afterwards: the only thing "à toutes" has to do.
+      await api.createContainsRule("Logement", "ARTISAN");
+
+      await useProfile(page, profile.id);
+      await page.goto("/parametres");
+      await expectAppReady(page);
+      await page.getByRole("tab", { name: /Règles/ }).click();
+      await page.getByRole("button", { name: /Réappliquer les règles/ }).click();
+      await page.getByRole("menuitem", { name: /À toutes les transactions/ }).click();
+
+      // Says what would change BEFORE changing it.
+      const confirm = page.getByRole("dialog", { name: "Réappliquer les règles à toutes les transactions ?" });
+      await expect(confirm).toContainText("1 transaction(s) classée(s) par une règle, ou sans catégorie, changeraient de catégorie.");
+      await expect(confirm).toContainText("classées à la main et celles marquées « vérifié » ne sont jamais modifiées");
+      await expect(confirm).toContainText("1 transaction(s) classée(s) à la main contredisent une règle");
+      await confirm.getByRole("button", { name: "Réappliquer" }).click();
+      await expect(page.getByText("1 transaction(s) recatégorisée(s)")).toBeVisible();
+
+      // Both hand labels survived — including the one no rule matches, which
+      // used to be wiped.
+      const after = await api.transactions();
+      const state = (needle: string) => {
+        const t = after.find((x) => x.description.includes(needle))!;
+        return [t.category_id, t.category_source];
+      };
+      expect(state("02/09")).toEqual([loisirs, "manual"]);
+      expect(state("ZZZ INCONNU")).toEqual([loisirs, "manual"]);
+      expect(state("ARTISAN")[1]).toBe("rule");
+
+      // "Voir" leads to the disagreement, flagged on the row.
+      await page.getByRole("button", { name: "Voir" }).click();
+      await expect(page).toHaveURL(/\/transactions\?classement=desaccord/);
+      const rows = page.locator("tbody tr");
+      await expect(rows).toHaveCount(1);
+      await expect(rows.first()).toContainText("02/09 BIOCOOP");
+      await expect(rows.first()).toContainText("Loisirs");
+      await rows.first().getByRole("button", { name: "≠ règle" }).click();
+      await expect(page.getByText(/Vous avez classé cette transaction en « Loisirs »\. Vos règles la classeraient\s+en « Alimentation »/)).toBeVisible();
+
+      // Following the rule is the user's own click, and makes the row "auto".
+      await page.getByRole("button", { name: "Suivre la règle : classer en « Alimentation »" }).click();
+      await expect(page.getByText("Classée en Alimentation par la règle")).toBeVisible();
+      await expect(rows).toHaveCount(0);
+      const followed = (await api.transactions({ search: "02/09" }))[0];
+      expect(followed.category_source).toBe("rule");
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
   test("deux règles qui se contredisent : pas de catégorie, et le badge ouvre la règle", async ({ page, api }) => {
     const { profile, account } = await freshProfile(api, "Conflit E2E");
     try {

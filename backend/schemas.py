@@ -231,6 +231,10 @@ class TransactionOut(TransactionBase):
     conflict_categories: List[str] = []  # names of the categories in conflict
     conflict_rule_ids: List[int] = []    # the rules that disagree, so the UI can open them
     category_source: Optional[str] = None  # "rule" (classified automatically) | "manual"
+    # Set when the row was classified BY HAND and the rules all agree on another
+    # category: that category, and the rules that say so (« ≠ règle » badge).
+    rule_category_id: Optional[int] = None
+    disagreeing_rule_ids: List[int] = []
     import_hash: str
     import_batch_id: Optional[int] = None
     created_at: datetime
@@ -377,6 +381,16 @@ class CategoryBreakdown(BaseModel):
     count: int
     percentage: float
 
+class RecurringMember(BaseModel):
+    """One real transaction of a recurring group."""
+    id: int
+    date: date
+    description: str          # the label as the bank wrote it
+    amount_cents: int
+    account_id: Optional[int]
+    category_id: Optional[int]
+
+
 class RecurringTransaction(BaseModel):
     description: str          # cleaned-up keyword, for display
     # A fragment that really appears in every label of the group — what a
@@ -388,6 +402,8 @@ class RecurringTransaction(BaseModel):
     currency: str             # the group's own currency (groups never mix two)
     last_date: date
     category_id: Optional[int]
+    # The group's real rows, most recent first — what the list unfolds under it.
+    transactions: List[RecurringMember] = []
 
 
 

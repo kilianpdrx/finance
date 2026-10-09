@@ -80,3 +80,21 @@ export function ruleSummary(rule: { conditions: RuleCondition[]; logic_operator?
   };
   return rule.conditions.map(one).join(rule.logic_operator === "OR" ? " OU " : " ET ");
 }
+
+/** What a rule being tested would meet. Of the transactions matching its
+ *  conditions: how many have no category (`none` — the only ones saving the rule
+ *  can fill), how many already have the rule's category (`same`), and how many
+ *  are filed elsewhere (`other`). Without a chosen category, every categorised
+ *  row counts as `other`. */
+export function previewBreakdown(
+  rows: { category_id?: number | null }[],
+  categoryId: number | null,
+): { none: number; same: number; other: number } {
+  const out = { none: 0, same: 0, other: 0 };
+  for (const r of rows) {
+    if (r.category_id == null) out.none += 1;
+    else if (categoryId != null && r.category_id === categoryId) out.same += 1;
+    else out.other += 1;
+  }
+  return out;
+}

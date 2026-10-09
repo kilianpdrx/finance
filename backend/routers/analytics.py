@@ -10,7 +10,7 @@ from dependencies import current_profile_id
 from models import Transaction, Account, Category, BudgetEntry, AccountBalanceSnapshot
 from schemas import (
     AnalyticsSummary, CashFlowMonth, CategoryBreakdown, CurrencyBalance,
-    RecurringTransaction, BudgetTableRow, BudgetTableCell,
+    RecurringTransaction, RecurringMember, BudgetTableRow, BudgetTableCell,
     BudgetSectionRow, BudgetFullResponse,
     cents_to_display,
 )
@@ -555,13 +555,18 @@ def _as_recurring(group: LabelGroup) -> RecurringTransaction:
         currency=group.currency,
         last_date=group.last_date,
         category_id=group.top_category_id,
+        transactions=[
+            RecurringMember(id=m.id, date=m.date, description=m.description, amount_cents=m.amount_cents,
+                            account_id=m.account_id, category_id=m.category_id)
+            for m in sorted(group.members, key=lambda m: (m.date, m.id), reverse=True)
+        ],
     )
 
 
 # Columns the recurring endpoints need: the group itself, plus what a rule can
 # test (account, direction, currency) so coverage is checked on real rows.
 _RECURRING_COLS = (
-    Transaction.description, Transaction.amount_cents, Transaction.date, Transaction.category_id,
+    Transaction.id, Transaction.description, Transaction.amount_cents, Transaction.date, Transaction.category_id,
     Transaction.account_id, Transaction.is_debit, Transaction.currency,
 )
 # Real rows tested per group when deciding whether rules cover it.

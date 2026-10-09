@@ -257,6 +257,32 @@ async def test_recurring_shows_one_direction_at_a_time(client: AsyncClient, seed
         assert await labels(path, income="true") == {"SALAIRE ACME"}
 
 
+async def test_recurring_groups_carry_their_transactions(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """A group can be unfolded: it comes with its real rows — the label as the
+    bank wrote it, not the keyword — most recent first."""
+    acc, cat = seed_data["account_courant"].id, seed_data["cat_courses"].id
+    labels = {7: "CARTE X1234 03/07 BIOCOOP 2231 LYON 03", 8: "CARTE X1234 05/08 BIOCOOP 2231 LYON 03",
+              9: "CARTE X1234 02/09 BIOCOOP 2231 LYON 03"}
+    for month, label in labels.items():
+        db_session.add(Transaction(
+            profile_id=seed_data["profile"].id, account_id=acc, date=date(2026, month, 3),
+            amount_cents=4000 + month, is_debit=True, currency="EUR", category_id=cat if month == 9 else None,
+            description=label, import_hash=f"members_{month}",
+        ))
+    await db_session.commit()
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+
+    for path in ("/api/analytics/recurring", "/api/analytics/recurring-uncovered"):
+        (group,) = (await client.get(path, headers=h)).json()
+        rows = group["transactions"]
+        assert group["occurrences"] == len(rows) == 3
+        assert [r["description"] for r in rows] == [labels[9], labels[8], labels[7]]
+        assert [r["date"] for r in rows] == ["2026-09-03", "2026-08-03", "2026-07-03"]
+        assert [(r["amount_cents"], r["account_id"], r["category_id"]) for r in rows] == [
+            (4009, acc, cat), (4008, acc, None), (4007, acc, None)]
+        assert all(isinstance(r["id"], int) for r in rows) and len({r["id"] for r in rows}) == 3
+
+
 async def _add_spend(db_session: AsyncSession, seed_data: dict, day: date, cents: int, key: str, category_id=None):
     db_session.add(Transaction(
         profile_id=seed_data["profile"].id, account_id=seed_data["account_courant"].id, date=day,

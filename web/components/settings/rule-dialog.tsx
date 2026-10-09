@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api, unwrap } from "@/lib/api/client";
 import { useCategories, useRuleMutations, useCategoryMutations, previewRescan, type CategoryRule, type Account, type Transaction } from "@/lib/api/hooks";
 import { formatCents } from "@/lib/format";
-import { DIRECTIONS, RULE_FIELDS, amountConditionIssue, operatorsFor, type RuleCondition } from "@/lib/rules";
+import { DIRECTIONS, RULE_FIELDS, amountConditionIssue, operatorsFor, previewBreakdown, type RuleCondition } from "@/lib/rules";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { CategorySelect } from "@/components/transactions/category-select";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -138,9 +138,12 @@ export function RuleDialog({
     await offerToApply(editing ? "Règle mise à jour" : "Règle créée");
   };
 
+  const ruleCategory = categories.find((c) => c.id === categoryId) ?? null;
+  const breakdown = previewBreakdown(preview ?? [], categoryId || null);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col">
+      <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col">
         <DialogHeader className="shrink-0"><DialogTitle>{editing ? "Modifier la règle" : "Nouvelle règle"}</DialogTitle></DialogHeader>
         <div className="flex-1 space-y-4 overflow-y-auto px-1">
           <div className="grid grid-cols-2 gap-3">
@@ -218,21 +221,60 @@ export function RuleDialog({
                 {preview.length}{preview.length >= 200 ? "+" : ""} transaction(s) correspond(ent) à ces conditions.
               </p>
               {preview.length > 0 && (
-                <div className="max-h-56 divide-y divide-border overflow-y-auto rounded-lg border border-border">
-                  {preview.map((t) => (
-                    <div key={t.id} className="flex items-center gap-3 px-3 py-1.5 text-xs">
-                      <span className="nums w-16 shrink-0 text-muted-foreground">{format(new Date(t.date), "dd MMM yy", { locale: fr })}</span>
-                      <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                        <span className="truncate">{t.description}</span>
-                        {t.category_conflict && <ConflictBadge className="shrink-0 text-[10px]" />}
-                      </span>
-                      <span className="shrink-0 truncate text-muted-foreground">{t.account_name}</span>
-                      <span className={`nums w-24 shrink-0 text-right font-semibold ${t.is_debit ? "text-negative" : "text-positive"}`}>
-                        {t.is_debit ? "−" : "+"}{formatCents(t.amount_cents, t.currency)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                <>
+                  {/* Where those transactions stand today: a rule only ever fills
+                      the ones without a category, the others are shown so that
+                      nothing it would NOT change comes as a surprise. */}
+                  <p className="text-xs text-muted-foreground">
+                    {breakdown.none} sans catégorie
+                    {ruleCategory && <> · {breakdown.same} déjà en « {ruleCategory.name} »</>}
+                    {" · "}{breakdown.other} {ruleCategory ? "dans une autre catégorie" : "déjà classée(s)"}.
+                    {" "}Enregistrer la règle ne classe que celles sans catégorie.
+                  </p>
+                  <div className="max-h-56 overflow-y-auto rounded-lg border border-border">
+                    <table className="w-full table-fixed text-xs">
+                      <thead className="sticky top-0 bg-surface text-left text-muted-foreground">
+                        <tr className="border-b border-border">
+                          <th className="w-24 px-3 py-1.5 font-medium">Date</th>
+                          <th className="px-2 py-1.5 font-medium">Libellé</th>
+                          <th className="w-28 px-2 py-1.5 font-medium">Compte</th>
+                          <th className="w-40 px-2 py-1.5 font-medium">Catégorie actuelle</th>
+                          <th className="w-24 px-3 py-1.5 text-right font-medium">Montant</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {preview.map((t) => {
+                          const current = categories.find((c) => c.id === t.category_id);
+                          return (
+                            <tr key={t.id}>
+                              <td className="nums whitespace-nowrap px-3 py-1.5 text-muted-foreground">{format(new Date(t.date), "dd MMM yy", { locale: fr })}</td>
+                              <td className="px-2 py-1.5">
+                                <span className="flex min-w-0 items-center gap-1.5">
+                                  <span className="truncate" title={t.description}>{t.description}</span>
+                                  {t.category_conflict && <ConflictBadge className="shrink-0 text-[10px]" />}
+                                </span>
+                              </td>
+                              <td className="truncate px-2 py-1.5 text-muted-foreground">{t.account_name}</td>
+                              <td className="px-2 py-1.5">
+                                {current ? (
+                                  <span className="flex min-w-0 items-center gap-1.5" title={current.name}>
+                                    <span className="size-2 shrink-0 rounded-full" style={{ background: current.color }} />
+                                    <span className={`truncate ${categoryId && current.id !== categoryId ? "font-medium text-foreground" : ""}`}>{current.name}</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-muted-foreground/70">Sans catégorie</span>
+                                )}
+                              </td>
+                              <td className={`nums px-3 py-1.5 text-right font-semibold ${t.is_debit ? "text-negative" : "text-positive"}`}>
+                                {t.is_debit ? "−" : "+"}{formatCents(t.amount_cents, t.currency)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
           )}

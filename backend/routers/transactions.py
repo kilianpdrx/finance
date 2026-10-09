@@ -18,7 +18,8 @@ from schemas import (
 from ownership import require_account, require_category
 from utils import generate_import_hash, csv_safe_cell, parse_amount_query
 from services.label_groups import group_by_label, label_key, rule_pattern
-from services.category_source import manual_source
+from services.category_source import MANUAL, RULE, disagreeing_category, manual_source
+from services.categorizer import evaluate_rules_batch, rule_input
 
 router = APIRouter()
 
@@ -123,6 +124,30 @@ async def _build_txn_filters(
     return filters
 
 
+# « ≠ règle »: a category chosen by hand that the rules would have set
+# differently. Only hand-labelled rows can be in that case.
+_BY_HAND = (Transaction.category_source == MANUAL, Transaction.category_id != None)  # noqa: E711
+_RULE_COLS = (
+    Transaction.id, Transaction.description, Transaction.amount_cents, Transaction.date, Transaction.is_debit,
+    Transaction.currency, Transaction.account_id, Transaction.category_id, Transaction.category_source,
+)
+
+
+async def _keep_contradicted(db: AsyncSession, pid: int, rows: list) -> list:
+    """Of `rows`, in order, those whose rules all agree on a category other than
+    the one the user chose. Evaluated against the current rules, like « conflit »."""
+    evals = await evaluate_rules_batch([rule_input(r) for r in rows], db, pid)
+    return [r for r, ev in zip(rows, evals) if disagreeing_category(r.category_id, r.category_source, ev) is not None]
+
+
+async def _contradicting_rules(db: AsyncSession, pid: int, filters: list) -> list:
+    """The rows passing `filters` that the rules contradict (light rows: ids and
+    what a rule reads). The rule engine decides, so this cannot be a SQL filter;
+    it only ever scans hand-labelled rows."""
+    rows = (await db.execute(select(*_RULE_COLS).where(and_(*filters), *_BY_HAND))).all()
+    return await _keep_contradicted(db, pid, rows)
+
+
 @router.get("/count")
 async def count_transactions(
     account_id: Optional[int] = None,
@@ -138,6 +163,7 @@ async def count_transactions(
     month: Optional[str] = None,
     import_batch_id: Optional[int] = None,
     category_source: Optional[Literal["rule", "manual"]] = None,
+    contradicts_rule: Optional[bool] = None,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
@@ -148,6 +174,8 @@ async def count_transactions(
         is_debit=is_debit, is_internal_transfer=is_internal_transfer, bank_name=bank_name,
         month=month, import_batch_id=import_batch_id, category_source=category_source,
     )
+    if contradicts_rule:
+        return {"total": len(await _contradicting_rules(db, pid, filters))}
     total = (await db.execute(select(func.count(Transaction.id)).where(and_(*filters)))).scalar() or 0
     return {"total": total}
 
@@ -208,6 +236,7 @@ async def transaction_ids(
     month: Optional[str] = None,
     import_batch_id: Optional[int] = None,
     category_source: Optional[Literal["rule", "manual"]] = None,
+    contradicts_rule: Optional[bool] = None,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
@@ -219,6 +248,8 @@ async def transaction_ids(
         is_debit=is_debit, is_internal_transfer=is_internal_transfer, bank_name=bank_name,
         month=month, import_batch_id=import_batch_id, category_source=category_source,
     )
+    if contradicts_rule:
+        return {"ids": [r.id for r in await _contradicting_rules(db, pid, filters)]}
     rows = (await db.execute(select(Transaction.id).where(and_(*filters)))).all()
     return {"ids": [r[0] for r in rows]}
 
@@ -262,6 +293,7 @@ async def list_transactions(
     month: Optional[str] = None,
     import_batch_id: Optional[int] = None,
     category_source: Optional[Literal["rule", "manual"]] = None,
+    contradicts_rule: Optional[bool] = None,
     sort_by: Literal["date", "amount", "description", "category", "account"] = "date",
     sort_dir: Literal["asc", "desc"] = "desc",
     limit: int = Query(default=500, le=10000),
@@ -281,9 +313,14 @@ async def list_transactions(
         stmt = stmt.outerjoin(Category, Category.id == Transaction.category_id)
     elif sort_by == "account":
         stmt = stmt.join(Account, Account.id == Transaction.account_id)
-    stmt = stmt.order_by(*_txn_order(sort_by, sort_dir)).limit(limit).offset(offset)
-    result = await db.execute(stmt)
-    rows = result.scalars().all()
+    stmt = stmt.order_by(*_txn_order(sort_by, sort_dir))
+    if contradicts_rule:
+        # Decided by the rule engine, not by SQL: read the hand-labelled rows in
+        # order, keep the ones the rules contradict, then take the page.
+        candidates = (await db.execute(stmt.where(*_BY_HAND))).scalars().all()
+        rows = (await _keep_contradicted(db, pid, candidates))[offset:offset + limit]
+    else:
+        rows = (await db.execute(stmt.limit(limit).offset(offset))).scalars().all()
     outs = []
     for r in rows:
         out = TransactionOut.from_orm_with_display(r)
@@ -294,22 +331,22 @@ async def list_transactions(
     # Flag rows where several distinct categories match via rules (against the
     # current ruleset, so newly-added conflicting rules show immediately) and
     # surface WHICH categories conflict.
-    from services.categorizer import evaluate_rules_batch
-    evals = await evaluate_rules_batch(
-        [{"description": r.description, "amount_cents": r.amount_cents, "date": str(r.date),
-          "is_debit": r.is_debit, "currency": r.currency, "account_id": r.account_id} for r in rows],
-        db, pid,
-    )
+    evals = await evaluate_rules_batch([rule_input(r) for r in rows], db, pid)
     conflict_ids = {cid for ev in evals if ev.conflict for cid in ev.category_ids}
     names: dict[int, str] = {}
     if conflict_ids:
         cat_rows = await db.execute(select(Category.id, Category.name).where(Category.id.in_(conflict_ids)))
         names = {cid: name for cid, name in cat_rows}
-    for out, ev in zip(outs, evals):
+    for out, r, ev in zip(outs, rows, evals):
         if ev.conflict:
             out.category_conflict = True
             out.conflict_categories = sorted(names.get(cid, str(cid)) for cid in ev.category_ids)
             out.conflict_rule_ids = ev.rule_ids
+        # A hand label the rules would classify otherwise: flagged, never changed.
+        other = disagreeing_category(r.category_id, r.category_source, ev)
+        if other is not None:
+            out.rule_category_id = other
+            out.disagreeing_rule_ids = ev.rule_ids
     return outs
 
 
@@ -679,6 +716,32 @@ async def update_transaction(
     await db.commit()
     await db.refresh(txn)
     return TransactionOut.from_orm_with_display(txn)
+
+
+@router.post("/{transaction_id}/apply-rules", response_model=TransactionOut)
+async def apply_rules(transaction_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    """Give this transaction the category its rules agree on, and record that a
+    rule chose it. This is the user's own click on « ≠ règle » → « Suivre la
+    règle »: the one place where a category set by hand gives way to a rule."""
+    txn = (await db.execute(
+        select(Transaction).options(selectinload(Transaction.account))
+        .where(Transaction.id == transaction_id, Transaction.profile_id == pid)
+    )).scalar_one_or_none()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction introuvable")
+    ev = (await evaluate_rules_batch([rule_input(txn)], db, pid))[0]
+    if ev.conflict:
+        raise HTTPException(status_code=409, detail="Des règles se contredisent pour cette transaction : modifiez-en une d'abord.")
+    if ev.category_id is None:
+        raise HTTPException(status_code=409, detail="Aucune règle ne correspond à cette transaction.")
+    txn.category_id = ev.category_id
+    txn.category_source = RULE
+    await db.commit()
+    await db.refresh(txn)
+    out = TransactionOut.from_orm_with_display(txn)
+    if txn.account:
+        out.account_name = txn.account.name
+    return out
 
 
 @router.delete("/{transaction_id}", status_code=204)

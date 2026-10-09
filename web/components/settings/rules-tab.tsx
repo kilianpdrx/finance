@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Plus, Trash2, Pencil, Merge, RefreshCw, Search, ChevronDown, AlertTriangle } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -9,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { useAllRules, useCategories, useRuleMutations, useCategoryMutations, type CategoryRule, type Account } from "@/lib/api/hooks";
+import { useAllRules, useCategories, useRuleMutations, useCategoryMutations, previewRescan, type CategoryRule, type Account, type RescanResult } from "@/lib/api/hooks";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { RuleDialog } from "@/components/settings/rule-dialog";
 import { RuleTester } from "@/components/settings/rule-tester";
@@ -23,20 +24,63 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
   const { rescan } = useCategoryMutations();
 
   const confirm = useConfirm();
-  // Rules only apply on import or when re-applied. Default is safe (only fills
-  // transactions with no category yet); "à tout" re-applies to everything (except
-  // manually-verified rows) and can overwrite existing categorisations.
+  const router = useRouter();
+  // Rules only apply on import or when re-applied. Whatever the scope, a category
+  // the user chose is never touched: "sans catégorie" fills the empty rows, "à
+  // toutes" also brings the rows a RULE classified in line with today's rules.
+  // Hand-labelled and « vérifié » rows are left alone — where the rules disagree
+  // with a hand label, the row is only flagged (« ≠ règle »).
+  const tellDisagreements = (n: number) => {
+    if (n === 0) return;
+    toast.info(`${n} transaction(s) classée(s) à la main contredisent une règle`, {
+      description: "Elles gardent votre catégorie et portent le badge « ≠ règle ».",
+      duration: 12000,
+      action: { label: "Voir", onClick: () => router.push("/transactions?classement=desaccord") },
+    });
+  };
   const reapply = (scope: "uncategorized" | "all") =>
     rescan.mutate(scope, {
-      onSuccess: (r) => toast.success(`${(r as { updated: number }).updated} transaction(s) recatégorisée(s)`),
+      onSuccess: (r) => {
+        const res = r as RescanResult;
+        toast.success(`${res.updated} transaction(s) recatégorisée(s)`);
+        tellDisagreements(res.manual_disagreements);
+      },
       onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur"),
     });
+  // Says what WOULD change before changing it: the counts come from a dry run.
   const reapplyAll = async () => {
+    let preview: RescanResult;
+    try { preview = await previewRescan("all"); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Erreur"); return; }
+    if (preview.updated === 0) {
+      toast.info("Rien à changer : vos transactions suivent déjà vos règles.");
+      tellDisagreements(preview.manual_disagreements);
+      return;
+    }
     const ok = await confirm({
-      title: "Réappliquer à toutes les transactions ?",
-      description: "Les règles seront réappliquées à tout l'historique et peuvent remplacer des catégorisations existantes (les transactions marquées « vérifié » sont préservées).",
-      confirmLabel: "Réappliquer à tout",
-      destructive: true,
+      title: "Réappliquer les règles à toutes les transactions ?",
+      description: (
+        <>
+          <span className="block">
+            {preview.updated} transaction(s) classée(s) par une règle, ou sans catégorie, changeraient de catégorie
+            {preview.cleared > 0 && <>, dont {preview.cleared} n&apos;en auraient plus : aucune règle ne leur correspond désormais</>}.
+          </span>
+          <span className="mt-2 block">
+            Celles que vous avez classées à la main et celles marquées « vérifié » ne sont jamais modifiées.
+          </span>
+          {preview.manual_disagreements > 0 && (
+            <span className="mt-2 block">
+              {preview.manual_disagreements} transaction(s) classée(s) à la main contredisent une règle : elles gardent
+              votre catégorie et portent le badge « ≠ règle ».
+            </span>
+          )}
+          {preview.conflicts > 0 && (
+            <span className="mt-2 block">{preview.conflicts} autre(s) correspondent à des règles qui se contredisent et restent telles quelles.</span>
+          )}
+        </>
+      ),
+      confirmLabel: "Réappliquer",
+      destructive: preview.cleared > 0,
     });
     if (ok) reapply("all");
   };
@@ -119,8 +163,8 @@ export function RulesTab({ accounts }: { accounts: Account[] }) {
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={reapplyAll}>
                 <div>
-                  <p className="text-sm text-warning">À toutes les transactions…</p>
-                  <p className="text-xs text-muted-foreground">Réécrit les catégorisations existantes.</p>
+                  <p className="text-sm">À toutes les transactions…</p>
+                  <p className="text-xs text-muted-foreground">Sauf celles classées à la main ou vérifiées.</p>
                 </div>
               </DropdownMenuItem>
             </DropdownMenuContent>

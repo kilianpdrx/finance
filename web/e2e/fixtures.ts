@@ -132,6 +132,27 @@ export class Api {
     return (await res.json()).total;
   }
 
+  async transactions(query: Record<string, string> = {}): Promise<
+    { id: number; description: string; category_id: number | null; category_source: string | null }[]
+  > {
+    const res = await this.request.get(`${BACKEND}/api/transactions`, { headers: this.headers(), params: { limit: "500", ...query } });
+    expect(res.ok(), await res.text()).toBeTruthy();
+    return res.json();
+  }
+
+  /** Classify one transaction by hand, as the user would from the list. */
+  async setCategory(transactionId: number, categoryName: string) {
+    const cats: { id: number; name: string }[] = await this.categories();
+    const cat = cats.find((c) => c.name === categoryName);
+    expect(cat, `category ${categoryName} must exist`).toBeTruthy();
+    const res = await this.request.put(`${BACKEND}/api/transactions/${transactionId}`, {
+      headers: this.headers(),
+      data: { category_id: cat!.id },
+    });
+    expect(res.ok(), await res.text()).toBeTruthy();
+    return cat!.id;
+  }
+
   async plannedExpenses(): Promise<{ month: string; amount_cents: number }[]> {
     const res = await this.request.get(`${BACKEND}/api/planned-expenses`, { headers: this.headers() });
     return res.json();

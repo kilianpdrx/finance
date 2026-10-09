@@ -90,9 +90,11 @@ async def test_rule_preview_flags_conflict(client: AsyncClient, seed_data: dict,
 
 # ── A conflict is never settled silently ────────────────────────────────────
 def _txn(seed: dict, import_hash: str, category_id=None) -> Transaction:
+    # A category, when there is one, was set by a rule: that is what "all" re-evaluates.
     return Transaction(profile_id=seed["profile"].id, account_id=seed["account_courant"].id,
                        date=date(2026, 5, 8), description="PAIEMENT CB SNCB WEBAPP", amount_cents=1000,
-                       currency="EUR", is_debit=True, import_hash=import_hash, category_id=category_id)
+                       currency="EUR", is_debit=True, import_hash=import_hash, category_id=category_id,
+                       category_source="rule" if category_id is not None else None)
 
 
 async def test_preview_leaves_a_conflicting_row_uncategorised(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
@@ -136,10 +138,10 @@ async def test_rescan_never_writes_a_conflicting_row(client: AsyncClient, seed_d
     await _add_conflicting_rules(db_session, seed_data)
 
     r = await client.post("/api/categories/rescan", headers=h)
-    assert r.json() == {"updated": 0, "total": 1, "conflicts": 1}
+    assert r.json() == {"updated": 0, "cleared": 0, "total": 1, "conflicts": 1, "manual_disagreements": 0}
 
     r = await client.post("/api/categories/rescan", params={"scope": "all"}, headers=h)
-    assert r.json() == {"updated": 0, "total": 2, "conflicts": 2}
+    assert r.json() == {"updated": 0, "cleared": 0, "total": 2, "conflicts": 2, "manual_disagreements": 0}
 
     await db_session.refresh(empty)
     await db_session.refresh(filed)
@@ -154,7 +156,7 @@ async def test_rescan_dry_run_counts_without_writing(client: AsyncClient, seed_d
     await db_session.commit()
 
     r = await client.post("/api/categories/rescan", params={"dry_run": "true"}, headers=h)
-    assert r.json() == {"updated": 1, "total": 1, "conflicts": 0}
+    assert r.json() == {"updated": 1, "cleared": 0, "total": 1, "conflicts": 0, "manual_disagreements": 0}
     await db_session.refresh(txn)
     assert txn.category_id is None, "a dry run must not write"
 

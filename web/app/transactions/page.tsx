@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { toast } from "sonner";
@@ -24,6 +24,7 @@ import { RuleDialog } from "@/components/settings/rule-dialog";
 import { SameLabelBar } from "@/components/transactions/same-label-bar";
 import { UncategorizedPanel } from "@/components/transactions/uncategorized-panel";
 import { RecurringPanel } from "@/components/transactions/recurring-panel";
+import { RuleDisagreementBadge } from "@/components/transactions/rule-disagreement-badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SortHeader, type SortState } from "@/components/ui/sort-header";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -60,7 +61,13 @@ export default function TransactionsPage() {
   const [account, setAccount] = useState(ALL);
   const [category, setCategory] = useState(ALL);
   const [type, setType] = useState(ALL); // all | debit | credit
-  const [source, setSource] = useState(ALL); // all | rule (classified automatically) | manual
+  // all | rule (classified automatically) | manual | contradicts (by hand, and the rules say otherwise)
+  const [source, setSource] = useState(ALL);
+  // « Réappliquer les règles » links here to show what it left alone. Read once,
+  // after hydration: the page is prerendered and knows no query string.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("classement") === "desaccord") setSource("contradicts");
+  }, []);
   // Transactions · Récurrents · Sans règle. The account filter is shared by the three.
   const [tab, setTab] = useState("list");
   const [hideTransfers, setHideTransfers] = useState(true);
@@ -89,7 +96,8 @@ export default function TransactionsPage() {
     uncategorized: category === UNCAT ? true : undefined,
     categorized: category === CATEGORIZED ? true : undefined,
     is_debit: type === ALL ? undefined : type === "debit",
-    category_source: source === ALL ? undefined : (source as "rule" | "manual"),
+    category_source: source === "rule" || source === "manual" ? source : undefined,
+    contradicts_rule: source === "contradicts" ? true : undefined,
     is_internal_transfer: hideTransfers ? false : undefined,
     month: month === ALL ? undefined : month,
     sort_by: sort?.col,
@@ -152,6 +160,12 @@ export default function TransactionsPage() {
         } catch { setSameLabel(null); }   // the offer is a convenience; the edit itself succeeded
       },
     });
+  // « ≠ règle » → « Suivre la règle »: the user's own decision to let the rule win.
+  const followRule = (t: Transaction) =>
+    mut.applyRules.mutate(t.id, {
+      onSuccess: () => toast.success(t.rule_category_id != null ? `Classée en ${catName(t.rule_category_id)} par la règle` : "Règle suivie"),
+      onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur"),
+    });
   const applySameLabel = async () => {
     if (!sameLabel) return;
     try {
@@ -203,7 +217,8 @@ export default function TransactionsPage() {
       {(["recurring", "uncovered"] as const).map((kind) => (
         <TabsContent key={kind} value={kind} className="space-y-4">
           {accountFilter}
-          <RecurringPanel kind={kind} accountId={account === ALL ? null : Number(account)} categories={categories} onCreateRule={openRuleFor} />
+          <RecurringPanel kind={kind} accountId={account === ALL ? null : Number(account)} categories={categories}
+            accountNames={accountNames} onCreateRule={openRuleFor} />
         </TabsContent>
       ))}
 
@@ -218,7 +233,10 @@ export default function TransactionsPage() {
           options={[{ value: ALL, label: "Tout" }, { value: "debit", label: "Dépenses" }, { value: "credit", label: "Revenus" }]} />
         {/* How the category got there: a rule did it, or it was chosen by hand. */}
         <FilterSelect value={source} onChange={(v) => { setSource(v); setPage(0); }} placeholder="Classement" width="w-44"
-          options={[{ value: ALL, label: "Tout classement" }, { value: "rule", label: "Classées automatiquement" }, { value: "manual", label: "Classées à la main" }]} />
+          options={[
+            { value: ALL, label: "Tout classement" }, { value: "rule", label: "Classées automatiquement" },
+            { value: "manual", label: "Classées à la main" }, { value: "contradicts", label: "Contredisent une règle" },
+          ]} />
         <FilterSelect value={month} onChange={(v) => { setMonth(v); setPage(0); }} placeholder="Mois" width="w-36"
           options={[{ value: ALL, label: "Tous les mois" }, ...(meta?.available_months ?? []).map((m) => ({ value: m, label: m }))]} />
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -361,12 +379,17 @@ export default function TransactionsPage() {
                   </TableCell>
                   <TableCell>
                     <p className="line-clamp-1 font-medium" title={t.description}>{t.description}</p>
-                    {(t.is_internal_transfer || t.is_manually_reviewed || t.is_manually_edited || t.category_conflict) && (
+                    {(t.is_internal_transfer || t.is_manually_reviewed || t.is_manually_edited || t.category_conflict || t.rule_category_id != null) && (
                       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         {t.is_internal_transfer && <span className="rounded bg-info/12 px-1 text-info">virement</span>}
                         {t.is_manually_reviewed && <span className="rounded bg-positive/12 px-1 text-positive">vérifié</span>}
                         {t.is_manually_edited && <span className="rounded bg-warning/15 px-1 text-warning" title="Transaction modifiée manuellement">modifié</span>}
                         {t.category_conflict && <ConflictBadge categories={t.conflict_categories} ruleIds={t.conflict_rule_ids} onEditRule={setEditingRule} />}
+                        {t.rule_category_id != null && (
+                          <RuleDisagreementBadge currentCategoryId={t.category_id} ruleCategoryId={t.rule_category_id}
+                            ruleIds={t.disagreeing_rule_ids ?? []} onEditRule={setEditingRule}
+                            onFollow={() => followRule(t)} following={mut.applyRules.isPending} />
+                        )}
                       </p>
                     )}
                   </TableCell>

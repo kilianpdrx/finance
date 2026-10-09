@@ -137,6 +137,7 @@ export interface TransactionFilters {
   import_batch_id?: number | null;
   sort_by?: "date" | "amount" | "description" | "category" | "account";
   category_source?: "rule" | "manual" | null;   // classified by a rule, or chosen by hand
+  contradicts_rule?: boolean | null;            // chosen by hand, and the rules say otherwise
   sort_dir?: "asc" | "desc";
   limit?: number;
   offset?: number;
@@ -308,7 +309,7 @@ export interface TransactionStats { total: number; categorized: number; uncatego
 export function useTransactionStats(filters: TransactionFilters) {
   // Base filters only — the categorized/uncategorized/transfer toggles are the
   // dimensions being counted, so they're excluded to keep counts stable.
-  const { limit: _l, offset: _o, sort_by: _sb, sort_dir: _sd, category_id: _c, uncategorized: _u, categorized: _cz, is_internal_transfer: _t, category_source: _cs, ...rest } = filters;
+  const { limit: _l, offset: _o, sort_by: _sb, sort_dir: _sd, category_id: _c, uncategorized: _u, categorized: _cz, is_internal_transfer: _t, category_source: _cs, contradicts_rule: _cr, ...rest } = filters;
   const query = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== null && v !== ""));
   return useQuery({
     queryKey: ["transactions", "stats", rest],
@@ -471,6 +472,8 @@ export function useTransactionMutations() {
     bulkReviewed: useMutation({ mutationFn: ({ ids, value }: { ids: number[]; value: boolean }) => unwrap(api.POST("/api/transactions/bulk-update-reviewed", { body: { ids, is_manually_reviewed: value } })), onSuccess }),
     bulkTransfer: useMutation({ mutationFn: ({ ids, value }: { ids: number[]; value: boolean }) => unwrap(api.POST("/api/transactions/bulk-update-transfer", { body: { ids, is_internal_transfer: value } })), onSuccess }),
     detectTransfers: useMutation({ mutationFn: () => unwrap(api.POST("/api/transactions/detect-transfers", { params: { query: { max_days: 3 } } })), onSuccess }),
+    // « ≠ règle » → « Suivre la règle »: the category the rules agree on replaces the hand label.
+    applyRules: useMutation({ mutationFn: (id: number) => unwrap(api.POST("/api/transactions/{transaction_id}/apply-rules", { params: { path: { transaction_id: id } } })), onSuccess }),
   };
 }
 
@@ -486,12 +489,15 @@ export function useCategoryMutations() {
   };
 }
 
-export interface RescanResult { updated: number; total: number; conflicts: number }
+/** `cleared`: of the `updated`, those left without a category (no rule matches
+ *  them any more). `manual_disagreements`: hand-labelled rows the rules would
+ *  classify differently — never rewritten, only counted (scope "all"). */
+export interface RescanResult { updated: number; cleared: number; total: number; conflicts: number; manual_disagreements: number }
 
 /** What applying the rules to uncategorised transactions WOULD do, without
  *  writing anything — used to offer "apply now" right after a rule is saved. */
-export async function previewRescan(): Promise<RescanResult> {
-  return (await unwrap(api.POST("/api/categories/rescan", { params: { query: { dry_run: true } } }))) as RescanResult;
+export async function previewRescan(scope?: "uncategorized" | "all"): Promise<RescanResult> {
+  return (await unwrap(api.POST("/api/categories/rescan", { params: { query: { dry_run: true, ...(scope ? { scope } : {}) } } }))) as RescanResult;
 }
 
 export function useRuleMutations() {

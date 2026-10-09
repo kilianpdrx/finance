@@ -58,7 +58,7 @@ Construit les images localement et sert l'application sur http://127.0.0.1:3000.
 
 ### Tests
 ```bash
-cd backend && python -m pytest        # 319 tests
+cd backend && python -m pytest        # 327 tests
 cd web && npx tsc --noEmit && npx vitest run
 cd web && npm run test:e2e            # Playwright — démarre sa propre pile isolée
 ```

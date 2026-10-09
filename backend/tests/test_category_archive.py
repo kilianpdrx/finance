@@ -67,9 +67,10 @@ async def test_rescan_scope_preserves_categorised(
     h = {"X-Profile-Id": str(pid)}
     acc = seed_data["account_courant"]
     cat = seed_data["cat_courses"]
-    # A categorised transaction that a rule would move elsewhere.
+    # A transaction a rule once classified, that a rule would now move elsewhere.
     txn = Transaction(profile_id=pid, account_id=acc.id, date=date(2025, 1, 1), description="CARREFOUR",
-                      amount_cents=1000, is_debit=True, import_hash="resc-1", category_id=cat.id)
+                      amount_cents=1000, is_debit=True, import_hash="resc-1", category_id=cat.id,
+                      category_source="rule")
     db_session.add(txn)
     db_session.add(CategoryRule(profile_id=pid, category_id=seed_data["cat_salaire"].id,
                                 is_active=True, logic_operator="AND",

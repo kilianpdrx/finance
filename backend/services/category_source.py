@@ -3,7 +3,9 @@
 `Transaction.category_source` is written wherever a category is — "rule" when
 the rule engine assigned it (import, applying rules), "manual" when the user
 picked it (editing a row, a bulk action, the import review). It is what lets the
-list badge and filter the transactions that were classified automatically.
+list badge and filter the transactions that were classified automatically — and
+what re-applying rules relies on to leave alone every category the user chose
+(`disagreeing_category` only FLAGS a hand label the rules would set differently).
 
 Rows categorised before the column existed carry no source. `backfill` infers
 one, once: "rule" when the CURRENT rules give the row the category it has,
@@ -36,6 +38,20 @@ def manual_source(category_id: Optional[int]) -> Optional[str]:
 def rule_source(category_id: Optional[int]) -> Optional[str]:
     """The source to store when the RULE ENGINE sets `category_id`."""
     return RULE if category_id is not None else None
+
+
+def disagreeing_category(category_id: Optional[int], source: Optional[str], ev) -> Optional[int]:
+    """The category the rules agree on, when it is NOT the one the user chose.
+
+    None whenever there is nothing to report: the row was not classified by
+    hand, no rule matches it, the rules conflict among themselves, or they give
+    the category it already has. A hand label is never rewritten for this — the
+    row is only flagged (« ≠ règle »), and the user settles it."""
+    if source != MANUAL or category_id is None:
+        return None
+    if ev.category_id is None or ev.category_id == category_id:
+        return None
+    return ev.category_id
 
 
 async def backfill(db: AsyncSession) -> dict:

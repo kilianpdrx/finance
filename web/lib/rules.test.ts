@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { amountConditionIssue, operatorsFor, parseRuleAmount, ruleSummary } from './rules';
+import { amountConditionIssue, operatorsFor, parseRuleAmount, ruleSummary, previewBreakdown } from './rules';
 
 describe('rules.ts', () => {
   describe('operatorsFor', () => {
@@ -94,6 +94,20 @@ describe('rules.ts', () => {
 
     it('only looks at amount conditions', () => {
       expect(amountConditionIssue({ field: 'description', operator: 'contains', value: '0' })).toBeNull();
+    });
+  });
+
+  describe('previewBreakdown', () => {
+    const rows = [{ category_id: null }, { category_id: undefined }, { category_id: 3 }, { category_id: 3 }, { category_id: 7 }];
+
+    it('tells apart what the rule can fill, what it already matches and what is filed elsewhere', () => {
+      expect(previewBreakdown(rows, 3)).toEqual({ none: 2, same: 2, other: 1 });
+      expect(previewBreakdown(rows, 7)).toEqual({ none: 2, same: 1, other: 2 });
+    });
+
+    it('counts every categorised row as "elsewhere" until a category is chosen', () => {
+      expect(previewBreakdown(rows, null)).toEqual({ none: 2, same: 0, other: 3 });
+      expect(previewBreakdown([], 3)).toEqual({ none: 0, same: 0, other: 0 });
     });
   });
 });

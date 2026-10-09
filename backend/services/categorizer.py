@@ -121,6 +121,15 @@ def evaluate_conditions(txn_data: dict, conditions: List[dict], logic_operator: 
     return all(results) if logic_operator != "OR" else any(results)
 
 
+def rule_input(txn) -> dict:
+    """What the rule engine reads of a transaction — an ORM row, or any row
+    carrying these columns."""
+    return {
+        "description": txn.description, "amount_cents": txn.amount_cents, "date": str(txn.date),
+        "is_debit": txn.is_debit, "currency": txn.currency, "account_id": txn.account_id,
+    }
+
+
 def rule_matches(rule: CategoryRule, txn_data: dict) -> bool:
     """True when `rule` fires on this transaction: it has conditions, it is not
     bound to another account, and its conditions hold."""

@@ -433,6 +433,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/transactions/{transaction_id}/apply-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Rules
+         * @description Give this transaction the category its rules agree on, and record that a
+         *     rule chose it. This is the user's own click on « ≠ règle » → « Suivre la
+         *     règle »: the one place where a category set by hand gives way to a rule.
+         */
+        post: operations["apply_rules_api_transactions__transaction_id__apply_rules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/categories": {
         parameters: {
             query?: never;
@@ -528,12 +550,18 @@ export interface paths {
         /**
          * Rescan Categories
          * @description Re-apply active rules. `scope="uncategorized"` (default) only fills in
-         *     transactions that have no category yet — it never rewrites already-categorised
-         *     history (the ledger stays intact). `scope="all"` re-applies to every
-         *     non-manually-reviewed transaction and may change past categorisations.
+         *     transactions that have no category yet. `scope="all"` also re-evaluates the
+         *     transactions a RULE classified: they follow the current rules, and lose
+         *     their category when no rule matches them any more (`cleared`).
          *
-         *     A transaction whose matching rules disagree is never written, whatever the
-         *     scope: it is counted in `conflicts` and keeps the category it has.
+         *     Whatever the scope, a category the user chose is never touched: neither a
+         *     hand-labelled row, nor a « vérifié » one, nor a categorised row whose origin
+         *     is unknown. Hand-labelled rows the rules would classify differently are
+         *     only counted (`manual_disagreements`) — the list flags them « ≠ règle ».
+         *     Internal transfers are left alone: they have no category on purpose.
+         *
+         *     A transaction whose matching rules disagree is never written either: it is
+         *     counted in `conflicts` and keeps what it has.
          *     `dry_run=true` returns the same counts without writing anything.
          */
         post: operations["rescan_categories_api_categories_rescan_post"];
@@ -2827,6 +2855,27 @@ export interface components {
             /** Enabled Modules */
             enabled_modules?: string[] | null;
         };
+        /**
+         * RecurringMember
+         * @description One real transaction of a recurring group.
+         */
+        RecurringMember: {
+            /** Id */
+            id: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Description */
+            description: string;
+            /** Amount Cents */
+            amount_cents: number;
+            /** Account Id */
+            account_id: number | null;
+            /** Category Id */
+            category_id: number | null;
+        };
         /** RecurringTransaction */
         RecurringTransaction: {
             /** Description */
@@ -2846,6 +2895,11 @@ export interface components {
             last_date: string;
             /** Category Id */
             category_id: number | null;
+            /**
+             * Transactions
+             * @default []
+             */
+            transactions: components["schemas"]["RecurringMember"][];
         };
         /** RuleCondition */
         RuleCondition: {
@@ -2997,6 +3051,13 @@ export interface components {
             conflict_rule_ids: number[];
             /** Category Source */
             category_source?: string | null;
+            /** Rule Category Id */
+            rule_category_id?: number | null;
+            /**
+             * Disagreeing Rule Ids
+             * @default []
+             */
+            disagreeing_rule_ids: number[];
             /** Import Hash */
             import_hash: string;
             /** Import Batch Id */
@@ -3444,6 +3505,7 @@ export interface operations {
                 month?: string | null;
                 import_batch_id?: number | null;
                 category_source?: ("rule" | "manual") | null;
+                contradicts_rule?: boolean | null;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
@@ -3529,6 +3591,7 @@ export interface operations {
                 month?: string | null;
                 import_batch_id?: number | null;
                 category_source?: ("rule" | "manual") | null;
+                contradicts_rule?: boolean | null;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
@@ -3574,6 +3637,7 @@ export interface operations {
                 month?: string | null;
                 import_batch_id?: number | null;
                 category_source?: ("rule" | "manual") | null;
+                contradicts_rule?: boolean | null;
                 sort_by?: "date" | "amount" | "description" | "category" | "account";
                 sort_dir?: "asc" | "desc";
                 limit?: number;
@@ -4070,6 +4134,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_rules_api_transactions__transaction_id__apply_rules_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                transaction_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionOut"];
+                };
             };
             /** @description Validation Error */
             422: {

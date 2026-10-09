@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, update, and_
+from sqlalchemy import select, update, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
@@ -353,52 +353,70 @@ async def rescan_categories(
     pid: int = Depends(current_profile_id),
 ):
     """Re-apply active rules. `scope="uncategorized"` (default) only fills in
-    transactions that have no category yet — it never rewrites already-categorised
-    history (the ledger stays intact). `scope="all"` re-applies to every
-    non-manually-reviewed transaction and may change past categorisations.
+    transactions that have no category yet. `scope="all"` also re-evaluates the
+    transactions a RULE classified: they follow the current rules, and lose
+    their category when no rule matches them any more (`cleared`).
 
-    A transaction whose matching rules disagree is never written, whatever the
-    scope: it is counted in `conflicts` and keeps the category it has.
+    Whatever the scope, a category the user chose is never touched: neither a
+    hand-labelled row, nor a « vérifié » one, nor a categorised row whose origin
+    is unknown. Hand-labelled rows the rules would classify differently are
+    only counted (`manual_disagreements`) — the list flags them « ≠ règle ».
+    Internal transfers are left alone: they have no category on purpose.
+
+    A transaction whose matching rules disagree is never written either: it is
+    counted in `conflicts` and keeps what it has.
     `dry_run=true` returns the same counts without writing anything."""
-    from services.categorizer import evaluate_rules_batch
-    from services.category_source import rule_source
+    from services.categorizer import evaluate_rules_batch, rule_input
+    from services.category_source import MANUAL, RULE, disagreeing_category, rule_source
 
-    filters = [Transaction.is_manually_reviewed == False, Transaction.profile_id == pid]  # noqa: E712
-    if scope != "all":
-        filters.append(Transaction.category_id == None)  # noqa: E711
-    result = await db.execute(select(Transaction).where(*filters))
+    # `isnot(True)` rather than `== False`: both defaults are ORM-side, so a row
+    # written outside the ORM holds NULL and would silently drop out.
+    base = [Transaction.profile_id == pid, Transaction.is_internal_transfer.isnot(True)]
+    open_to_rules = Transaction.category_id == None  # noqa: E711
+    if scope == "all":
+        open_to_rules = or_(open_to_rules, Transaction.category_source == RULE)
+    result = await db.execute(select(Transaction).where(
+        *base, Transaction.is_manually_reviewed.isnot(True), open_to_rules))
     transactions = result.scalars().all()
 
     # Evaluate the ruleset ONCE for every transaction (the rules are loaded a
     # single time) instead of re-querying rules per row.
-    txn_dicts = [
-        {
-            "description": txn.description,
-            "amount_cents": txn.amount_cents,
-            "date": txn.date,
-            "is_debit": txn.is_debit,
-            "currency": txn.currency,
-            "account_id": txn.account_id,
-        }
-        for txn in transactions
-    ]
-    evals = await evaluate_rules_batch(txn_dicts, db, pid)
+    evals = await evaluate_rules_batch([rule_input(txn) for txn in transactions], db, pid)
 
-    updated = 0
-    conflicts = 0
+    updated = cleared = conflicts = 0
     for txn, ev in zip(transactions, evals):
         if ev.conflict:
             conflicts += 1
             continue
         if ev.category_id != txn.category_id:
+            if ev.category_id is None:
+                cleared += 1
             if not dry_run:
                 txn.category_id = ev.category_id
                 txn.category_source = rule_source(ev.category_id)
             updated += 1
 
+    # What re-applying to everything deliberately leaves alone: the rows the
+    # user classified otherwise than the rules would. Read-only.
+    manual_disagreements = 0
+    if scope == "all":
+        # Same population as the list's « ≠ règle » flag, so the two counts agree.
+        by_hand = (await db.execute(select(Transaction).where(
+            Transaction.profile_id == pid, Transaction.category_source == MANUAL,
+            Transaction.category_id != None,  # noqa: E711
+        ))).scalars().all()
+        hand_evals = await evaluate_rules_batch([rule_input(txn) for txn in by_hand], db, pid)
+        manual_disagreements = sum(
+            disagreeing_category(txn.category_id, txn.category_source, ev) is not None
+            for txn, ev in zip(by_hand, hand_evals)
+        )
+
     if not dry_run:
         await db.commit()
-    return {"updated": updated, "total": len(transactions), "conflicts": conflicts}
+    return {
+        "updated": updated, "cleared": cleared, "total": len(transactions), "conflicts": conflicts,
+        "manual_disagreements": manual_disagreements,
+    }
 
 
 # ── Rule Preview ─────────────────────────────────────────────────────────────

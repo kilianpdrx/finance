@@ -178,3 +178,187 @@ async def test_backfill_uses_each_profile_own_rules(db_session: AsyncSession, se
 
     await db_session.refresh(theirs)
     assert theirs.category_source == "manual"
+
+
+# ── Re-applying rules to everything never touches a hand label ──────────────
+def _rule_to(seed: dict, category, value: str) -> CategoryRule:
+    return CategoryRule(profile_id=seed["profile"].id, category_id=category.id, is_active=True,
+                        logic_operator="AND", conditions=[{"field": "description", "operator": "contains", "value": value}])
+
+
+async def _state(db: AsyncSession) -> dict:
+    db.expire_all()
+    rows = (await db.execute(select(Transaction))).scalars().all()
+    return {t.description: (t.category_id, t.category_source) for t in rows}
+
+
+async def _rescan_fixture(db: AsyncSession, seed: dict) -> None:
+    """One rule, "SNCB" → Courses, and every kind of row it can meet."""
+    courses, salaire = seed["cat_courses"].id, seed["cat_salaire"].id
+    db.add_all([
+        _rule(seed),
+        # Chosen by hand — whatever the rule thinks of them, they stay.
+        _txn(seed, "h1", "SNCB A LA MAIN AUTREMENT", category_id=salaire, category_source="manual"),
+        _txn(seed, "h2", "A LA MAIN SANS REGLE", category_id=salaire, category_source="manual"),
+        _txn(seed, "h3", "SNCB A LA MAIN PAREIL", category_id=courses, category_source="manual"),
+        _txn(seed, "v1", "SNCB VERIFIE", category_id=salaire, category_source="rule", is_manually_reviewed=True),
+        _txn(seed, "u1", "SNCB ORIGINE INCONNUE", category_id=salaire),
+        # Classified by a rule — they follow the current rules.
+        _txn(seed, "r1", "SNCB AUTO ANCIENNE", category_id=salaire, category_source="rule"),
+        _txn(seed, "r2", "AUTO SANS REGLE", category_id=salaire, category_source="rule"),
+        _txn(seed, "n1", "SNCB SANS CATEGORIE"),
+        # A transfer has no category on purpose.
+        _txn(seed, "t1", "SNCB VIREMENT", is_internal_transfer=True),
+    ])
+    await db.commit()
+
+
+async def test_rescan_all_keeps_what_the_user_chose(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    courses, salaire = seed_data["cat_courses"].id, seed_data["cat_salaire"].id
+    await _rescan_fixture(db_session, seed_data)
+    before = await _state(db_session)
+
+    expected = {"updated": 3, "cleared": 1, "total": 3, "conflicts": 0, "manual_disagreements": 1}
+    dry = await client.post("/api/categories/rescan", params={"scope": "all", "dry_run": "true"}, headers=h)
+    assert dry.json() == expected
+    assert await _state(db_session) == before, "a dry run must not write"
+
+    res = await client.post("/api/categories/rescan", params={"scope": "all"}, headers=h)
+    assert res.json() == expected
+    assert await _state(db_session) == {
+        "SNCB A LA MAIN AUTREMENT": (salaire, "manual"),   # the rule disagrees: kept, and counted
+        "A LA MAIN SANS REGLE": (salaire, "manual"),       # no rule: used to be wiped
+        "SNCB A LA MAIN PAREIL": (courses, "manual"),
+        "SNCB VERIFIE": (salaire, "rule"),
+        "SNCB ORIGINE INCONNUE": (salaire, None),          # unknown origin: not ours to overwrite
+        "SNCB AUTO ANCIENNE": (courses, "rule"),           # follows the rule
+        "AUTO SANS REGLE": (None, None),                   # its rule is gone: cleared, and counted
+        "SNCB SANS CATEGORIE": (courses, "rule"),
+        "SNCB VIREMENT": (None, None),
+    }
+
+    # Nothing left to do, and the disagreement is still there to be seen.
+    again = await client.post("/api/categories/rescan", params={"scope": "all"}, headers=h)
+    assert again.json() == {"updated": 0, "cleared": 0, "total": 3, "conflicts": 0, "manual_disagreements": 1}
+
+
+async def test_default_rescan_fills_only_what_has_no_category(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    courses = seed_data["cat_courses"].id
+    await _rescan_fixture(db_session, seed_data)
+    before = await _state(db_session)
+
+    res = await client.post("/api/categories/rescan", headers=h)
+
+    # The transfer is not "sans catégorie": it is left out of the count too.
+    assert res.json() == {"updated": 1, "cleared": 0, "total": 1, "conflicts": 0, "manual_disagreements": 0}
+    assert await _state(db_session) == {**before, "SNCB SANS CATEGORIE": (courses, "rule")}
+
+
+# ── « ≠ règle »: a hand label the rules would set differently ───────────────
+async def test_list_flags_hand_labels_the_rules_contradict(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    await _rescan_fixture(db_session, seed_data)
+    rule_id = (await db_session.execute(select(CategoryRule.id))).scalar_one()
+
+    rows = {t["description"]: t for t in (await client.get("/api/transactions", headers=h)).json()}
+
+    flagged = rows["SNCB A LA MAIN AUTREMENT"]
+    assert flagged["rule_category_id"] == seed_data["cat_courses"].id
+    assert flagged["disagreeing_rule_ids"] == [rule_id]
+    assert flagged["category_id"] == seed_data["cat_salaire"].id
+    # Not flagged: no rule, rule agrees, or the row was not classified by hand
+    # (a stale "auto" row is for « Réappliquer », not for this badge).
+    assert {d for d, t in rows.items() if t["rule_category_id"] is not None} == {"SNCB A LA MAIN AUTREMENT"}
+    assert all(t["disagreeing_rule_ids"] == [] for d, t in rows.items() if d != "SNCB A LA MAIN AUTREMENT")
+
+
+async def test_rules_in_conflict_are_not_a_disagreement(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """Two rules that contradict each other say nothing: « conflit » covers it."""
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    other = Category(name="Transport", profile_id=seed_data["profile"].id)
+    db_session.add(other)
+    await db_session.flush()
+    db_session.add_all([
+        _rule(seed_data), _rule_to(seed_data, other, "WEBAPP"),
+        _txn(seed_data, "c1", "PAIEMENT CB SNCB WEBAPP", category_id=seed_data["cat_salaire"].id, category_source="manual"),
+    ])
+    await db_session.commit()
+
+    row = (await client.get("/api/transactions", headers=h)).json()[0]
+    assert row["category_conflict"] is True and row["rule_category_id"] is None
+    assert (await client.get("/api/transactions/count", headers=h, params={"contradicts_rule": "true"})).json()["total"] == 0
+
+
+async def test_filter_on_contradicted_hand_labels(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    salaire = seed_data["cat_salaire"].id
+    await _rescan_fixture(db_session, seed_data)
+    db_session.add_all([
+        Transaction(profile_id=seed_data["profile"].id, account_id=seed_data["account_courant"].id, date=date(2026, 5, d),
+                    description=f"SNCB CONTREDIT {d}", amount_cents=100 * d, currency="EUR", is_debit=True,
+                    import_hash=f"src_x{d}", category_id=salaire, category_source="manual")
+        for d in (1, 2, 3)
+    ])
+    await db_session.commit()
+
+    async def listed(**params) -> list:
+        res = await client.get("/api/transactions", headers=h, params={"contradicts_rule": "true", **params})
+        assert res.status_code == 200, res.text
+        return [t["description"] for t in res.json()]
+
+    everything = await listed()
+    assert sorted(everything) == ["SNCB A LA MAIN AUTREMENT", "SNCB CONTREDIT 1", "SNCB CONTREDIT 2", "SNCB CONTREDIT 3"]
+    # Paged AFTER the rule engine decided, in the requested order.
+    by_amount = await listed(sort_by="amount", sort_dir="asc")
+    assert by_amount == ["SNCB CONTREDIT 1", "SNCB CONTREDIT 2", "SNCB CONTREDIT 3", "SNCB A LA MAIN AUTREMENT"]
+    assert await listed(sort_by="amount", sort_dir="asc", limit=2, offset=1) == ["SNCB CONTREDIT 2", "SNCB CONTREDIT 3"]
+    # Combined with the other filters.
+    assert await listed(search="CONTREDIT 2") == ["SNCB CONTREDIT 2"]
+
+    count = await client.get("/api/transactions/count", headers=h, params={"contradicts_rule": "true"})
+    assert count.json()["total"] == 4
+    ids = await client.get("/api/transactions/ids", headers=h, params={"contradicts_rule": "true", "search": "CONTREDIT"})
+    assert len(ids.json()["ids"]) == 3
+
+
+async def test_following_the_rule_is_an_explicit_choice(client: AsyncClient, seed_data: dict, db_session: AsyncSession, extra_profile):
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    other_h = {"X-Profile-Id": str(extra_profile.id)}
+    courses, salaire = seed_data["cat_courses"].id, seed_data["cat_salaire"].id
+    await _rescan_fixture(db_session, seed_data)
+    ids = {t.description: t.id for t in (await db_session.execute(select(Transaction))).scalars().all()}
+
+    res = await client.post(f"/api/transactions/{ids['SNCB A LA MAIN AUTREMENT']}/apply-rules", headers=h)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert (body["category_id"], body["category_source"], body["rule_category_id"]) == (courses, "rule", None)
+    assert (await _state(db_session))["SNCB A LA MAIN AUTREMENT"] == (courses, "rule")
+    assert (await client.get("/api/transactions/count", headers=h, params={"contradicts_rule": "true"})).json()["total"] == 0
+
+    # No rule to follow: refused, and the hand label stays.
+    none = await client.post(f"/api/transactions/{ids['A LA MAIN SANS REGLE']}/apply-rules", headers=h)
+    assert none.status_code == 409 and "Aucune règle" in none.json()["detail"]
+    assert (await _state(db_session))["A LA MAIN SANS REGLE"] == (salaire, "manual")
+
+    # Another profile cannot reach the row.
+    foreign = await client.post(f"/api/transactions/{ids['SNCB A LA MAIN PAREIL']}/apply-rules", headers=other_h)
+    assert foreign.status_code == 404
+
+
+async def test_following_conflicting_rules_is_refused(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    salaire = seed_data["cat_salaire"].id
+    other = Category(name="Transport", profile_id=seed_data["profile"].id)
+    db_session.add(other)
+    await db_session.flush()
+    txn = _txn(seed_data, "c2", "PAIEMENT CB SNCB WEBAPP", category_id=salaire, category_source="manual")
+    db_session.add_all([_rule(seed_data), _rule_to(seed_data, other, "WEBAPP"), txn])
+    await db_session.commit()
+    txn_id = txn.id
+
+    res = await client.post(f"/api/transactions/{txn_id}/apply-rules", headers=h)
+
+    assert res.status_code == 409 and "se contredisent" in res.json()["detail"]
+    assert (await _state(db_session))["PAIEMENT CB SNCB WEBAPP"] == (salaire, "manual")
