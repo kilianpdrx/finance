@@ -31,10 +31,10 @@ installé. Le détail est dans le `README.md` fourni.
 
 | Module | Ce qu'il fait |
 |---|---|
-| **Transactions** | Import CSV multi-banques (détection des colonnes, dédoublonnage), classement automatique par règles, édition en masse |
-| **Analyses** | Dépenses par catégorie, tendances mensuelles, flux de trésorerie, récurrences, dépenses sans règle |
+| **Transactions** | Import CSV multi-banques (détection des colonnes, dédoublonnage), classement automatique par règles (repéré sur chaque ligne), édition en masse, dépenses récurrentes et libellés sans règle |
+| **Analyses** | Dépenses par catégorie, tendances mensuelles avec moyenne mobile, flux de trésorerie |
 | **Budget** | Budget annuel par catégorie, dépenses planifiées, comparaison prévu / réalisé |
-| **Comptes** | Courant, épargne, crédit, immobilier ; soldes manuels, patrimoine dans le temps |
+| **Comptes** | Courant, épargne, crédit, immobilier ; soldes manuels, patrimoine dans le temps, clôture (l'historique reste) ou suppression définitive |
 | **Investissements** | Portefeuille (actions, ETF, crypto), cours et dividendes automatiques, import de positions, synchro IBKR |
 | **Emprunts** | Amortissement, capital restant, intérêts, remboursements anticipés |
 | **Objectifs** | Objectifs d'épargne avec contributions manuelles ou compte lié |
@@ -82,7 +82,7 @@ TypeScript, Next.js 15, React 19, TanStack Query, Tailwind, Recharts · Docker.
 
 ```bash
 ./start.sh                                  # API + interface en mode dev
-cd backend && python -m pytest              # 303 tests
+cd backend && python -m pytest              # 319 tests
 cd web && npx tsc --noEmit && npx vitest run
 cd web && npm run test:e2e                  # Playwright : démarre sa propre pile
 ```

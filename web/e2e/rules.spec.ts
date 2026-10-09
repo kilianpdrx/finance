@@ -30,7 +30,7 @@ test.describe("Règles", () => {
       await api.importCsv(account.id, csv(BIOCOOP));
 
       await useProfile(page, profile.id);
-      await page.goto("/analyses");
+      await page.goto("/transactions");
       await expectAppReady(page);
       await page.getByRole("tab", { name: "Sans règle" }).click();
 

@@ -13,7 +13,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { NetworthArea } from "@/components/charts/networth-area";
 import { AccountDialog, ACCOUNT_TYPE_LABELS } from "@/components/accounts/account-dialog";
 import { SnapshotDialog } from "@/components/accounts/snapshot-dialog";
-import { useAccounts, useAllAccounts, useNetWorth, useAccountMutations, type Account } from "@/lib/api/hooks";
+import { useAccounts, useAllAccounts, useNetWorth, useAccountMutations, fetchAccountDeletionSummary, type Account } from "@/lib/api/hooks";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useSelectedAccountsStore } from "@/lib/stores";
 import { ClosedBadge } from "@/components/transactions/category-select";
 import { balancesFromNetWorth } from "@/lib/networth";
 import { deleteWithUndo } from "@/lib/undo";
@@ -23,8 +25,9 @@ export default function ComptesPage() {
   const { data: accounts = [], isLoading, isError } = useAccounts();
   const { data: allAccounts = [] } = useAllAccounts();
   const { data: netWorth = [] } = useNetWorth({});
-  const { remove, update } = useAccountMutations();
+  const { remove, update, purge } = useAccountMutations();
   const qc = useQueryClient();
+  const confirm = useConfirm();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
@@ -54,6 +57,59 @@ export default function ComptesPage() {
   const useTabs = banks.length >= 2;
   const bankTotal = (bank: string) =>
     accounts.filter((a) => a.bank_name === bank).reduce((s, a) => s + (balances[a.id] ?? 0), 0);
+
+  // Closing keeps the history; this removes it. Only offered on an account that
+  // is already closed, and only after showing what goes with it.
+  const deleteForever = async (a: Account) => {
+    let summary;
+    try {
+      summary = await fetchAccountDeletionSummary(a.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+      return;
+    }
+    const lines = ([
+      [summary.transactions, "transaction(s)"],
+      [summary.snapshots, "relevé(s) de solde"],
+      [summary.holdings, "position(s)"],
+      [summary.imports, "import(s)"],
+      [summary.rules, "règle(s) propre(s) à ce compte"],
+      [summary.budget_entries, "ligne(s) de budget"],
+    ] as const).filter(([n]) => n > 0);
+    const ok = await confirm({
+      title: `Supprimer définitivement « ${a.name} » ?`,
+      description: (
+        <>
+          <span className="block">
+            {lines.length > 0 ? "Le compte sera supprimé avec tout ce qu'il contient :" : "Ce compte ne contient aucune donnée."}
+          </span>
+          {lines.map(([n, what]) => (
+            <span key={what} className="block pl-3 text-foreground">· <span className="nums font-medium">{n}</span> {what}</span>
+          ))}
+          <span className="mt-2 block">
+            Ces montants disparaîtront de l&apos;historique et des analyses. C&apos;est irréversible : pour garder une
+            copie, faites d&apos;abord une sauvegarde dans Paramètres → Sauvegarde.
+          </span>
+        </>
+      ),
+      confirmLabel: "Supprimer définitivement",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await purge.mutateAsync(a.id);
+      // The account filter is remembered across sessions: don't leave it
+      // pointing at an account that no longer exists.
+      const { selectedAccountIds, setSelectedAccountIds } = useSelectedAccountsStore.getState();
+      if (selectedAccountIds?.includes(a.id)) {
+        const rest = selectedAccountIds.filter((id) => id !== a.id);
+        setSelectedAccountIds(rest.length > 0 ? rest : null);
+      }
+      toast.success(`Compte « ${a.name} » supprimé définitivement`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    }
+  };
 
   const openCreate = () => { setEditing(null); setDialogOpen(true); };
   const openEdit = (a: Account) => { setEditing(a); setDialogOpen(true); };
@@ -181,13 +237,17 @@ export default function ComptesPage() {
                   <Button variant="outline" size="sm" className="ml-auto" onClick={() => reactivate(a)}>
                     <Undo2 className="size-4" /> Réactiver
                   </Button>
+                  <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-negative"
+                    disabled={purge.isPending} onClick={() => deleteForever(a)}>
+                    <Trash2 className="size-4" /> Supprimer définitivement
+                  </Button>
                 </div>
               ))}
             </Card>
           )}
           <p className="px-1 text-xs text-muted-foreground">
             Leurs transactions restent dans l&apos;historique et les analyses ; seul leur solde
-            sort du patrimoine.
+            sort du patrimoine. Supprimer définitivement un compte efface aussi son historique.
           </p>
         </div>
       )}

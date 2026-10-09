@@ -39,8 +39,35 @@ export interface paths {
         /** Update Account */
         put: operations["update_account_api_accounts__account_id__put"];
         post?: never;
-        /** Delete Account */
+        /**
+         * Delete Account
+         * @description Close the account (default): it keeps its history and only its balance
+         *     leaves net worth. With `permanent=true`, DELETE a closed account and
+         *     everything in it — two steps on purpose, so history is never lost by a
+         *     single click on an account still in use.
+         */
         delete: operations["delete_account_api_accounts__account_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/accounts/{account_id}/deletion-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Account Deletion Summary
+         * @description What permanently deleting this account would remove — shown in the
+         *     confirmation, so the user knows what "definitively" covers.
+         */
+        get: operations["account_deletion_summary_api_accounts__account_id__deletion_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2968,6 +2995,8 @@ export interface components {
              * @default []
              */
             conflict_rule_ids: number[];
+            /** Category Source */
+            category_source?: string | null;
             /** Import Hash */
             import_hash: string;
             /** Import Batch Id */
@@ -3200,7 +3229,9 @@ export interface operations {
     };
     delete_account_api_accounts__account_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                permanent?: boolean;
+            };
             header?: {
                 "X-Profile-Id"?: number | null;
             };
@@ -3217,6 +3248,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    account_deletion_summary_api_accounts__account_id__deletion_summary_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                account_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
             };
             /** @description Validation Error */
             422: {
@@ -3379,6 +3443,7 @@ export interface operations {
                 bank_name?: string | null;
                 month?: string | null;
                 import_batch_id?: number | null;
+                category_source?: ("rule" | "manual") | null;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
@@ -3463,6 +3528,7 @@ export interface operations {
                 bank_name?: string | null;
                 month?: string | null;
                 import_batch_id?: number | null;
+                category_source?: ("rule" | "manual") | null;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
@@ -3507,7 +3573,8 @@ export interface operations {
                 bank_name?: string | null;
                 month?: string | null;
                 import_batch_id?: number | null;
-                sort_by?: "date" | "amount" | "description" | "category";
+                category_source?: ("rule" | "manual") | null;
+                sort_by?: "date" | "amount" | "description" | "category" | "account";
                 sort_dir?: "asc" | "desc";
                 limit?: number;
                 offset?: number;
@@ -3882,6 +3949,7 @@ export interface operations {
             query?: {
                 account_id?: number | null;
                 category_id?: number | null;
+                category_source?: ("rule" | "manual") | null;
                 date_from?: string | null;
                 date_to?: string | null;
             };

@@ -140,6 +140,10 @@ class Transaction(Base):
     amount_cents = Column(Integer, nullable=False)
     currency = Column(String, default="EUR")
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    # How the category got there: "rule" (a rule classified it — on import or when
+    # rules are applied) or "manual" (the user chose it). NULL with no category.
+    # See services/category_source.py.
+    category_source = Column(String, nullable=True)
     subcategory = Column(String, nullable=True)
     is_debit = Column(Boolean, nullable=False)
     balance_after_cents = Column(Integer, nullable=True)

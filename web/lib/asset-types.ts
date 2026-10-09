@@ -10,6 +10,9 @@
  * Les aplatir ferait lire « Action 64 % » sur un graphique de répartition.
  */
 export const CASH_ASSET_TYPE = "cash";
+/** Not a position type: the slice of the global allocation made of accounts
+ *  followed by statements, whose content the app does not know. */
+export const LONG_TERM_GROUP = "long_term";
 
 export const ASSET_TYPES = [
   { value: "stock", label: "Action", plural: "Actions" },
@@ -34,6 +37,7 @@ export function assetTypeLabel(type: string): string {
  *  côté backend (`allocation_by_type`), il n'a pas de type de position associé. */
 export function assetTypeLabelPlural(type: string): string {
   if (type === "other") return "Autre";
+  if (type === LONG_TERM_GROUP) return "Comptes long terme";
   return BY_VALUE.get(type)?.plural ?? type;
 }
 

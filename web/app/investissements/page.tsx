@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { RefreshCw, TrendingUp, Wand2, Coins, CalendarDays, DownloadCloud } from "lucide-react";
+import { RefreshCw, TrendingUp, TrendingDown, Wand2, Coins, CalendarDays, DownloadCloud, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,15 +9,19 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { InvestmentRow } from "@/components/investments/investment-row";
-import { PctBadge } from "@/components/investments/pct-badge";
+import { KpiStat } from "@/components/dashboard/kpi-stat";
+import { AccountsOverview } from "@/components/investments/accounts-overview";
+import { TopPositions } from "@/components/investments/top-positions";
 import { AllocationDonut, type AllocationHolding } from "@/components/investments/allocation-donut";
 import { NetworthArea } from "@/components/charts/networth-area";
 import { DividendCalendar } from "@/components/investments/dividend-calendar";
 import { DividendSectorDonut } from "@/components/investments/dividend-sector-donut";
 import { DividendPositionsTable } from "@/components/investments/dividend-positions-table";
 import { IbkrSyncDialog } from "@/components/investments/ibkr-sync-dialog";
-import { useInvestmentAccounts, useInvestmentTotalSeries, useRefreshPrices, useResolveTickers, useBaseCurrency, useIbkrStatus, type NetWorthPoint } from "@/lib/api/hooks";
-import { formatCents } from "@/lib/format";
+import { useInvestmentAccounts, useInvestmentTotalSeries, useRefreshPrices, useResolveTickers, useBaseCurrency, useIbkrStatus, type InvestmentAccount, type NetWorthPoint } from "@/lib/api/hooks";
+import { monthChange, portfolioTotals, topPositions } from "@/lib/investments";
+import { LONG_TERM_GROUP } from "@/lib/asset-types";
+import { formatCents, formatMonthLabel } from "@/lib/format";
 
 export default function InvestissementsPage() {
   const { data: accounts = [], isLoading } = useInvestmentAccounts();
@@ -27,11 +31,20 @@ export default function InvestissementsPage() {
   const baseCurrency = useBaseCurrency();
   const { data: ibkrStatus } = useIbkrStatus();
   const [ibkrOpen, setIbkrOpen] = useState(false);
+  const [tab, setTab] = useState("synthese");
+  // The account opened from the Synthèse table: its row starts unfolded.
+  const [openAccountId, setOpenAccountId] = useState<number | null>(null);
+  const openAccount = (acc: InvestmentAccount) => {
+    setOpenAccountId(acc.id);
+    setTab(acc.has_holdings ? "live" : "long-terme");
+  };
 
-  const totalCurrent = accounts.reduce((s, a) => s + (a.current_value_cents ?? 0), 0);
-  const totalPerfCents = accounts.reduce((s, a) => s + (a.perf_from_start_cents ?? 0), 0);
-  const totalFirst = accounts.reduce((s, a) => s + (a.first_value_cents ?? 0), 0);
-  const totalPerfPct = totalFirst !== 0 ? Math.round((totalPerfCents / Math.abs(totalFirst)) * 1000) / 10 : null;
+  const totals = portfolioTotals(accounts);
+  const lastMonth = monthChange(series);
+  const positions = topPositions(accounts);
+  // Amounts are summed as they are: a total only means something when every
+  // account is in the currency it is shown in.
+  const mixedCurrencies = accounts.some((a) => a.currency !== baseCurrency);
 
   const liveAccounts = accounts.filter((a) => a.has_holdings);
   const longTermAccounts = accounts.filter((a) => !a.has_holdings);
@@ -56,25 +69,21 @@ export default function InvestissementsPage() {
       });
     }
   }
-  // Long-term (snapshot) accounts have no holdings → group them as "Autre".
+  // Long-term (snapshot) accounts have no holdings: their content is unknown,
+  // so they form a slice of their own rather than being lumped into "Autre".
   for (const acc of longTermAccounts) {
     const val = acc.current_value_cents ?? 0;
     if (val <= 0) continue;
-    globalAllocation["other"] = (globalAllocation["other"] ?? 0) + val;
-    globalHoldings.push({ asset_type: "other", name: acc.name, ticker: acc.bank_name ?? "", value_cents: val });
+    globalAllocation[LONG_TERM_GROUP] = (globalAllocation[LONG_TERM_GROUP] ?? 0) + val;
+    globalHoldings.push({ asset_type: LONG_TERM_GROUP, name: acc.name, ticker: acc.bank_name ?? "", value_cents: val });
   }
 
   const chartData: NetWorthPoint[] = series.map((s) => ({ month: s.month, total: s.total_cents }));
 
-  // Aggregate dividend KPIs across all accounts
-  const totalEstDivCents = accounts.reduce((s, a) => s + (a.est_annual_div_cents ?? 0), 0);
-  const divWeightedNum = accounts.reduce((s, a) => {
-    const dy = a.avg_dividend_yield ?? 0;
-    const v = a.current_value_cents ?? 0;
-    return s + dy * v;
-  }, 0);
-  const divWeightedDen = accounts.reduce((s, a) => s + (a.current_value_cents ?? 0), 0);
-  const avgYield = divWeightedDen > 0 ? Math.round((divWeightedNum / divWeightedDen) * 100) / 100 : null;
+  const totalEstDivCents = totals.dividendsCents;
+  const avgYield = totals.avgYield;
+  const showChart = chartData.length >= 2;
+  const showAllocation = Object.keys(globalAllocation).length > 1;
 
   const handleRefresh = () => {
     refreshPrices.mutate(undefined, {
@@ -103,7 +112,7 @@ export default function InvestissementsPage() {
   }
 
   return (
-    <Tabs defaultValue="synthese" className="space-y-5">
+    <Tabs value={tab} onValueChange={setTab} className="space-y-5">
       <TabsList>
         <TabsTrigger value="synthese">Synthèse</TabsTrigger>
         <TabsTrigger value="dividendes">Dividendes</TabsTrigger>
@@ -113,54 +122,64 @@ export default function InvestissementsPage() {
 
       {/* ── Synthèse ──────────────────────────────────────────────────────── */}
       <TabsContent value="synthese" className="space-y-5">
-        <div className="flex items-center justify-between">
-          <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-            Total investi : <span className="nums blurable font-semibold text-brand">{formatCents(totalCurrent, baseCurrency)}</span>
-            {totalPerfPct != null && <PctBadge value={totalPerfPct} amountCents={totalPerfCents} currency={baseCurrency} />}
-          </p>
+        {/* The four figures, read like the dashboard's. */}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <KpiStat label="Valeur totale" valueCents={totals.valueCents} currency={baseCurrency} icon={Wallet} accent="brand"
+            hint={`${accounts.length} compte${accounts.length > 1 ? "s" : ""}`} />
+          <KpiStat label="Plus-value" valueCents={totals.gainCents} currency={baseCurrency} signed
+            icon={totals.gainCents < 0 ? TrendingDown : TrendingUp} accent={totals.gainCents < 0 ? "negative" : "positive"}
+            deltaPercent={totals.gainPct} hint="sur le capital investi" />
+          {/* A change in value, not a performance: what was paid in is part of it.
+              Said on the card, with the accounts it could be computed on. */}
+          <KpiStat
+            label={lastMonth ? `Variation ${formatMonthLabel(lastMonth.from)} → ${formatMonthLabel(lastMonth.to)}` : "Variation sur un mois"}
+            valueCents={lastMonth?.cents ?? 0} currency={baseCurrency} signed
+            icon={CalendarDays} accent="neutral" deltaPercent={lastMonth?.pct}
+            hint={lastMonth
+              ? "versements compris" + (lastMonth.accounts < accounts.length ? ` · ${lastMonth.accounts} compte${lastMonth.accounts > 1 ? "s" : ""} sur ${accounts.length}` : "")
+              : "pas encore deux mois d'historique"} />
+          <KpiStat label="Dividendes estimés / an" valueCents={totals.dividendsCents} currency={baseCurrency} icon={Coins} accent="positive"
+            hint={avgYield != null && avgYield > 0 ? `rendement moyen ${avgYield.toFixed(2).replace(".", ",")} %` : "aucune position à dividende"} />
         </div>
+        {mixedCurrencies && (
+          <p className="text-xs text-warning">
+            Certains comptes ne sont pas en {baseCurrency} : ces totaux additionnent leurs montants sans les convertir.
+          </p>
+        )}
 
-        {/* Dividend KPI cards */}
-        {totalEstDivCents > 0 && (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Card>
-              <CardContent className="flex items-center gap-3 py-4">
-                <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/10">
-                  <Coins className="size-5 text-emerald-500" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Revenus Est. Dividendes / an</p>
-                  <p className="nums blurable text-lg font-semibold text-emerald-500">{formatCents(totalEstDivCents, baseCurrency)}</p>
-                </div>
-              </CardContent>
-            </Card>
-            {avgYield != null && avgYield > 0 && (
-              <Card>
-                <CardContent className="flex items-center gap-3 py-4">
-                  <div className="flex size-10 items-center justify-center rounded-xl bg-brand/10">
-                    <TrendingUp className="size-5 text-brand" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Rendement Moyen Pondéré</p>
-                    <p className="nums text-lg font-semibold text-brand">{avgYield.toFixed(2)}%</p>
-                  </div>
+        {(showChart || showAllocation) && (
+          <div className="grid gap-5 lg:grid-cols-3">
+            {showChart && (
+              <Card className={showAllocation ? "lg:col-span-2" : "lg:col-span-3"}>
+                <CardHeader><CardTitle>Évolution</CardTitle></CardHeader>
+                <CardContent className="pt-2"><NetworthArea data={chartData} currency={baseCurrency} height={300} /></CardContent>
+              </Card>
+            )}
+            {showAllocation && (
+              <Card className={showChart ? undefined : "lg:col-span-3"}>
+                <CardHeader><CardTitle>Allocation</CardTitle></CardHeader>
+                <CardContent>
+                  <AllocationDonut allocation={globalAllocation} currency={baseCurrency} holdings={globalHoldings} compact={showChart} showDividends={false} />
                 </CardContent>
               </Card>
             )}
           </div>
         )}
 
-        {Object.keys(globalAllocation).length > 1 && (
-          <Card>
-            <CardHeader><CardTitle>Allocation globale</CardTitle></CardHeader>
-            <CardContent><AllocationDonut allocation={globalAllocation} currency={baseCurrency} holdings={globalHoldings} /></CardContent>
-          </Card>
-        )}
+        <Card>
+          <CardHeader>
+            <CardTitle>Par compte</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Plus-value : par rapport au prix d&apos;achat pour un compte live, depuis le premier relevé (hors versements) pour un compte long terme.
+            </p>
+          </CardHeader>
+          <CardContent className="px-0 pb-1"><AccountsOverview accounts={accounts} totalCents={totals.valueCents} onOpen={openAccount} /></CardContent>
+        </Card>
 
-        {chartData.length >= 2 && (
+        {positions.length > 0 && (
           <Card>
-            <CardHeader><CardTitle>Évolution globale des investissements</CardTitle></CardHeader>
-            <CardContent className="pt-2"><NetworthArea data={chartData} currency={baseCurrency} /></CardContent>
+            <CardHeader><CardTitle>Principales positions</CardTitle></CardHeader>
+            <CardContent className="px-0 pb-1"><TopPositions positions={positions} totalCents={totals.valueCents} /></CardContent>
           </Card>
         )}
       </TabsContent>
@@ -230,7 +249,7 @@ export default function InvestissementsPage() {
         {longTermAccounts.length === 0 ? (
           <Card><EmptyState icon={TrendingUp} title="Aucun compte long terme" description="Les comptes à relevés manuels (PER, assurance-vie, crypto en garde…) apparaîtront ici." /></Card>
         ) : (
-          longTermAccounts.map((acc) => <InvestmentRow key={acc.id} acc={acc} />)
+          longTermAccounts.map((acc) => <InvestmentRow key={acc.id} acc={acc} defaultExpanded={acc.id === openAccountId} />)
         )}
       </TabsContent>
 
@@ -262,7 +281,7 @@ export default function InvestissementsPage() {
         {liveAccounts.length === 0 ? (
           <Card><EmptyState icon={TrendingUp} title="Aucun compte live" description="Importez un CSV de positions (PEA, IBKR) pour suivre des cours en direct." /></Card>
         ) : (
-          liveAccounts.map((acc) => <InvestmentRow key={acc.id} acc={acc} />)
+          liveAccounts.map((acc) => <InvestmentRow key={acc.id} acc={acc} defaultExpanded={acc.id === openAccountId} />)
         )}
       </TabsContent>
     </Tabs>

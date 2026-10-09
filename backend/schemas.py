@@ -230,6 +230,7 @@ class TransactionOut(TransactionBase):
     category_conflict: bool = False  # >= 2 distinct categories match via rules
     conflict_categories: List[str] = []  # names of the categories in conflict
     conflict_rule_ids: List[int] = []    # the rules that disagree, so the UI can open them
+    category_source: Optional[str] = None  # "rule" (classified automatically) | "manual"
     import_hash: str
     import_batch_id: Optional[int] = None
     created_at: datetime

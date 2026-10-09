@@ -4,9 +4,8 @@ import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Inbox, ChevronRight, CornerDownRight, Wand2, X } from "lucide-react";
+import { Inbox, ChevronRight, CornerDownRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { RuleDialog } from "@/components/settings/rule-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,15 +16,15 @@ import { SpendingDonut } from "@/components/charts/spending-donut";
 import { CashflowChart } from "@/components/charts/cashflow-chart";
 import { CategoryTrendGrid } from "@/components/charts/category-trend-grid";
 import { TrendTotalChart } from "@/components/charts/trend-total-chart";
-import { trendGranularity, totalSeries } from "@/lib/trends";
+import { trendGranularity, totalSeries, trendCurveName, TREND_MIN_POINTS } from "@/lib/trends";
 import { MonthlyDistribution } from "@/components/charts/monthly-distribution";
 import { CourantTabs, type CourantSelection } from "@/components/analytics/courant-tabs";
 import { toast } from "sonner";
 import { CategorySelect } from "@/components/transactions/category-select";
 import {
-  useAnalyticsContext, useByCategory, useSpendingTrends, useRecurring, useRecurringUncovered, useCategories,
+  useAnalyticsContext, useByCategory, useSpendingTrends, useCategories,
   useByCategoryPerAccount, useCashFlowPerAccount, useTransactionMutations,
-  type SpendingTrend, type RecurringTransaction, type CategoryBreakdown, type Transaction, type Category,
+  type SpendingTrend, type CategoryBreakdown, type Transaction, type Category,
 } from "@/lib/api/hooks";
 import { api, unwrap } from "@/lib/api/client";
 import { formatCents, formatPercent } from "@/lib/format";
@@ -178,14 +177,10 @@ export default function AnalysesPage() {
   const tabTrends = granularity === "day" ? dailyTrends : trends;
   const rolledTabTrends = useMemo(() => rollupTrends(tabTrends.data ?? [], categories), [tabTrends.data, categories]);
   const totals = useMemo(() => totalSeries(rolledTabTrends), [rolledTabTrends]);
-  const recurring = useRecurring(q.account_ids, income);
-  const uncovered = useRecurringUncovered(q.account_ids, income);
-  const [rulePrefill, setRulePrefill] = useState<{ description: string; categoryId: number | null } | null>(null);
   const perAccountCats = useByCategoryPerAccount(q, scopeIds);
   const perAccountFlux = useCashFlowPerAccount(q, scopeIds);
 
   const accName = (id: number) => accounts.find((a) => a.id === id)?.name ?? `Compte ${id}`;
-  const catName = (id: number | null) => categories.find((c) => c.id === id)?.name ?? "—";
   const catAccountId = (id: number | null) => categories.find((c) => c.id === id)?.account_id ?? null;
   const catColor = (id: number | null) => categories.find((c) => c.id === id)?.color ?? "#94a3b8";
 
@@ -245,8 +240,6 @@ export default function AnalysesPage() {
           <TabsTrigger value="trends">Tendances</TabsTrigger>
           <TabsTrigger value="distribution">Répartition mensuelle</TabsTrigger>
           <TabsTrigger value="cashflow">Flux de trésorerie</TabsTrigger>
-          <TabsTrigger value="recurring">Récurrents</TabsTrigger>
-          <TabsTrigger value="uncovered">Sans règle</TabsTrigger>
         </TabsList>
 
         {/* ── Catégories ──────────────────────────────────────────────── */}
@@ -401,15 +394,30 @@ export default function AnalysesPage() {
                   <CardTitle>{income ? "Total des revenus" : "Total des dépenses"}</CardTitle>
                   <p className="text-xs text-muted-foreground">
                     {granularity === "day"
-                      ? "Par jour, toutes catégories confondues. La courbe est le cumul depuis le début de la période."
+                      ? "Par jour, toutes catégories confondues."
                       : "Par mois, toutes catégories confondues. Choisissez une période de deux mois ou moins pour le détail par jour."}
                   </p>
+                  {/* What each line is: they share a chart but not a meaning. */}
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-xs text-muted-foreground">
+                    {totals.length >= TREND_MIN_POINTS && (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span aria-hidden className="w-5 border-t-2 border-dashed border-foreground" />
+                        Tendance : {trendCurveName(granularity).toLowerCase()}
+                      </span>
+                    )}
+                    {granularity === "day" && (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span aria-hidden className="w-5 border-t-2 border-info" />
+                        Cumul depuis le début de la période (échelle de droite)
+                      </span>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardContent className="pt-0">
                   <TrendTotalChart data={totals} granularity={granularity} income={income} currency={currency} />
                 </CardContent>
               </Card>
-              <CategoryTrendGrid data={rolledTabTrends} currency={currency} accounts={accounts} />
+              <CategoryTrendGrid data={rolledTabTrends} currency={currency} accounts={accounts} granularity={granularity} />
             </>
           )}
         </TabsContent>
@@ -443,65 +451,8 @@ export default function AnalysesPage() {
           )}
         </TabsContent>
 
-        {/* ── Récurrents ────────────────────────────────────────────── */}
-        <TabsContent value="recurring" className="space-y-5">
-          {recurring.isLoading ? <Card className="p-4"><Skeleton className="h-64 w-full" /></Card> : !recurring.data?.length ? (
-            <Card><EmptyState icon={Inbox} title={income ? "Aucun revenu récurrent détecté" : "Aucune dépense récurrente détectée"} /></Card>
-          ) : (
-            <RecurringTable rows={recurring.data} catName={catName}
-              onCreateRule={(r) => setRulePrefill({ description: r.rule_pattern, categoryId: r.category_id })} />
-          )}
-        </TabsContent>
-
-        {/* ── Sans règle (recurring expenses no rule matches) ─────────── */}
-        <TabsContent value="uncovered" className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            {income ? "Revenus récurrents" : "Dépenses récurrentes"} qu&apos;aucune règle automatique ne couvre — créez une règle pour les classer, maintenant et à l&apos;avenir.
-          </p>
-          {uncovered.isLoading ? <Card className="p-4"><Skeleton className="h-64 w-full" /></Card> : !uncovered.data?.length ? (
-            <Card><EmptyState icon={Inbox} title={income ? "Tous les revenus récurrents sont couverts par une règle 🎉" : "Toutes les dépenses récurrentes sont couvertes par une règle 🎉"} /></Card>
-          ) : (
-            <RecurringTable rows={uncovered.data} catName={catName}
-              onCreateRule={(r) => setRulePrefill({ description: r.rule_pattern, categoryId: r.category_id })} />
-          )}
-        </TabsContent>
-
       </Tabs>
 
-      <RuleDialog open={rulePrefill !== null} onOpenChange={(v) => !v && setRulePrefill(null)} accounts={accounts} prefill={rulePrefill} />
     </div>
-  );
-}
-
-/** Amounts are each group's own average in its own currency (a group never
- *  mixes two), and "Règle" prefills `rule_pattern` — a fragment found in every
- *  real label of the group, unlike the cleaned-up keyword shown as description. */
-function RecurringTable({ rows, catName, onCreateRule }: {
-  rows: RecurringTransaction[]; catName: (id: number | null) => string;
-  onCreateRule: (r: RecurringTransaction) => void;
-}) {
-  return (
-    <Card className="overflow-hidden p-0">
-      <Table>
-        <TableHeader><TableRow className="hover:bg-transparent"><TableHead>Description</TableHead><TableHead>Catégorie</TableHead><TableHead className="text-right">Occurrences</TableHead><TableHead className="text-right">Montant moyen</TableHead><TableHead className="text-right">Dernière</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
-        <TableBody>
-          {rows.map((r, i) => (
-            <TableRow key={i} className="group">
-              <TableCell className="max-w-xs"><span className="line-clamp-1 font-medium">{r.description}</span></TableCell>
-              <TableCell className="text-muted-foreground">{catName(r.category_id)}</TableCell>
-              <TableCell className="nums text-right">{r.occurrences}×</TableCell>
-              <TableCell className="nums blurable text-right font-semibold">{formatCents(r.avg_amount_cents, r.currency)}</TableCell>
-              <TableCell className="nums text-right text-muted-foreground">{r.last_date}</TableCell>
-              <TableCell className="pr-2 text-right">
-                <Button variant="ghost" size="sm" className="gap-1.5 opacity-0 transition-opacity group-hover:opacity-100"
-                  title="Créer une règle depuis cette transaction" onClick={() => onCreateRule(r)}>
-                  <Wand2 className="size-3.5" /> Règle
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </Card>
   );
 }

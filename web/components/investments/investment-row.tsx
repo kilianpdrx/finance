@@ -20,8 +20,12 @@ import { cn } from "@/lib/utils";
 
 type Tab = "positions" | "snapshots";
 
-export function InvestmentRow({ acc }: { acc: InvestmentAccount }) {
-  const [expanded, setExpanded] = useState(false);
+export function InvestmentRow({ acc, defaultExpanded = false }: {
+  acc: InvestmentAccount;
+  /** Start open — the account was reached from the Synthèse table. */
+  defaultExpanded?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const defaultTab: Tab = acc.has_holdings ? "positions" : "snapshots";
   const [tab, setTab] = useState<Tab>(defaultTab);
   const [addOpen, setAddOpen] = useState(false);

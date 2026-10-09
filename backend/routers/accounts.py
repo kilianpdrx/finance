@@ -1,10 +1,13 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
-from models import Account, AccountBalanceSnapshot, Transaction, LoanDetails
+from models import (
+    Account, AccountBalanceSnapshot, Transaction, LoanDetails, LoanExtraPayment, Holding, ImportBatch,
+    CategoryRule, Category, BudgetEntry, PlannedExpense, Goal, Setting,
+)
 from schemas import (
     AccountCreate, AccountUpdate, AccountOut,
     AccountBalanceSnapshotCreate, AccountBalanceSnapshotOut,
@@ -100,14 +103,101 @@ async def update_account(account_id: int, payload: AccountUpdate, db: AsyncSessi
     return result.scalar_one()
 
 
-@router.delete("/{account_id}", status_code=204)
-async def delete_account(account_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
-    result = await db.execute(select(Account).where(Account.id == account_id, Account.profile_id == pid))
-    account = result.scalar_one_or_none()
+async def _owned_account(db: AsyncSession, pid: int, account_id: int) -> Account:
+    account = (await db.execute(
+        select(Account).where(Account.id == account_id, Account.profile_id == pid)
+    )).scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    account.is_active = False
+    return account
+
+
+async def _count(db: AsyncSession, model, account_id: int) -> int:
+    return (await db.execute(select(func.count(model.id)).where(model.account_id == account_id))).scalar() or 0
+
+
+@router.get("/{account_id}/deletion-summary")
+async def account_deletion_summary(account_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    """What permanently deleting this account would remove — shown in the
+    confirmation, so the user knows what "definitively" covers."""
+    account = await _owned_account(db, pid, account_id)
+    return {
+        "name": account.name,
+        "is_active": bool(account.is_active),
+        "transactions": await _count(db, Transaction, account_id),
+        "snapshots": await _count(db, AccountBalanceSnapshot, account_id),
+        "holdings": await _count(db, Holding, account_id),
+        "imports": await _count(db, ImportBatch, account_id),
+        "rules": await _count(db, CategoryRule, account_id),
+        "budget_entries": await _count(db, BudgetEntry, account_id) + await _count(db, PlannedExpense, account_id),
+    }
+
+
+@router.delete("/{account_id}", status_code=204)
+async def delete_account(
+    account_id: int,
+    permanent: bool = False,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """Close the account (default): it keeps its history and only its balance
+    leaves net worth. With `permanent=true`, DELETE a closed account and
+    everything in it — two steps on purpose, so history is never lost by a
+    single click on an account still in use."""
+    account = await _owned_account(db, pid, account_id)
+    if not permanent:
+        account.is_active = False
+        await db.commit()
+        return
+    if account.is_active:
+        raise HTTPException(status_code=400, detail="Clôturez d'abord ce compte : seul un compte clôturé peut être supprimé définitivement.")
+    await _purge_account(db, pid, account)
     await db.commit()
+
+
+async def _purge_account(db: AsyncSession, pid: int, account: Account) -> None:
+    """Remove the account and everything that belongs to it, in an order the
+    foreign keys accept. What merely POINTS at the account is detached instead:
+    a goal linked to it, and the other half of an internal transfer."""
+    aid = account.id
+    own_txns = select(Transaction.id).where(Transaction.account_id == aid)
+
+    # The other half of an internal transfer stays a transfer, without its pair.
+    await db.execute(update(Transaction).where(Transaction.transfer_pair_id.in_(own_txns)).values(transfer_pair_id=None))
+    await db.execute(update(Goal).where(Goal.linked_account_id == aid).values(linked_account_id=None))
+
+    for model in (LoanExtraPayment, LoanDetails, Holding, AccountBalanceSnapshot, PlannedExpense, BudgetEntry):
+        await db.execute(delete(model).where(model.account_id == aid))
+    await db.execute(delete(Transaction).where(Transaction.account_id == aid))   # before the imports they came from
+    await db.execute(delete(ImportBatch).where(ImportBatch.account_id == aid))
+    await db.execute(delete(CategoryRule).where(CategoryRule.account_id == aid))
+
+    # Categories that existed only for this account: gone if nothing uses them
+    # any more, otherwise kept and made global (they still describe transactions
+    # or rules elsewhere).
+    bound = (await db.execute(
+        select(Category).where(Category.account_id == aid, Category.profile_id == pid)
+    )).scalars().all()
+    for cat in bound:
+        cat.account_id = None
+    await db.flush()
+    # Children first, so a parent left without any can go too.
+    for cat in sorted(bound, key=lambda c: c.parent_id is None):
+        used = False
+        for model, column in ((Transaction, Transaction.category_id), (CategoryRule, CategoryRule.category_id),
+                              (BudgetEntry, BudgetEntry.category_id), (PlannedExpense, PlannedExpense.category_id),
+                              (Category, Category.parent_id)):
+            if (await db.execute(select(func.count(model.id)).where(column == cat.id))).scalar():
+                used = True
+                break
+        if not used:
+            await db.delete(cat)
+            await db.flush()
+
+    # The IBKR sync must not keep targeting an account that no longer exists.
+    await db.execute(delete(Setting).where(
+        Setting.profile_id == pid, Setting.key == "ibkr_account_id", Setting.value == str(aid)))
+    await db.delete(account)
 
 
 # ── Balance Snapshots ─────────────────────────────────────────────────────────

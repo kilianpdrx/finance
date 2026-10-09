@@ -10,6 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { orderCategoryTree } from "@/lib/group";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { MonthYearPicker } from "@/components/ui/month-year-picker";
+import { addMonths } from "@/lib/months";
 import { useAccounts, useCategories, usePlannedExpenseMutations } from "@/lib/api/hooks";
 
 const thisMonth = () => new Date().toISOString().slice(0, 7); // YYYY-MM
@@ -48,7 +50,10 @@ export function PlanExpenseDialog({
   const [everyN, setEveryN] = useState(1);
   const [endMode, setEndMode] = useState<EndMode>("year");
   const [count, setCount] = useState(6);
+  // "" until the user picks one: the end then follows the start, a year later.
   const [endMonth, setEndMonth] = useState("");
+  const untilMonth = endMonth || addMonths(month, 12);
+  const endBeforeStart = repeat && endMode === "until" && untilMonth < month;
 
   useEffect(() => {
     if (!open) return;
@@ -67,6 +72,10 @@ export function PlanExpenseDialog({
       toast.error("Choisissez une catégorie et un montant.");
       return;
     }
+    if (endBeforeStart) {
+      toast.error("Le mois de fin précède le mois de départ.");
+      return;
+    }
     const amount_cents = Math.round(amount * 100);
     const account_id = accountId ?? null;
     try {
@@ -82,7 +91,7 @@ export function PlanExpenseDialog({
           every_n_months: Math.max(1, everyN),
           end_mode: endMode,
           count: endMode === "count" ? Math.max(1, count) : null,
-          end_month: endMode === "until" ? endMonth || null : null,
+          end_month: endMode === "until" ? untilMonth : null,
         });
         toast.success(`${res.created} dépense(s) planifiée(s)`);
       }
@@ -123,10 +132,10 @@ export function PlanExpenseDialog({
             </Select>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-[3fr_2fr] gap-3">
             <div className="space-y-1">
               <Label>{repeat ? "Mois de départ" : "Mois"}</Label>
-              <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+              <MonthYearPicker label={repeat ? "Mois de départ" : "Mois"} value={month} onChange={setMonth} />
             </div>
             <div className="space-y-1">
               <Label>Montant</Label>
@@ -181,7 +190,10 @@ export function PlanExpenseDialog({
               {endMode === "until" && (
                 <div className="space-y-1">
                   <Label>Mois de fin</Label>
-                  <Input type="month" value={endMonth} onChange={(e) => setEndMonth(e.target.value)} />
+                  <MonthYearPicker label="Mois de fin" value={untilMonth} onChange={setEndMonth} />
+                  {endBeforeStart && (
+                    <p role="alert" className="text-xs text-negative">Le mois de fin précède le mois de départ.</p>
+                  )}
                 </div>
               )}
             </div>
@@ -189,7 +201,7 @@ export function PlanExpenseDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Annuler</Button>
-          <Button onClick={submit} disabled={busy || !categoryId || amount <= 0}>
+          <Button onClick={submit} disabled={busy || !categoryId || amount <= 0 || endBeforeStart}>
             {busy ? "…" : "Planifier"}
           </Button>
         </DialogFooter>

@@ -109,6 +109,14 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Parent-group normalization failed: %s", e)
 
+        # Transactions categorised before `category_source` existed have none:
+        # infer it once from the current rules. Marker only — never a category.
+        try:
+            from services.category_source import backfill as backfill_category_source
+            await backfill_category_source(db)
+        except Exception as e:
+            logger.warning("Category source backfill failed: %s", e)
+
         # No base currency is written here: the first account a profile creates
         # sets it (`services.base_currency`). Stamping a default at startup made
         # every new install report in a currency the user never chose.

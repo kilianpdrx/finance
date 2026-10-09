@@ -155,4 +155,100 @@ test.describe("Transactions", () => {
       await api.deleteProfile(profile.id);
     }
   });
+
+  test("le compte a sa colonne, et un virement interne n'est pas « sans catégorie »", async ({ page, api }) => {
+    const profile = await api.createProfile("Colonne compte E2E");
+    api.profileId = profile.id;
+    try {
+      const courant = await api.createAccount({ name: "Compte courant", bank_name: "Banque Test" });
+      const livret = await api.createAccount({ name: "Livret Bleu", bank_name: "Banque Test", account_type: "epargne" });
+      await api.importCsv(courant.id, csv([...BIOCOOP, "2026-09-04;VIR VERS LIVRET BLEU;-300,00"]));
+      await api.importCsv(livret.id, csv(["2026-09-04;VIR DEPUIS COMPTE COURANT;300,00"]));
+
+      await useProfile(page, profile.id);
+      await page.goto("/transactions");
+      await expectAppReady(page);
+      await page.getByRole("button", { name: "Détecter virements" }).click();
+
+      // Two halves of a transfer have no category on purpose: they are counted
+      // as transfers, not as work left to do.
+      await expect(page.getByText(/2 virements?/)).toBeVisible();
+      await expect(page.getByRole("button", { name: /3 sans catégorie/ })).toBeVisible();
+
+      // The account is a column of its own, and the table sorts on it.
+      await page.getByRole("switch").click();   // show the transfers again
+      const byAccount = page.getByRole("button", { name: "Trier par compte" });
+      const rows = page.locator("tbody tr");
+      await expect(rows).toHaveCount(5);
+      await byAccount.click();                                         // A → Z
+      await expect(rows.first().getByRole("cell").nth(3)).toHaveText("Compte courant");
+      await byAccount.click();                                         // Z → A
+      await expect(rows.first().getByRole("cell").nth(3)).toHaveText("Livret Bleu");
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
+  test("une transaction classée par une règle porte « auto », et le filtre les sépare", async ({ page, api }) => {
+    const profile = await api.createProfile("Auto E2E");
+    api.profileId = profile.id;
+    try {
+      const account = await api.createAccount({ name: "Compte courant", bank_name: "Banque Test" });
+      // The rule exists before the import: the three BIOCOOP rows arrive classified by it.
+      await api.createContainsRule("Alimentation", "BIOCOOP");
+      await api.importCsv(account.id, csv([...BIOCOOP, OTHER]));
+
+      await useProfile(page, profile.id);
+      await page.goto("/transactions");
+      await expectAppReady(page);
+
+      const auto = page.getByTitle("Classée automatiquement par une règle");
+      await expect(auto).toHaveCount(3);
+
+      // A category chosen by hand is not "auto".
+      await page.getByRole("row", { name: /ZZZ INCONNU/ }).getByRole("combobox").click();
+      await page.getByRole("option", { name: /Loisirs/ }).click();
+      await expect(page.getByRole("row", { name: /ZZZ INCONNU/ })).toContainText("Loisirs");
+      await expect(auto).toHaveCount(3);
+
+      const rows = page.locator("tbody tr");
+      const filter = page.getByRole("combobox").filter({ hasText: "Tout classement" });
+      await filter.click();
+      await page.getByRole("option", { name: "Classées à la main" }).click();
+      await expect(rows).toHaveCount(1);
+      await expect(rows.first()).toContainText("ZZZ INCONNU");
+
+      await page.getByRole("combobox").filter({ hasText: "Classées à la main" }).click();
+      await page.getByRole("option", { name: "Classées automatiquement" }).click();
+      await expect(rows).toHaveCount(3);
+      await expect(page.getByRole("row", { name: /ZZZ INCONNU/ })).toHaveCount(0);
+
+      // Re-classifying an "auto" row by hand removes its badge.
+      await rows.first().getByRole("combobox").click();
+      await page.getByRole("option", { name: /Loisirs/ }).click();
+      await expect(rows).toHaveCount(2);
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
+  test("« Récurrents » liste les libellés qui reviennent, depuis la page Transactions", async ({ page, api }) => {
+    const profile = await profileWith(api, "Récurrents E2E", [...BIOCOOP, OTHER]);
+    try {
+      await useProfile(page, profile.id);
+      await page.goto("/transactions");
+      await expectAppReady(page);
+      await page.getByRole("tab", { name: "Récurrents" }).click();
+
+      const row = page.getByRole("row", { name: /BIOCOOP LYON/ });
+      await expect(row).toContainText("3×");
+      // A label seen once is not recurring.
+      await expect(page.getByRole("row", { name: /ZZZ INCONNU/ })).toHaveCount(0);
+      // Expenses and income are listed apart.
+      await page.getByRole("button", { name: "Revenus", exact: true }).click();
+      await expect(page.getByText("Aucun revenu récurrent détecté")).toBeVisible();
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
 });

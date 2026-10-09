@@ -330,7 +330,7 @@ async def delete_category(category_id: int, replace_with_id: Optional[int] = Non
         await db.execute(
             update(Transaction)
             .where(Transaction.category_id == category_id)
-            .values(category_id=None)
+            .values(category_id=None, category_source=None)
         )
 
     # Re-parent any children to top-level so they aren't orphaned.
@@ -361,6 +361,7 @@ async def rescan_categories(
     scope: it is counted in `conflicts` and keeps the category it has.
     `dry_run=true` returns the same counts without writing anything."""
     from services.categorizer import evaluate_rules_batch
+    from services.category_source import rule_source
 
     filters = [Transaction.is_manually_reviewed == False, Transaction.profile_id == pid]  # noqa: E712
     if scope != "all":
@@ -392,6 +393,7 @@ async def rescan_categories(
         if ev.category_id != txn.category_id:
             if not dry_run:
                 txn.category_id = ev.category_id
+                txn.category_source = rule_source(ev.category_id)
             updated += 1
 
     if not dry_run:

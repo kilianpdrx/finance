@@ -355,3 +355,40 @@ async def test_bulk_category_can_fill_only_uncategorised_rows(
     assert labelled["bio1"].category_id == other_cat.id and labelled["bio2"].category_id == other_cat.id
     assert labelled["bio_done"].category_id == seed_data["cat_courses"].id, "an existing category is kept"
 
+
+async def test_uncategorised_does_not_count_internal_transfers(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """An internal transfer has no category on purpose: it is not "sans
+    catégorie", neither in the counter nor in the filter."""
+    pid, acc = seed_data["profile"].id, seed_data["account_courant"]
+    rows = [("TO CLASSIFY", {}), ("VIREMENT INTERNE", {"is_internal_transfer": True}),
+            ("CLASSIFIED", {"category_id": seed_data["cat_courses"].id})]
+    for i, (label, extra) in enumerate(rows):
+        db_session.add(Transaction(profile_id=pid, account_id=acc.id, date=date(2026, 7, 1 + i), amount_cents=1000,
+                                   is_debit=True, description=label, import_hash=f"uncat_{i}", **extra))
+    await db_session.commit()
+    h = {"X-Profile-Id": str(pid)}
+
+    stats = (await client.get("/api/transactions/stats", headers=h)).json()
+    assert stats == {"total": 3, "categorized": 1, "uncategorized": 1, "transfers": 1}
+
+    listed = (await client.get("/api/transactions", headers=h, params={"uncategorized": "true"})).json()
+    assert [t["description"] for t in listed] == ["TO CLASSIFY"]
+    assert (await client.get("/api/transactions/count", headers=h, params={"uncategorized": "true"})).json()["total"] == 1
+
+
+async def test_list_transactions_sorts_by_account(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    pid = seed_data["profile"].id
+    for i, acc in enumerate([seed_data["account_inv"], seed_data["account_courant"]]):   # "PEA Test", "Compte Courant Test"
+        db_session.add(Transaction(profile_id=pid, account_id=acc.id, date=date(2026, 7, 1 + i), amount_cents=1000,
+                                   is_debit=True, description=f"ROW {acc.name}", import_hash=f"acct_{i}"))
+    await db_session.commit()
+    h = {"X-Profile-Id": str(pid)}
+
+    async def accounts(direction: str) -> list:
+        res = await client.get("/api/transactions", headers=h, params={"sort_by": "account", "sort_dir": direction})
+        assert res.status_code == 200, res.text
+        return [t["account_name"] for t in res.json()]
+
+    assert await accounts("asc") == ["Compte Courant Test", "PEA Test"]
+    assert await accounts("desc") == ["PEA Test", "Compte Courant Test"]
+

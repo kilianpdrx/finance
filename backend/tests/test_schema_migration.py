@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 import database
 from models import Base
 
-HEAD = "014_drop_rule_priority"
+HEAD = "015_txn_category_source"
 
 
 @pytest.fixture
@@ -104,4 +104,39 @@ def test_rule_priority_column_is_dropped_and_rules_survive(temp_db):
     assert "priority" not in cols
     assert (rule.id, rule.category_id, rule.logic_operator) == (7, 1, "OR")
     assert "amazon" in rule.conditions
+
+
+def test_category_source_column_is_added_to_an_existing_database(temp_db):
+    """An install on 014 has no `transactions.category_source`: upgrading adds it,
+    empty, and leaves the transactions alone."""
+    eng = create_engine(f"sqlite:///{temp_db}")
+    Base.metadata.create_all(eng)
+    with eng.begin() as c:
+        # Rebuild the pre-015 shape, with one categorised transaction in it.
+        c.execute(text("ALTER TABLE transactions DROP COLUMN category_source"))
+        c.execute(text("INSERT INTO profiles (id, name, color, is_default) VALUES (1, 'P', '#000', 1)"))
+        c.execute(text("INSERT INTO accounts (id, profile_id, name, bank_name, account_type, currency, color, is_active)"
+                       " VALUES (1, 1, 'A', 'B', 'courant', 'EUR', '#000', 1)"))
+        c.execute(text("INSERT INTO categories (id, profile_id, name, color) VALUES (1, 1, 'Courses', '#000')"))
+        c.execute(text("INSERT INTO transactions (id, profile_id, account_id, date, description, amount_cents,"
+                       " category_id, is_debit, import_hash) VALUES (5, 1, 1, '2026-09-01', 'X', 1000, 1, 1, 'h5')"))
+    eng.dispose()
+    database._sync_schema_blocking()  # stamps head (no alembic_version yet)
+    eng = create_engine(f"sqlite:///{temp_db}")
+    with eng.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num='014_drop_rule_priority'"))
+    eng.dispose()
+
+    database._sync_schema_blocking()  # upgrade path: runs 015
+
+    assert _version(temp_db) == HEAD
+    eng = create_engine(f"sqlite:///{temp_db}")
+    try:
+        cols = {c["name"] for c in inspect(eng).get_columns("transactions")}
+        with eng.connect() as c:
+            row = c.execute(text("SELECT id, category_id, category_source, amount_cents FROM transactions")).one()
+    finally:
+        eng.dispose()
+    assert "category_source" in cols
+    assert (row.id, row.category_id, row.category_source, row.amount_cents) == (5, 1, None, 1000)
 

@@ -23,6 +23,8 @@ import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { RuleDialog } from "@/components/settings/rule-dialog";
 import { SameLabelBar } from "@/components/transactions/same-label-bar";
 import { UncategorizedPanel } from "@/components/transactions/uncategorized-panel";
+import { RecurringPanel } from "@/components/transactions/recurring-panel";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SortHeader, type SortState } from "@/components/ui/sort-header";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
@@ -58,6 +60,9 @@ export default function TransactionsPage() {
   const [account, setAccount] = useState(ALL);
   const [category, setCategory] = useState(ALL);
   const [type, setType] = useState(ALL); // all | debit | credit
+  const [source, setSource] = useState(ALL); // all | rule (classified automatically) | manual
+  // Transactions · Récurrents · Sans règle. The account filter is shared by the three.
+  const [tab, setTab] = useState("list");
   const [hideTransfers, setHideTransfers] = useState(true);
   const [month, setMonth] = useState(ALL);
   const [page, setPage] = useState(0);
@@ -84,19 +89,20 @@ export default function TransactionsPage() {
     uncategorized: category === UNCAT ? true : undefined,
     categorized: category === CATEGORIZED ? true : undefined,
     is_debit: type === ALL ? undefined : type === "debit",
+    category_source: source === ALL ? undefined : (source as "rule" | "manual"),
     is_internal_transfer: hideTransfers ? false : undefined,
     month: month === ALL ? undefined : month,
     sort_by: sort?.col,
     sort_dir: sort?.dir,
     limit: PAGE,
     offset: page * PAGE,
-  }), [search, account, category, type, hideTransfers, month, page, sort]);
+  }), [search, account, category, type, source, hideTransfers, month, page, sort]);
 
   const { data: rows = [], isLoading, isFetching } = useTransactions(filters);
   const { data: countData } = useTransactionCount(filters);
   const { data: stats } = useTransactionStats(filters);
 
-  const noFilter = !search && account === ALL && category === ALL && type === ALL && month === ALL;
+  const noFilter = !search && account === ALL && category === ALL && type === ALL && source === ALL && month === ALL;
   const nothingImportedYet = noFilter && stats?.total === 0;
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
@@ -178,17 +184,42 @@ export default function TransactionsPage() {
     return `/api/transactions/export?${p}`;
   }, [filters]);
 
+  const accountFilter = (
+    <AccountFilter value={account} onChange={(v) => { setAccount(v); setPage(0); }} accounts={txAccounts} width="w-44" />
+  );
+
   return (
     <div className="space-y-4">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+      <TabsList>
+        <TabsTrigger value="list">Transactions</TabsTrigger>
+        <TabsTrigger value="recurring">Récurrents</TabsTrigger>
+        <TabsTrigger value="uncovered">Sans règle</TabsTrigger>
+      </TabsList>
+
+      {/* ── Récurrents / Sans règle: the labels that come back, and the ones no
+             rule classifies yet. Here rather than in Analyses: this is where
+             transactions get classified and rules get written. ── */}
+      {(["recurring", "uncovered"] as const).map((kind) => (
+        <TabsContent key={kind} value={kind} className="space-y-4">
+          {accountFilter}
+          <RecurringPanel kind={kind} accountId={account === ALL ? null : Number(account)} categories={categories} onCreateRule={openRuleFor} />
+        </TabsContent>
+      ))}
+
+      <TabsContent value="list" className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <SearchBox onSearch={(v) => { setSearch(v); setPage(0); }} placeholder="Rechercher un libellé ou un montant…" />
-        <AccountFilter value={account} onChange={(v) => { setAccount(v); setPage(0); }} accounts={txAccounts} width="w-44" />
+        {accountFilter}
         <CategoryFilter value={category} onChange={(v) => { setCategory(v); setPage(0); }} categories={categories}
           accountNames={accountNames} accountFilter={account === ALL ? null : Number(account)} width="w-56" />
         <FilterSelect value={type} onChange={(v) => { setType(v); setPage(0); }} placeholder="Type" width="w-32"
           options={[{ value: ALL, label: "Tout" }, { value: "debit", label: "Dépenses" }, { value: "credit", label: "Revenus" }]} />
-        <FilterSelect value={month} onChange={(v) => { setMonth(v); setPage(0); }} placeholder="Mois" width="w-32"
+        {/* How the category got there: a rule did it, or it was chosen by hand. */}
+        <FilterSelect value={source} onChange={(v) => { setSource(v); setPage(0); }} placeholder="Classement" width="w-44"
+          options={[{ value: ALL, label: "Tout classement" }, { value: "rule", label: "Classées automatiquement" }, { value: "manual", label: "Classées à la main" }]} />
+        <FilterSelect value={month} onChange={(v) => { setMonth(v); setPage(0); }} placeholder="Mois" width="w-36"
           options={[{ value: ALL, label: "Tous les mois" }, ...(meta?.available_months ?? []).map((m) => ({ value: m, label: m }))]} />
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
           <Switch checked={hideTransfers} onCheckedChange={(v) => { setHideTransfers(v); setPage(0); }} />
@@ -315,7 +346,8 @@ export default function TransactionsPage() {
                 <TableHead className="w-10"><Checkbox checked={allSelected ? true : someSelected ? "indeterminate" : false} onCheckedChange={toggleAll} /></TableHead>
                 <TableHead className="w-24"><SortHeader col="date" sort={sort} onSort={changeSort} first="asc">Date</SortHeader></TableHead>
                 <TableHead><SortHeader col="description" sort={sort} onSort={changeSort} first="asc">Description</SortHeader></TableHead>
-                <TableHead className="w-52"><SortHeader col="category" sort={sort} onSort={changeSort} first="asc">Catégorie</SortHeader></TableHead>
+                <TableHead className="w-40"><SortHeader col="account" sort={sort} onSort={changeSort} first="asc">Compte</SortHeader></TableHead>
+                <TableHead className="w-64"><SortHeader col="category" sort={sort} onSort={changeSort} first="asc">Catégorie</SortHeader></TableHead>
                 <TableHead className="w-32 text-right"><SortHeader col="amount" sort={sort} onSort={changeSort}>Montant</SortHeader></TableHead>
                 <TableHead className="w-10"></TableHead>
               </TableRow>
@@ -329,24 +361,41 @@ export default function TransactionsPage() {
                   </TableCell>
                   <TableCell>
                     <p className="line-clamp-1 font-medium" title={t.description}>{t.description}</p>
-                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      {t.account_name}
-                      {t.is_internal_transfer && <span className="rounded bg-info/12 px-1 text-info">virement</span>}
-                      {t.is_manually_reviewed && <span className="rounded bg-positive/12 px-1 text-positive">vérifié</span>}
-                      {t.is_manually_edited && <span className="rounded bg-warning/15 px-1 text-warning" title="Transaction modifiée manuellement">modifié</span>}
-                      {t.category_conflict && <ConflictBadge categories={t.conflict_categories} ruleIds={t.conflict_rule_ids} onEditRule={setEditingRule} />}
-                    </p>
+                    {(t.is_internal_transfer || t.is_manually_reviewed || t.is_manually_edited || t.category_conflict) && (
+                      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        {t.is_internal_transfer && <span className="rounded bg-info/12 px-1 text-info">virement</span>}
+                        {t.is_manually_reviewed && <span className="rounded bg-positive/12 px-1 text-positive">vérifié</span>}
+                        {t.is_manually_edited && <span className="rounded bg-warning/15 px-1 text-warning" title="Transaction modifiée manuellement">modifié</span>}
+                        {t.category_conflict && <ConflictBadge categories={t.conflict_categories} ruleIds={t.conflict_rule_ids} onEditRule={setEditingRule} />}
+                      </p>
+                    )}
+                  </TableCell>
+                  <TableCell className="max-w-0">
+                    <span className="line-clamp-1 text-xs text-muted-foreground" title={t.account_name ?? undefined}>{t.account_name}</span>
                   </TableCell>
                   <TableCell>
+                    <div className="flex items-center gap-1.5">
                     <CategorySelect
                       value={t.category_id}
                       categories={categories}
                       accountId={t.account_id}
                       accountNames={accountNames}
                       showNamespace
-                      className="h-8 border-transparent bg-transparent text-xs shadow-none hover:border-border"
+                      className="h-8 min-w-0 flex-1 border-transparent bg-transparent text-xs shadow-none hover:border-border"
                       onChange={(cid) => setRowCategory(t, cid)}
                     />
+                    {/* A rule classified it (on import or when rules were applied),
+                        as opposed to a category chosen by hand. The slot is kept
+                        on every row so the selectors stay aligned. */}
+                    <span className="flex w-12 shrink-0 justify-start">
+                      {t.category_source === "rule" && (
+                        <span className="inline-flex items-center gap-0.5 rounded bg-brand/10 px-1 text-[11px] font-medium text-brand"
+                          title="Classée automatiquement par une règle">
+                          <Wand2 className="size-3" /> auto
+                        </span>
+                      )}
+                    </span>
+                    </div>
                   </TableCell>
                   <TableCell className={`nums blurable text-right font-semibold ${t.is_debit ? "text-negative" : "text-positive"}`}>
                     {t.is_debit ? "−" : "+"}{formatCents(t.amount_cents, t.currency, { decimals: 2 })}
@@ -380,6 +429,9 @@ export default function TransactionsPage() {
           <Button variant="outline" size="sm" disabled={rows.length < PAGE} onClick={() => setPage((p) => p + 1)}><ChevronRight className="size-4" /></Button>
         </div>
       </div>
+
+      </TabsContent>
+      </Tabs>
 
       <TransactionDialog open={dialogOpen} onOpenChange={(v) => { setDialogOpen(v); if (!v) setEditing(null); }} transaction={editing} />
       {/* Editing: opened from a « conflit » badge — rules have no priority, so a

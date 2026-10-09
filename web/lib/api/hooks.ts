@@ -135,7 +135,8 @@ export interface TransactionFilters {
   bank_name?: string | null;
   month?: string | null;
   import_batch_id?: number | null;
-  sort_by?: "date" | "amount" | "description" | "category";
+  sort_by?: "date" | "amount" | "description" | "category" | "account";
+  category_source?: "rule" | "manual" | null;   // classified by a rule, or chosen by hand
   sort_dir?: "asc" | "desc";
   limit?: number;
   offset?: number;
@@ -275,11 +276,11 @@ export function useSpendingTrends(query: AnalyticsQuery, enabled = true) {
   return useQuery({ queryKey: ["analytics", "spending-trends", query], enabled, queryFn: () => unwrap(api.GET("/api/analytics/spending-trends", { params: { query } })) as Promise<SpendingTrend[]> });
 }
 // Both recurring lists show one direction at a time (expenses, or income).
-export function useRecurring(accountIds?: string | null, income = false) {
-  return useQuery({ queryKey: ["analytics", "recurring", accountIds, income], queryFn: () => unwrap(api.GET("/api/analytics/recurring", { params: { query: { account_ids: accountIds ?? undefined, income } } })) });
+export function useRecurring(accountIds?: string | null, income = false, enabled = true) {
+  return useQuery({ queryKey: ["analytics", "recurring", accountIds, income], enabled, queryFn: () => unwrap(api.GET("/api/analytics/recurring", { params: { query: { account_ids: accountIds ?? undefined, income } } })) });
 }
-export function useRecurringUncovered(accountIds?: string | null, income = false) {
-  return useQuery({ queryKey: ["analytics", "recurring-uncovered", accountIds, income], queryFn: () => unwrap(api.GET("/api/analytics/recurring-uncovered", { params: { query: { account_ids: accountIds ?? undefined, income } } })) as Promise<RecurringTransaction[]> });
+export function useRecurringUncovered(accountIds?: string | null, income = false, enabled = true) {
+  return useQuery({ queryKey: ["analytics", "recurring-uncovered", accountIds, income], enabled, queryFn: () => unwrap(api.GET("/api/analytics/recurring-uncovered", { params: { query: { account_ids: accountIds ?? undefined, income } } })) as Promise<RecurringTransaction[]> });
 }
 export function useBudgetFull(year: number | undefined, accountIds?: string | null) {
   return useQuery({
@@ -307,7 +308,7 @@ export interface TransactionStats { total: number; categorized: number; uncatego
 export function useTransactionStats(filters: TransactionFilters) {
   // Base filters only — the categorized/uncategorized/transfer toggles are the
   // dimensions being counted, so they're excluded to keep counts stable.
-  const { limit: _l, offset: _o, sort_by: _sb, sort_dir: _sd, category_id: _c, uncategorized: _u, categorized: _cz, is_internal_transfer: _t, ...rest } = filters;
+  const { limit: _l, offset: _o, sort_by: _sb, sort_dir: _sd, category_id: _c, uncategorized: _u, categorized: _cz, is_internal_transfer: _t, category_source: _cs, ...rest } = filters;
   const query = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== null && v !== ""));
   return useQuery({
     queryKey: ["transactions", "stats", rest],
@@ -429,11 +430,28 @@ function useInvalidate() {
   return (...keys: string[]) => keys.forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
 }
 
+/** What permanently deleting an account would take with it. */
+export interface AccountDeletionSummary {
+  name: string; is_active: boolean;
+  transactions: number; snapshots: number; holdings: number; imports: number; rules: number; budget_entries: number;
+}
+/** One-shot, on demand: asked only when the confirmation is about to open. */
+export function fetchAccountDeletionSummary(id: number): Promise<AccountDeletionSummary> {
+  return unwrap(api.GET("/api/accounts/{account_id}/deletion-summary", { params: { path: { account_id: id } } })) as Promise<AccountDeletionSummary>;
+}
+
 export function useAccountMutations() {
   const invalidate = useInvalidate();
+  const qc = useQueryClient();
   // "settings": a profile's first account sets its base currency.
   const onSuccess = () => invalidate("accounts", "analytics", "investments", "snapshots", "loans", "settings");
   return {
+    // Permanent deletion of a CLOSED account, with everything in it. It reaches
+    // transactions, rules, categories, budget, goals…: refetch everything.
+    purge: useMutation({
+      mutationFn: (id: number) => unwrap(api.DELETE("/api/accounts/{account_id}", { params: { path: { account_id: id }, query: { permanent: true } } })),
+      onSuccess: () => qc.invalidateQueries(),
+    }),
     create: useMutation({ mutationFn: (body: AccountCreate) => unwrap(api.POST("/api/accounts", { body })), onSuccess }),
     update: useMutation({ mutationFn: ({ id, body }: { id: number; body: AccountUpdate }) => unwrap(api.PUT("/api/accounts/{account_id}", { params: { path: { account_id: id } }, body })), onSuccess }),
     remove: useMutation({ mutationFn: (id: number) => api.DELETE("/api/accounts/{account_id}", { params: { path: { account_id: id } } }), onSuccess }),

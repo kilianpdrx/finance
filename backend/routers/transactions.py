@@ -18,6 +18,7 @@ from schemas import (
 from ownership import require_account, require_category
 from utils import generate_import_hash, csv_safe_cell, parse_amount_query
 from services.label_groups import group_by_label, label_key, rule_pattern
+from services.category_source import manual_source
 
 router = APIRouter()
 
@@ -62,13 +63,17 @@ async def _build_txn_filters(
     db: AsyncSession, pid: int, *, account_id=None, category_id=None, uncategorized=None,
     categorized=None, date_from=None, date_to=None, search=None, is_debit=None,
     is_internal_transfer=None, bank_name=None, month=None, import_batch_id=None,
+    category_source=None,
 ):
     """Shared filter list for the transactions list and count endpoints."""
     filters = [Transaction.profile_id == pid]
     if account_id is not None:
         filters.append(Transaction.account_id == account_id)
     if uncategorized:
+        # "Sans catégorie" = still to classify. An internal transfer has no
+        # category ON PURPOSE (it must not weigh on budgets), so it is not one.
         filters.append(Transaction.category_id == None)  # noqa: E711
+        filters.append(Transaction.is_internal_transfer == False)  # noqa: E712
     elif categorized:
         filters.append(Transaction.category_id != None)  # noqa: E711
     elif category_id is not None:
@@ -112,6 +117,9 @@ async def _build_txn_filters(
         filters.append(Transaction.account_id.in_([r[0] for r in account_ids_q]))
     if import_batch_id is not None:
         filters.append(Transaction.import_batch_id == import_batch_id)
+    if category_source is not None:
+        # "rule" = classified automatically, "manual" = chosen by the user.
+        filters.append(Transaction.category_source == category_source)
     return filters
 
 
@@ -129,6 +137,7 @@ async def count_transactions(
     bank_name: Optional[str] = None,
     month: Optional[str] = None,
     import_batch_id: Optional[int] = None,
+    category_source: Optional[Literal["rule", "manual"]] = None,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
@@ -137,7 +146,7 @@ async def count_transactions(
         db, pid, account_id=account_id, category_id=category_id, uncategorized=uncategorized,
         categorized=categorized, date_from=date_from, date_to=date_to, search=search,
         is_debit=is_debit, is_internal_transfer=is_internal_transfer, bank_name=bank_name,
-        month=month, import_batch_id=import_batch_id,
+        month=month, import_batch_id=import_batch_id, category_source=category_source,
     )
     total = (await db.execute(select(func.count(Transaction.id)).where(and_(*filters)))).scalar() or 0
     return {"total": total}
@@ -169,16 +178,18 @@ async def transaction_stats(
             func.count(Transaction.id),
             func.sum(case((Transaction.category_id != None, 1), else_=0)),  # noqa: E711
             func.sum(case((Transaction.is_internal_transfer == True, 1), else_=0)),  # noqa: E712
+            # Still to classify: no category, and not an internal transfer (which
+            # has none on purpose) — the same definition as the "Sans catégorie"
+            # filter and the "classer par libellé" panel.
+            func.sum(case((and_(Transaction.category_id == None,  # noqa: E711
+                                Transaction.is_internal_transfer == False), 1), else_=0)),  # noqa: E712
         ).where(and_(*filters))
     )).one()
-    total = row[0] or 0
-    categorized = row[1] or 0
-    transfers = row[2] or 0
     return {
-        "total": total,
-        "categorized": categorized,
-        "uncategorized": total - categorized,
-        "transfers": transfers,
+        "total": row[0] or 0,
+        "categorized": row[1] or 0,
+        "uncategorized": row[3] or 0,
+        "transfers": row[2] or 0,
     }
 
 
@@ -196,6 +207,7 @@ async def transaction_ids(
     bank_name: Optional[str] = None,
     month: Optional[str] = None,
     import_batch_id: Optional[int] = None,
+    category_source: Optional[Literal["rule", "manual"]] = None,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
@@ -205,7 +217,7 @@ async def transaction_ids(
         db, pid, account_id=account_id, category_id=category_id, uncategorized=uncategorized,
         categorized=categorized, date_from=date_from, date_to=date_to, search=search,
         is_debit=is_debit, is_internal_transfer=is_internal_transfer, bank_name=bank_name,
-        month=month, import_batch_id=import_batch_id,
+        month=month, import_batch_id=import_batch_id, category_source=category_source,
     )
     rows = (await db.execute(select(Transaction.id).where(and_(*filters)))).all()
     return {"ids": [r[0] for r in rows]}
@@ -218,7 +230,8 @@ def _txn_order(sort_by: str, sort_dir: str) -> list:
     `amount` sorts on the stored (unsigned) amount — the biggest movements first,
     expense or income — and on raw cents: accounts in different currencies are
     not converted for a sort. `category` sorts by name with uncategorised rows
-    last in both directions (it needs the Category outer join)."""
+    last in both directions (it needs the Category outer join). `account` sorts
+    by account name (it needs the Account join)."""
     def directed(col):
         return col.desc() if sort_dir == "desc" else col.asc()
 
@@ -229,6 +242,8 @@ def _txn_order(sort_by: str, sort_dir: str) -> list:
         return [directed(func.lower(Transaction.description)), *newest_first]
     if sort_by == "category":
         return [Category.name.is_(None), directed(func.lower(Category.name)), *newest_first]
+    if sort_by == "account":
+        return [directed(func.lower(Account.name)), *newest_first]
     return [directed(Transaction.date), directed(Transaction.id)]
 
 
@@ -246,7 +261,8 @@ async def list_transactions(
     bank_name: Optional[str] = None,
     month: Optional[str] = None,
     import_batch_id: Optional[int] = None,
-    sort_by: Literal["date", "amount", "description", "category"] = "date",
+    category_source: Optional[Literal["rule", "manual"]] = None,
+    sort_by: Literal["date", "amount", "description", "category", "account"] = "date",
     sort_dir: Literal["asc", "desc"] = "desc",
     limit: int = Query(default=500, le=10000),
     offset: int = 0,
@@ -257,12 +273,14 @@ async def list_transactions(
         db, pid, account_id=account_id, category_id=category_id, uncategorized=uncategorized,
         categorized=categorized, date_from=date_from, date_to=date_to, search=search,
         is_debit=is_debit, is_internal_transfer=is_internal_transfer, bank_name=bank_name,
-        month=month, import_batch_id=import_batch_id,
+        month=month, import_batch_id=import_batch_id, category_source=category_source,
     )
 
     stmt = select(Transaction).options(selectinload(Transaction.account)).where(and_(*filters))
     if sort_by == "category":
         stmt = stmt.outerjoin(Category, Category.id == Transaction.category_id)
+    elif sort_by == "account":
+        stmt = stmt.join(Account, Account.id == Transaction.account_id)
     stmt = stmt.order_by(*_txn_order(sort_by, sort_dir)).limit(limit).offset(offset)
     result = await db.execute(stmt)
     rows = result.scalars().all()
@@ -460,7 +478,8 @@ async def create_transaction(
         import_hash = f"{import_hash}_{int(time.time()*1000)}"
 
     txn_data = payload.model_dump()
-    txn = Transaction(**txn_data, import_hash=import_hash, is_manually_reviewed=True, profile_id=pid)
+    txn = Transaction(**txn_data, import_hash=import_hash, is_manually_reviewed=True, profile_id=pid,
+                      category_source=manual_source(payload.category_id))
     
     db.add(txn)
     await db.commit()
@@ -560,7 +579,9 @@ async def bulk_update_category(
         stmt = update(Transaction).where(Transaction.id.in_(chunk), Transaction.profile_id == pid)
         if payload.only_uncategorized:
             stmt = stmt.where(Transaction.category_id == None)  # noqa: E711
-        updated += (await db.execute(stmt.values(category_id=payload.category_id))).rowcount
+        updated += (await db.execute(stmt.values(
+            category_id=payload.category_id, category_source=manual_source(payload.category_id),
+        ))).rowcount
     await db.commit()
     return {"updated": updated}
 
@@ -569,6 +590,7 @@ async def bulk_update_category(
 async def export_transactions(
     account_id: Optional[int] = None,
     category_id: Optional[int] = None,
+    category_source: Optional[Literal["rule", "manual"]] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     db: AsyncSession = Depends(get_db),
@@ -579,6 +601,8 @@ async def export_transactions(
         filters.append(Transaction.account_id == account_id)
     if category_id is not None:
         filters.append(Transaction.category_id == category_id)
+    if category_source is not None:
+        filters.append(Transaction.category_source == category_source)
     if date_from is not None:
         filters.append(Transaction.date >= date_from)
     if date_to is not None:
@@ -650,6 +674,8 @@ async def update_transaction(
         if field in CORE_FIELDS and getattr(txn, field) != value:
             txn.is_manually_edited = True
         setattr(txn, field, value)
+    if "category_id" in updates:
+        txn.category_source = manual_source(updates["category_id"])
     await db.commit()
     await db.refresh(txn)
     return TransactionOut.from_orm_with_display(txn)

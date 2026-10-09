@@ -127,6 +127,8 @@ async def detect_internal_transfers(db: AsyncSession, profile_id: int | None = N
             # Remove category if previously categorized to avoid messing up budgets
             d.category_id = None
             best_match.category_id = None
+            d.category_source = None
+            best_match.category_source = None
             
             matched_count += 1
 

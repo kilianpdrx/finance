@@ -126,4 +126,51 @@ test.describe("Budget", () => {
       await api.deleteProfile(profile.id);
     }
   });
+
+  test("planifier une dépense se fait avec un mois ET une année", async ({ page, api }) => {
+    const profile = await budgetProfile(api, "Planifier E2E");
+    try {
+      await useProfile(page, profile.id);
+      await page.goto("/budget");
+      await expectAppReady(page);
+      await page.getByRole("button", { name: "Planifier", exact: true }).click();
+
+      const dialog = page.getByRole("dialog", { name: "Planifier un montant" });
+      await dialog.getByRole("combobox").filter({ hasText: "Choisir une catégorie" }).click();
+      await page.getByRole("option", { name: /Alimentation/ }).click();
+      await dialog.getByRole("spinbutton").first().fill("250");
+
+      // The month is a list, the year a field next to it: March of next year.
+      await dialog.getByRole("combobox", { name: "Mois : mois" }).click();
+      await page.getByRole("option", { name: "mars", exact: true }).click();
+      await dialog.getByLabel("Mois : année").fill("2027");
+
+      // Repeating until a given month: it starts a year after the first one…
+      await dialog.getByRole("button", { name: "Récurrent" }).click();
+      await dialog.getByRole("combobox").filter({ hasText: "La fin de l'année" }).click();
+      await page.getByRole("option", { name: "Un mois précis" }).click();
+      const endYear = dialog.getByLabel("Mois de fin : année");
+      await expect(endYear).toHaveValue("2028");
+      await expect(dialog.getByRole("combobox", { name: "Mois de fin : mois" })).toContainText("mars");
+
+      // …and an end before the start is refused, not silently planned.
+      const plan = dialog.getByRole("button", { name: "Planifier" });
+      await endYear.fill("2026");
+      await expect(dialog.getByRole("alert")).toHaveText("Le mois de fin précède le mois de départ.");
+      await expect(plan).toBeDisabled();
+
+      await endYear.fill("2027");
+      await dialog.getByRole("combobox", { name: "Mois de fin : mois" }).click();
+      await page.getByRole("option", { name: "mai", exact: true }).click();
+      await expect(dialog.getByRole("alert")).toHaveCount(0);
+      await plan.click();
+
+      await expect(page.getByText("3 dépense(s) planifiée(s)")).toBeVisible();
+      const planned = await api.plannedExpenses();
+      expect(planned.map((p) => p.month).sort()).toEqual(["2027-03", "2027-04", "2027-05"]);
+      expect(planned.every((p) => p.amount_cents === 25000)).toBe(true);
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
 });

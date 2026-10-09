@@ -21,10 +21,16 @@ export function AllocationDonut({
   allocation,
   currency,
   holdings,
+  compact = false,
+  showDividends = true,
 }: {
   allocation: Record<string, number>;
   currency?: string;
   holdings?: AllocationHolding[];
+  /** For a narrow card: the legend goes under the ring, one line per type with its amount. */
+  compact?: boolean;
+  /** The "top dividends" list under the ring. Off where dividends have their own place. */
+  showDividends?: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -45,8 +51,8 @@ export function AllocationDonut({
   return (
     <div className="flex flex-col gap-4">
       {/* Pie + legend — fixed; selecting a slice never moves this block. */}
-      <div className="flex items-center gap-6">
-        <div className="h-56 w-56 shrink-0">
+      <div className={cn("flex items-center gap-6", compact && "flex-col gap-4")}>
+        <div className={cn("shrink-0", compact ? "size-44" : "h-56 w-56")}>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
@@ -68,7 +74,7 @@ export function AllocationDonut({
             </PieChart>
           </ResponsiveContainer>
         </div>
-        <div className="space-y-2">
+        <div className={cn("space-y-2", compact && "w-full")}>
           {data.map((d, i) => {
             const pct = total > 0 ? Math.round((d.value / total) * 1000) / 10 : 0;
             return (
@@ -78,13 +84,15 @@ export function AllocationDonut({
                 onClick={clickable ? () => toggle(d.type) : undefined}
                 className={cn(
                   "flex items-center gap-2 text-sm",
+                  compact && "w-full",
                   clickable && "cursor-pointer hover:opacity-80",
                   selected === d.type && "font-semibold",
                 )}
               >
-                <span className="size-2.5 rounded-full" style={{ backgroundColor: PALETTE[i % PALETTE.length] }} />
-                <span className="text-muted-foreground">{d.name}</span>
-                <span className="nums font-medium">{pct}%</span>
+                <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: PALETTE[i % PALETTE.length] }} />
+                <span className={cn("text-muted-foreground", compact && "min-w-0 flex-1 truncate text-left")}>{d.name}</span>
+                {compact && <span className="nums blurable shrink-0 text-xs text-muted-foreground">{formatCents(d.value, currency)}</span>}
+                <span className={cn("nums font-medium", compact && "w-12 shrink-0 text-right")}>{pct}%</span>
               </button>
             );
           })}
@@ -113,7 +121,7 @@ export function AllocationDonut({
       )}
 
       {/* Dividend income breakdown */}
-      {clickable && holdings && holdings.some((h) => (h.est_annual_income_cents ?? 0) > 0) && (
+      {showDividends && clickable && holdings && holdings.some((h) => (h.est_annual_income_cents ?? 0) > 0) && (
         <div className="min-w-0 border-t border-border/50 pt-4">
           <p className="mb-2 text-sm font-semibold">Revenus dividendes estimés (top 10)</p>
           <ul className="space-y-1.5">

@@ -3,11 +3,17 @@
 import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from "recharts";
 import { ChartTooltip } from "./chart-tooltip";
 import { formatCentsCompact } from "@/lib/format";
-import { periodLabel, periodTick, type TotalPoint, type TrendGranularity } from "@/lib/trends";
+import {
+  movingAverage, periodLabel, periodTick, trendCurveName, trendWindow, TREND_MIN_POINTS,
+  type TotalPoint, type TrendGranularity,
+} from "@/lib/trends";
 
 /** All categories together: one bar per period, and — day by day — the running
  *  total as a line on its own axis. The line is what answers "is there a moment
- *  of the month when I spend more": it climbs where the money goes. */
+ *  of the month when I spend more": it climbs where the money goes.
+ *
+ *  The dashed curve is the trend: a moving average of the bars, on the bars'
+ *  own axis, so it reads at the same scale as what it smooths. */
 export function TrendTotalChart({ data, granularity, income, currency }: {
   data: TotalPoint[];
   granularity: TrendGranularity;
@@ -15,7 +21,10 @@ export function TrendTotalChart({ data, granularity, income, currency }: {
   currency: string;
 }) {
   const barName = granularity === "day" ? "Total du jour" : "Total du mois";
-  const rows = data.map((d) => ({ period: d.period, [barName]: d.total, Cumul: d.cumulative }));
+  const curveName = trendCurveName(granularity);
+  const average = movingAverage(data.map((d) => d.total), trendWindow(granularity));
+  const showCurve = data.length >= TREND_MIN_POINTS;
+  const rows = data.map((d, i) => ({ period: d.period, [barName]: d.total, [curveName]: average[i], Cumul: d.cumulative }));
   const axisTick = { fontSize: 11, fill: "var(--muted-foreground)" };
 
   return (
@@ -29,6 +38,9 @@ export function TrendTotalChart({ data, granularity, income, currency }: {
         )}
         <Tooltip cursor={{ fill: "var(--muted)", opacity: 0.4 }} content={<ChartTooltip currency={currency} labelFormatter={periodLabel} />} />
         <Bar yAxisId="total" dataKey={barName} fill={income ? "var(--positive)" : "var(--negative)"} radius={[3, 3, 0, 0]} maxBarSize={26} />
+        {showCurve && (
+          <Line yAxisId="total" dataKey={curveName} stroke="var(--foreground)" strokeWidth={2} strokeDasharray="5 4" dot={false} type="monotone" isAnimationActive={false} />
+        )}
         {granularity === "day" && (
           <Line yAxisId="cumul" dataKey="Cumul" stroke="var(--info)" strokeWidth={2} dot={false} type="stepAfter" />
         )}

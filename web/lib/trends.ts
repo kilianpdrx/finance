@@ -42,3 +42,30 @@ export function periodLabel(period: string): string {
   const month = formatMonthLabel(period.slice(0, 7), { withYear: true });
   return period.length > 7 ? `${Number(period.slice(8, 10))} ${month}` : month;
 }
+
+/** Periods the trend curve averages over: a quarter by month, a week by day. */
+export function trendWindow(granularity: TrendGranularity): number {
+  return granularity === "day" ? 7 : 3;
+}
+
+/** "Moyenne sur 3 mois" / "Moyenne sur 7 jours" — the curve's name. */
+export function trendCurveName(granularity: TrendGranularity): string {
+  return granularity === "day" ? "Moyenne sur 7 jours" : "Moyenne sur 3 mois";
+}
+
+/** Below this many periods a moving average only repeats the bars. */
+export const TREND_MIN_POINTS = 3;
+
+/** Trailing moving average: each point is the mean of itself and the
+ *  `window - 1` periods before it (fewer at the start, where they don't exist).
+ *  Trailing, not centred: the last point must not depend on a future that has
+ *  not happened. Rounded to whole cents. */
+export function movingAverage(values: number[], window: number): number[] {
+  const size = Math.max(1, Math.floor(window));
+  let sum = 0;
+  return values.map((v, i) => {
+    sum += v;
+    if (i >= size) sum -= values[i - size];
+    return Math.round(sum / Math.min(i + 1, size));
+  });
+}

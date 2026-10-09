@@ -144,3 +144,143 @@ async def test_profile_with_accounts_but_no_setting_reports_in_its_first_account
     h = {"X-Profile-Id": str(p.id)}
     assert (await client.get("/api/settings", headers=h)).json()["base_currency"] == "GBP"
 
+
+# ── Deleting a closed account for good ──────────────────────────────────────
+async def _closed_account_with_data(db_session, seed_data):
+    """A closed account holding one of everything, plus what merely points at
+    it from elsewhere: a goal, the other half of a transfer, a shared category."""
+    from datetime import date
+    from models import (Account, AccountBalanceSnapshot, AccountType, BudgetEntry, Category, CategoryRule, Goal,
+                        Holding, ImportBatch, PlannedExpense, Setting, Transaction)
+    pid = seed_data["profile"].id
+    acc = Account(profile_id=pid, name="Ancien compte", bank_name="B", account_type=AccountType.courant,
+                  currency="EUR", is_active=False)
+    db_session.add(acc)
+    await db_session.commit()
+    await db_session.refresh(acc)
+
+    own_cat = Category(profile_id=pid, name="Propre au compte", color="#000", account_id=acc.id)
+    shared_cat = Category(profile_id=pid, name="Encore utilisée", color="#000", account_id=acc.id)
+    batch = ImportBatch(profile_id=pid, account_id=acc.id, filename="old.csv", transaction_count=2)
+    db_session.add_all([own_cat, shared_cat, batch])
+    await db_session.commit()
+    for obj in (own_cat, shared_cat, batch):
+        await db_session.refresh(obj)
+
+    kept = seed_data["account_courant"]
+    inside = Transaction(profile_id=pid, account_id=acc.id, date=date(2026, 3, 1), description="DANS LE COMPTE",
+                         amount_cents=1000, is_debit=True, import_hash="del_inside", category_id=own_cat.id,
+                         import_batch_id=batch.id)
+    out_leg = Transaction(profile_id=pid, account_id=acc.id, date=date(2026, 3, 2), description="VIREMENT SORTANT",
+                          amount_cents=5000, is_debit=True, import_hash="del_out", is_internal_transfer=True)
+    in_leg = Transaction(profile_id=pid, account_id=kept.id, date=date(2026, 3, 2), description="VIREMENT ENTRANT",
+                         amount_cents=5000, is_debit=False, import_hash="del_in", is_internal_transfer=True)
+    elsewhere = Transaction(profile_id=pid, account_id=kept.id, date=date(2026, 3, 3), description="AILLEURS",
+                            amount_cents=700, is_debit=True, import_hash="del_elsewhere", category_id=shared_cat.id)
+    db_session.add_all([inside, out_leg, in_leg, elsewhere])
+    await db_session.commit()
+    for t in (out_leg, in_leg):
+        await db_session.refresh(t)
+    out_leg.transfer_pair_id, in_leg.transfer_pair_id = in_leg.id, out_leg.id
+
+    goal = Goal(profile_id=pid, name="Vacances", target_amount_cents=100000, linked_account_id=acc.id)
+    db_session.add_all([
+        goal,
+        AccountBalanceSnapshot(profile_id=pid, account_id=acc.id, date=date(2026, 3, 1), amount_cents=12345),
+        Holding(profile_id=pid, account_id=acc.id, ticker="CASH.EUR", name="Liquidités", quantity=1, cost_basis_cents=100),
+        BudgetEntry(profile_id=pid, category_id=own_cat.id, month="2026-03", expected_amount_cents=500, account_id=acc.id),
+        PlannedExpense(profile_id=pid, category_id=own_cat.id, month="2026-04", amount_cents=900, account_id=acc.id),
+        CategoryRule(profile_id=pid, category_id=own_cat.id, account_id=acc.id, is_active=True, logic_operator="AND",
+                     conditions=[{"field": "description", "operator": "contains", "value": "dans"}]),
+        Setting(profile_id=pid, key="ibkr_account_id", value=str(acc.id)),
+    ])
+    await db_session.commit()
+    return {"account": acc, "own_cat": own_cat, "shared_cat": shared_cat, "in_leg": in_leg, "elsewhere": elsewhere, "goal": goal}
+
+
+@pytest.mark.asyncio
+async def test_deletion_summary_counts_what_would_go(client, db_session, seed_data):
+    data = await _closed_account_with_data(db_session, seed_data)
+    res = await client.get(f"/api/accounts/{data['account'].id}/deletion-summary",
+                           headers={"X-Profile-Id": str(seed_data["profile"].id)})
+    assert res.status_code == 200, res.text
+    assert res.json() == {"name": "Ancien compte", "is_active": False, "transactions": 2, "snapshots": 1,
+                          "holdings": 1, "imports": 1, "rules": 1, "budget_entries": 2}
+
+
+@pytest.mark.asyncio
+async def test_permanent_delete_removes_the_account_and_everything_in_it(client, db_session, seed_data):
+    from sqlalchemy import select, func
+    from models import (Account, AccountBalanceSnapshot, BudgetEntry, Category, CategoryRule, Goal, Holding,
+                        ImportBatch, PlannedExpense, Setting, Transaction)
+    data = await _closed_account_with_data(db_session, seed_data)
+    aid, pid = data["account"].id, seed_data["profile"].id
+    # Ids read now: the objects are expired below to re-read what the API wrote.
+    in_leg_id, goal_id, elsewhere_id = data["in_leg"].id, data["goal"].id, data["elsewhere"].id
+
+    res = await client.delete(f"/api/accounts/{aid}", params={"permanent": "true"}, headers={"X-Profile-Id": str(pid)})
+    assert res.status_code == 204, res.text
+    db_session.expire_all()
+
+    assert (await db_session.execute(select(Account).where(Account.id == aid))).scalar_one_or_none() is None
+    for model in (Transaction, AccountBalanceSnapshot, Holding, ImportBatch, CategoryRule, BudgetEntry, PlannedExpense):
+        left = (await db_session.execute(select(func.count(model.id)).where(model.account_id == aid))).scalar()
+        assert left == 0, model.__name__
+
+    # What only pointed at the account is detached, not deleted.
+    in_leg = (await db_session.execute(select(Transaction).where(Transaction.id == in_leg_id))).scalar_one()
+    assert in_leg.transfer_pair_id is None and in_leg.is_internal_transfer is True
+    goal = (await db_session.execute(select(Goal).where(Goal.id == goal_id))).scalar_one()
+    assert goal.linked_account_id is None
+
+    # A category that existed only for the account is gone; one still used elsewhere becomes global.
+    cats = {c.name: c for c in (await db_session.execute(select(Category).where(Category.profile_id == pid))).scalars()}
+    assert "Propre au compte" not in cats
+    assert cats["Encore utilisée"].account_id is None
+    elsewhere = (await db_session.execute(select(Transaction).where(Transaction.id == elsewhere_id))).scalar_one()
+    assert elsewhere.category_id == cats["Encore utilisée"].id
+
+    # The IBKR sync no longer targets it; the other accounts are untouched.
+    assert (await db_session.execute(select(Setting).where(Setting.key == "ibkr_account_id"))).scalar_one_or_none() is None
+    assert (await client.get("/api/accounts", headers={"X-Profile-Id": str(pid)})).status_code == 200
+    assert (await db_session.execute(select(func.count(Account.id)).where(Account.profile_id == pid))).scalar() == 2
+
+
+@pytest.mark.asyncio
+async def test_permanent_delete_is_refused_on_an_open_account(client, db_session, seed_data):
+    """Two steps on purpose: close, then delete."""
+    from sqlalchemy import select
+    from models import Account
+    aid = seed_data["account_courant"].id
+    res = await client.delete(f"/api/accounts/{aid}", params={"permanent": "true"},
+                              headers={"X-Profile-Id": str(seed_data["profile"].id)})
+    assert res.status_code == 400
+    assert "Clôturez" in res.json()["detail"]
+    db_session.expire_all()
+    still = (await db_session.execute(select(Account).where(Account.id == aid))).scalar_one()
+    assert still.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_plain_delete_still_only_closes(client, db_session, seed_data):
+    from sqlalchemy import select
+    from models import Account
+    aid = seed_data["account_courant"].id
+    res = await client.delete(f"/api/accounts/{aid}", headers={"X-Profile-Id": str(seed_data["profile"].id)})
+    assert res.status_code == 204
+    db_session.expire_all()
+    assert (await db_session.execute(select(Account).where(Account.id == aid))).scalar_one().is_active is False
+
+
+@pytest.mark.asyncio
+async def test_permanent_delete_is_profile_scoped(client, db_session, seed_data, extra_profile):
+    from sqlalchemy import select
+    from models import Account
+    data = await _closed_account_with_data(db_session, seed_data)
+    h = {"X-Profile-Id": str(extra_profile.id)}
+    aid = data["account"].id
+    assert (await client.delete(f"/api/accounts/{aid}", params={"permanent": "true"}, headers=h)).status_code == 404
+    assert (await client.get(f"/api/accounts/{aid}/deletion-summary", headers=h)).status_code == 404
+    db_session.expire_all()
+    assert (await db_session.execute(select(Account).where(Account.id == aid))).scalar_one_or_none() is not None
+

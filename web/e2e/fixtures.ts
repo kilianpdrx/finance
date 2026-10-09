@@ -107,6 +107,36 @@ export class Api {
     expect(res.ok(), await res.text()).toBeTruthy();
   }
 
+  /** A balance statement on an account (`contribution_cents`: money paid in). */
+  async addSnapshot(accountId: number, body: { date: string; amount_cents: number; contribution_cents?: number }) {
+    const res = await this.request.post(`${BACKEND}/api/accounts/${accountId}/snapshots`, {
+      headers: this.headers(),
+      data: { currency: "EUR", ...body },
+    });
+    expect(res.status(), await res.text()).toBe(201);
+  }
+
+  /** Close an account: it keeps its history and leaves the active list. */
+  async closeAccount(accountId: number) {
+    const res = await this.request.delete(`${BACKEND}/api/accounts/${accountId}`, { headers: this.headers() });
+    expect(res.status(), await res.text()).toBe(204);
+  }
+
+  async accounts(includeInactive = false): Promise<{ id: number; name: string; is_active: boolean }[]> {
+    const res = await this.request.get(`${BACKEND}/api/accounts?include_inactive=${includeInactive}`, { headers: this.headers() });
+    return res.json();
+  }
+
+  async transactionCount(): Promise<number> {
+    const res = await this.request.get(`${BACKEND}/api/transactions/count`, { headers: this.headers() });
+    return (await res.json()).total;
+  }
+
+  async plannedExpenses(): Promise<{ month: string; amount_cents: number }[]> {
+    const res = await this.request.get(`${BACKEND}/api/planned-expenses`, { headers: this.headers() });
+    return res.json();
+  }
+
   async setBaseCurrency(currency: string) {
     const res = await this.request.put(`${BACKEND}/api/settings/base_currency`, {
       headers: this.headers(),

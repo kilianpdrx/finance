@@ -11,6 +11,7 @@ from schemas import ConfirmResponse, BankProfileOut, BankProfileCreate
 from services.bank_detector import detect_bank, guess_columns, guess_confidence
 from services.csv_parser import parse_csv
 from services.categorizer import categorize_batch, evaluate_rules_batch
+from services.category_source import manual_source, rule_source
 from services.transfer_detector import detect_internal_transfers
 from utils import generate_import_hash
 
@@ -426,12 +427,17 @@ async def confirm(
             skipped += 1
             continue
 
+        # Who chose the category: the user in the review step (or the file
+        # itself), or a rule. Recorded so the list can tell them apart.
         if h in overrides:
             cat_id = overrides[h]
+            cat_source = manual_source(cat_id)
         elif t.category_id is None:
             cat_id = cat_by_index.get(i, (None, None))[0]
+            cat_source = rule_source(cat_id)
         else:
             cat_id = t.category_id
+            cat_source = manual_source(cat_id)
 
 
         # For force-imported duplicates, generate a unique hash
@@ -447,6 +453,7 @@ async def confirm(
             amount_cents=t.amount_cents,
             currency=account_currency,
             category_id=cat_id,
+            category_source=cat_source,
             is_debit=t.is_debit,
             balance_after_cents=t.balance_after_cents,
             import_batch_id=batch.id,
