@@ -1509,6 +1509,139 @@ export interface paths {
         patch: operations["update_planned_api_planned_expenses__planned_id__patch"];
         trace?: never;
     };
+    "/api/budget-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plan
+         * @description The account's plan read against one month (the current one by default).
+         */
+        get: operations["get_plan_api_budget_plan_get"];
+        /**
+         * Save Plan
+         * @description Save the account's whole plan, as the editor shows it: envelopes left
+         *     out are deleted, the others updated in place. An amount that changed is
+         *     planned from the current month on — past months keep what was planned.
+         */
+        put: operations["save_plan_api_budget_plan_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/budget-plan/proposal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Proposal
+         * @description A first split to start from, with amounts read from the account's
+         *     history. Nothing is saved: the editor shows it, the user changes it.
+         */
+        get: operations["get_proposal_api_budget_plan_proposal_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/budget-plan/evolution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Evolution
+         * @description The plan month by month: one row per envelope, then what it does not
+         *     cover, then what was left. A cell has a target only for the months the
+         *     envelope had an amount — earlier ones show what happened, uncompared.
+         */
+        get: operations["get_evolution_api_budget_plan_evolution_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/budget-plan/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Suggestions
+         * @description Expenses of the last `months` months worth asking « imprévu ? » about.
+         *     Only a suggestion: marking is the user's click (`is_unplanned` on the
+         *     transaction), and so is "c'est normal".
+         */
+        get: operations["get_suggestions_api_budget_plan_suggestions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/budget-plan/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Plan
+         * @description What a plan being edited would read like — above all each envelope's
+         *     typical month for the categories it currently holds, so the amount can be
+         *     chosen knowingly. Saves nothing.
+         */
+        post: operations["preview_plan_api_budget_plan_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/budget-plan/envelopes/{envelope_id}/amount": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Envelope Amount
+         * @description Change one envelope's monthly amount, from the current month on.
+         */
+        put: operations["set_envelope_amount_api_budget_plan_envelopes__envelope_id__amount_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings": {
         parameters: {
             query?: never;
@@ -2090,6 +2223,19 @@ export interface components {
             /** File */
             file: string;
         };
+        /** BudgetEvolutionOut */
+        BudgetEvolutionOut: {
+            /** Account Id */
+            account_id: number;
+            /** Currency */
+            currency: string;
+            /** Months */
+            months: string[];
+            /** Current Month */
+            current_month: string;
+            /** Rows */
+            rows: components["schemas"]["EvolutionRow"][];
+        };
         /** BudgetFullResponse */
         BudgetFullResponse: {
             /** Months */
@@ -2100,6 +2246,32 @@ export interface components {
             grand_total_row: components["schemas"]["BudgetTableRow"];
             /** Account Id */
             account_id?: number | null;
+        };
+        /** BudgetPlanIn */
+        BudgetPlanIn: {
+            /** Envelopes */
+            envelopes: components["schemas"]["EnvelopeIn"][];
+        };
+        /** BudgetPlanOut */
+        BudgetPlanOut: {
+            /** Account Id */
+            account_id: number;
+            /** Currency */
+            currency: string;
+            /** Month */
+            month: string;
+            /** Exists */
+            exists: boolean;
+            /** Envelopes */
+            envelopes: components["schemas"]["EnvelopeOut"][];
+            /** Outside Spent Cents */
+            outside_spent_cents: number;
+            /** Outside Received Cents */
+            outside_received_cents: number;
+            /** Outside Category Ids */
+            outside_category_ids: number[];
+            /** Unplanned Cents */
+            unplanned_cents: number;
         };
         /** BudgetSectionRow */
         BudgetSectionRow: {
@@ -2399,6 +2571,87 @@ export interface components {
             native_cents: number;
             /** Converted Cents */
             converted_cents: number;
+        };
+        /** EnvelopeAmountIn */
+        EnvelopeAmountIn: {
+            /** Amount Cents */
+            amount_cents: number;
+        };
+        /** EnvelopeIn */
+        EnvelopeIn: {
+            /** Id */
+            id?: number | null;
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "income" | "expense" | "goal" | "unplanned";
+            /**
+             * Amount Cents
+             * @default 0
+             */
+            amount_cents: number;
+            /**
+             * Category Ids
+             * @default []
+             */
+            category_ids: number[];
+        };
+        /** EnvelopeOut */
+        EnvelopeOut: {
+            /** Id */
+            id: number | null;
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "income" | "expense" | "goal" | "unplanned";
+            /** Category Ids */
+            category_ids: number[];
+            /** Amount Cents */
+            amount_cents: number;
+            /** Planned Extra Cents */
+            planned_extra_cents: number;
+            /** Target Cents */
+            target_cents: number;
+            /** Realised Cents */
+            realised_cents: number;
+            /** Typical Cents */
+            typical_cents: number | null;
+            /** Average Cents */
+            average_cents: number | null;
+            /** Last Month Cents */
+            last_month_cents: number | null;
+            /** Ytd Provision Cents */
+            ytd_provision_cents?: number | null;
+            /** Ytd Realised Cents */
+            ytd_realised_cents?: number | null;
+        };
+        /** EvolutionCell */
+        EvolutionCell: {
+            /** Month */
+            month: string;
+            /** Realised Cents */
+            realised_cents: number;
+            /** Target Cents */
+            target_cents: number | null;
+        };
+        /** EvolutionRow */
+        EvolutionRow: {
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Kind */
+            kind: string;
+            /** Reference Cents */
+            reference_cents: number | null;
+            /** Cells */
+            cells: components["schemas"]["EvolutionCell"][];
         };
         /** GoalContributionCreate */
         GoalContributionCreate: {
@@ -3051,6 +3304,8 @@ export interface components {
             conflict_rule_ids: number[];
             /** Category Source */
             category_source?: string | null;
+            /** Is Unplanned */
+            is_unplanned?: boolean | null;
             /** Rule Category Id */
             rule_category_id?: number | null;
             /**
@@ -3100,6 +3355,8 @@ export interface components {
             is_manually_reviewed?: boolean | null;
             /** Is Internal Transfer */
             is_internal_transfer?: boolean | null;
+            /** Is Unplanned */
+            is_unplanned?: boolean | null;
         };
         /**
          * UncategorizedGroup
@@ -3127,6 +3384,26 @@ export interface components {
             transaction_ids: number[];
             /** Account Ids */
             account_ids: number[];
+        };
+        /** UnplannedSuggestion */
+        UnplannedSuggestion: {
+            /** Id */
+            id: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Description */
+            description: string;
+            /** Amount Cents */
+            amount_cents: number;
+            /** Category Id */
+            category_id: number | null;
+            /** Typical Cents */
+            typical_cents: number;
+            /** Envelope Name */
+            envelope_name: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -6533,6 +6810,254 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PlannedExpenseOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_plan_api_budget_plan_get: {
+        parameters: {
+            query: {
+                account_id: number;
+                month?: string | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetPlanOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_plan_api_budget_plan_put: {
+        parameters: {
+            query: {
+                account_id: number;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BudgetPlanIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetPlanOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_proposal_api_budget_plan_proposal_get: {
+        parameters: {
+            query: {
+                account_id: number;
+                month?: string | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetPlanOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_evolution_api_budget_plan_evolution_get: {
+        parameters: {
+            query: {
+                account_id: number;
+                months?: number;
+                month?: string | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetEvolutionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_suggestions_api_budget_plan_suggestions_get: {
+        parameters: {
+            query: {
+                account_id: number;
+                months?: number;
+                month?: string | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnplannedSuggestion"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_plan_api_budget_plan_preview_post: {
+        parameters: {
+            query: {
+                account_id: number;
+                month?: string | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BudgetPlanIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetPlanOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_envelope_amount_api_budget_plan_envelopes__envelope_id__amount_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path: {
+                envelope_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvelopeAmountIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

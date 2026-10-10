@@ -157,6 +157,11 @@ class Transaction(Base):
     is_manually_reviewed = Column(Boolean, default=False)
     is_manually_edited = Column(Boolean, default=False)  # a core field was hand-corrected
     is_internal_transfer = Column(Boolean, default=False)
+    # Budget plan: an expense the user marked as unplanned leaves its envelope and
+    # counts under « Imprévus ». Three states on purpose — NULL: never asked,
+    # True: imprévu, False: "c'est normal" (so it is not suggested again). Test it
+    # with `.is_(True)` or in Python, never `!= True`.
+    is_unplanned = Column(Boolean, nullable=True)
     transfer_pair_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
     import_batch_id = Column(Integer, ForeignKey("import_batches.id"), nullable=True)
     import_hash = Column(String, unique=True, nullable=False)
@@ -262,6 +267,55 @@ class BudgetEntry(Base):
     category = relationship("Category")
 
     __table_args__ = (UniqueConstraint("category_id", "month", "account_id", name="uq_budget_entry"),)
+
+
+class BudgetEnvelope(Base):
+    """One line of an account's monthly budget plan: a named group of categories
+    with a monthly amount (services/budget_plan.py).
+
+    `kind` says how the amount reads: "income" and "goal" are minimums to reach,
+    "expense" is a ceiling, "unplanned" is the provision for the expenses the
+    user marked as unplanned (it has no categories; one per account at most).
+    The plan is per account, in the account's currency."""
+    __tablename__ = "budget_envelopes"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    name = Column(String, nullable=False)
+    kind = Column(String, nullable=False)
+    position = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BudgetEnvelopeCategory(Base):
+    """A category's place in an account's plan. `account_id` repeats the
+    envelope's so the database itself refuses a category in two envelopes of
+    the same account."""
+    __tablename__ = "budget_envelope_categories"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    envelope_id = Column(Integer, ForeignKey("budget_envelopes.id"), nullable=False)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+
+    __table_args__ = (UniqueConstraint("account_id", "category_id", name="uq_envelope_category_per_account"),)
+
+
+class BudgetEnvelopeAmount(Base):
+    """An envelope's monthly amount FROM a given month ("YYYY-MM"). Changing the
+    amount adds a row instead of rewriting one: past months keep the amount
+    that was planned then."""
+    __tablename__ = "budget_envelope_amounts"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    envelope_id = Column(Integer, ForeignKey("budget_envelopes.id"), nullable=False)
+    effective_from = Column(String, nullable=False)  # "YYYY-MM"
+    amount_cents = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (UniqueConstraint("envelope_id", "effective_from", name="uq_envelope_amount_month"),)
 
 
 class PlannedExpense(Base):

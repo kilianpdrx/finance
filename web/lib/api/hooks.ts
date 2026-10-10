@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "./client";
 import type { components } from "./schema";
+import type { BudgetPlan, BudgetEvolution, EnvelopeIn, UnplannedSuggestion } from "@/lib/budget-plan";
 import { useDateRangeStore, useSelectedAccountsStore } from "../stores";
 import { DEFAULT_CURRENCY } from "../format";
 
@@ -461,7 +462,7 @@ export function useAccountMutations() {
 
 export function useTransactionMutations() {
   const invalidate = useInvalidate();
-  const onSuccess = () => invalidate("transactions", "analytics", "budget-full");
+  const onSuccess = () => invalidate("transactions", "analytics", "budget-full", "budget-plan");
   return {
     create: useMutation({ mutationFn: (body: TransactionCreate) => unwrap(api.POST("/api/transactions", { body })), onSuccess }),
     update: useMutation({ mutationFn: ({ id, body }: { id: number; body: TransactionUpdate }) => unwrap(api.PUT("/api/transactions/{transaction_id}", { params: { path: { transaction_id: id } }, body })), onSuccess }),
@@ -479,7 +480,7 @@ export function useTransactionMutations() {
 
 export function useCategoryMutations() {
   const invalidate = useInvalidate();
-  const onSuccess = () => invalidate("categories", "transactions", "analytics", "budget-full", "rules");
+  const onSuccess = () => invalidate("categories", "transactions", "analytics", "budget-full", "rules", "budget-plan");
   return {
     create: useMutation({ mutationFn: (body: CategoryCreate) => unwrap(api.POST("/api/categories", { body })), onSuccess }),
     update: useMutation({ mutationFn: ({ id, body }: { id: number; body: CategoryUpdate }) => unwrap(api.PUT("/api/categories/{category_id}", { params: { path: { category_id: id } }, body })), onSuccess }),
@@ -528,8 +529,58 @@ export function useBudgetMutation() {
   return useMutation({
     mutationFn: (q: { category_id: number; month: string; expected_amount_cents: number; account_id?: number | null }) =>
       unwrap(api.PUT("/api/analytics/budget", { params: { query: q } })),
-    onSuccess: () => invalidate("budget-full", "analytics"),
+    onSuccess: () => invalidate("budget-full", "analytics", "budget-plan"),
   });
+}
+
+// ── Budget plan (envelopes per account) ───────────────────────────────────────
+// Every query sits under ["budget-plan"]: whatever changes what the plan reads
+// (a transaction, a category, an adjustment, a planned expense) invalidates it.
+export function useBudgetPlan(accountId: number | null, month?: string) {
+  return useQuery({
+    queryKey: ["budget-plan", "plan", accountId, month ?? null],
+    enabled: accountId != null,
+    queryFn: () => unwrap(api.GET("/api/budget-plan", { params: { query: { account_id: accountId as number, month } } })) as Promise<BudgetPlan>,
+  });
+}
+/** The first split the app proposes. One-shot: asked when the editor opens on an account without a plan. */
+export function fetchBudgetProposal(accountId: number): Promise<BudgetPlan> {
+  return unwrap(api.GET("/api/budget-plan/proposal", { params: { query: { account_id: accountId } } })) as Promise<BudgetPlan>;
+}
+/** What a plan being edited would read like (each envelope's typical month). Saves nothing. */
+export function previewBudgetPlan(accountId: number, envelopes: EnvelopeIn[]): Promise<BudgetPlan> {
+  return unwrap(api.POST("/api/budget-plan/preview", { params: { query: { account_id: accountId } }, body: { envelopes } })) as Promise<BudgetPlan>;
+}
+export function useBudgetEvolution(accountId: number | null, months: number) {
+  return useQuery({
+    queryKey: ["budget-plan", "evolution", accountId, months],
+    enabled: accountId != null,
+    queryFn: () => unwrap(api.GET("/api/budget-plan/evolution", { params: { query: { account_id: accountId as number, months } } })) as Promise<BudgetEvolution>,
+  });
+}
+export function useUnplannedSuggestions(accountId: number | null, months: number) {
+  return useQuery({
+    queryKey: ["budget-plan", "suggestions", accountId, months],
+    enabled: accountId != null,
+    queryFn: () => unwrap(api.GET("/api/budget-plan/suggestions", { params: { query: { account_id: accountId as number, months } } })) as Promise<UnplannedSuggestion[]>,
+  });
+}
+export function useBudgetPlanMutations() {
+  const invalidate = useInvalidate();
+  const onSuccess = () => invalidate("budget-plan");
+  return {
+    save: useMutation({
+      mutationFn: ({ accountId, envelopes }: { accountId: number; envelopes: EnvelopeIn[] }) =>
+        unwrap(api.PUT("/api/budget-plan", { params: { query: { account_id: accountId } }, body: { envelopes } })) as Promise<BudgetPlan>,
+      onSuccess,
+    }),
+    // From the current month on; past months keep the amount planned then.
+    setAmount: useMutation({
+      mutationFn: ({ envelopeId, amountCents }: { envelopeId: number; amountCents: number }) =>
+        unwrap(api.PUT("/api/budget-plan/envelopes/{envelope_id}/amount", { params: { path: { envelope_id: envelopeId } }, body: { amount_cents: amountCents } })),
+      onSuccess,
+    }),
+  };
 }
 
 // ── Planned expenses (budget forecast layer) ──────────────────────────────────
@@ -546,7 +597,8 @@ export interface RecurringPlan {
 
 export function usePlannedExpenseMutations() {
   const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["budget-full"] });
+  // A planned expense raises its month's target in the budget plan.
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ["budget-full"] }); qc.invalidateQueries({ queryKey: ["budget-plan"] }); };
   return {
     create: useMutation({
       mutationFn: (body: { category_id: number; month: string; amount_cents: number; account_id?: number | null }) =>

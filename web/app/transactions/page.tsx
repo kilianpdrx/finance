@@ -379,11 +379,12 @@ export default function TransactionsPage() {
                   </TableCell>
                   <TableCell>
                     <p className="line-clamp-1 font-medium" title={t.description}>{t.description}</p>
-                    {(t.is_internal_transfer || t.is_manually_reviewed || t.is_manually_edited || t.category_conflict || t.rule_category_id != null) && (
+                    {(t.is_internal_transfer || t.is_manually_reviewed || t.is_manually_edited || t.category_conflict || t.rule_category_id != null || t.is_unplanned === true) && (
                       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         {t.is_internal_transfer && <span className="rounded bg-info/12 px-1 text-info">virement</span>}
                         {t.is_manually_reviewed && <span className="rounded bg-positive/12 px-1 text-positive">vérifié</span>}
                         {t.is_manually_edited && <span className="rounded bg-warning/15 px-1 text-warning" title="Transaction modifiée manuellement">modifié</span>}
+                        {t.is_unplanned === true && <span className="rounded bg-muted px-1 text-foreground" title="Dépense imprévue : dans le plan de budget, elle sort de son enveloppe et compte dans la provision">imprévu</span>}
                         {t.category_conflict && <ConflictBadge categories={t.conflict_categories} ruleIds={t.conflict_rule_ids} onEditRule={setEditingRule} />}
                         {t.rule_category_id != null && (
                           <RuleDisagreementBadge currentCategoryId={t.category_id} ruleCategoryId={t.rule_category_id}

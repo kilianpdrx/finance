@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import init_db, AsyncSessionLocal, sync_schema
 from routers import accounts, transactions, categories, upload, analytics
-from routers import bank_profiles, investments, settings, system, profiles, goals, loans, planned
+from routers import bank_profiles, investments, settings, system, profiles, goals, loans, planned, budget_plan
 from services.base_currency import DEFAULT_BASE_CURRENCY
 
 logger = logging.getLogger(__name__)
@@ -318,6 +318,7 @@ app.include_router(investments.router, prefix="/api/investments", tags=["investm
 app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
 app.include_router(loans.router, prefix="/api/loans", tags=["loans"])
 app.include_router(planned.router, prefix="/api/planned-expenses", tags=["planned-expenses"])
+app.include_router(budget_plan.router, prefix="/api/budget-plan", tags=["budget-plan"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(profiles.router, prefix="/api/profiles", tags=["profiles"])

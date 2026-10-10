@@ -153,6 +153,22 @@ export class Api {
     return cat!.id;
   }
 
+  /** Save an account's budget plan; categories are given by name. */
+  async savePlan(accountId: number, envelopes: { name: string; kind: string; amount_cents: number; categories?: string[] }[]) {
+    const cats: { id: number; name: string }[] = await this.categories();
+    const idOf = (name: string) => {
+      const cat = cats.find((c) => c.name === name);
+      expect(cat, `category ${name} must exist`).toBeTruthy();
+      return cat!.id;
+    };
+    const res = await this.request.put(`${BACKEND}/api/budget-plan?account_id=${accountId}`, {
+      headers: this.headers(),
+      data: { envelopes: envelopes.map(({ categories = [], ...e }) => ({ ...e, category_ids: categories.map(idOf) })) },
+    });
+    expect(res.ok(), await res.text()).toBeTruthy();
+    return res.json();
+  }
+
   async plannedExpenses(): Promise<{ month: string; amount_cents: number }[]> {
     const res = await this.request.get(`${BACKEND}/api/planned-expenses`, { headers: this.headers() });
     return res.json();

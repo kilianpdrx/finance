@@ -3,12 +3,12 @@ from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, update, and_, or_
+from sqlalchemy import select, update, delete, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
 from ownership import require_account, require_category
-from models import Account, Category, CategoryRule, Transaction
+from models import Account, BudgetEnvelopeCategory, Category, CategoryRule, Transaction
 from schemas import (
     CategoryCreate, CategoryUpdate, CategoryOut,
     CategoryRuleCreate, CategoryRuleUpdate, CategoryRuleOut,
@@ -137,6 +137,19 @@ async def _ensure_parent_group(db: AsyncSession, pid: int, parent: Category) -> 
         .where(CategoryRule.category_id == parent.id, CategoryRule.profile_id == pid)
         .values(category_id=autre.id)
     )
+    # Same for the budget plan: an envelope holds leaves, so the parent's place
+    # goes to the "Autre" leaf — unless that leaf already has one in that account.
+    links = (await db.execute(select(BudgetEnvelopeCategory).where(
+        BudgetEnvelopeCategory.category_id == parent.id, BudgetEnvelopeCategory.profile_id == pid,
+    ))).scalars().all()
+    for link in links:
+        taken = (await db.execute(select(BudgetEnvelopeCategory.id).where(
+            BudgetEnvelopeCategory.category_id == autre.id, BudgetEnvelopeCategory.account_id == link.account_id,
+        ))).scalar_one_or_none()
+        if taken is None:
+            link.category_id = autre.id
+        else:
+            await db.delete(link)
     return autre
 
 
@@ -335,6 +348,10 @@ async def delete_category(category_id: int, replace_with_id: Optional[int] = Non
 
     # Re-parent any children to top-level so they aren't orphaned.
     await db.execute(update(Category).where(Category.parent_id == category_id).values(parent_id=None))
+
+    # It leaves the budget plan: an envelope cannot hold a category that is gone.
+    await db.execute(delete(BudgetEnvelopeCategory).where(
+        BudgetEnvelopeCategory.category_id == category_id, BudgetEnvelopeCategory.profile_id == pid))
 
     # Delete associated rules first
     rules = await db.execute(select(CategoryRule).where(CategoryRule.category_id == category_id))

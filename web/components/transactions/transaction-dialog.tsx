@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { CategorySelect } from "./category-select";
 import { parseAmountToCents } from "@/lib/format";
 import { useAccounts, useCategories, useTransactionMutations, type Transaction } from "@/lib/api/hooks";
@@ -36,6 +37,8 @@ export function TransactionDialog({
   const [amount, setAmount] = useState("");
   const [isDebit, setIsDebit] = useState(true);
   const [categoryId, setCategoryId] = useState<number | null>(null);
+  // Budget plan: an unplanned expense leaves its envelope (see services/budget_plan.py).
+  const [unplanned, setUnplanned] = useState(false);
 
   // (Re)initialise the form whenever the dialog opens or the target changes.
   useEffect(() => {
@@ -47,6 +50,7 @@ export function TransactionDialog({
       setAmount((Math.abs(transaction.amount_cents) / 100).toFixed(2).replace(".", ","));
       setIsDebit(transaction.is_debit);
       setCategoryId(transaction.category_id ?? null);
+      setUnplanned(transaction.is_unplanned === true);
     } else {
       setAccountId("");
       setDate(format(new Date(), "yyyy-MM-dd"));
@@ -54,6 +58,7 @@ export function TransactionDialog({
       setAmount("");
       setIsDebit(true);
       setCategoryId(null);
+      setUnplanned(false);
     }
   }, [open, transaction]);
 
@@ -73,6 +78,9 @@ export function TransactionDialog({
             currency: account.currency,
             is_debit: isDebit,
             category_id: categoryId,
+            // Sent only when it changes: switching it off withdraws the answer
+            // (null), it does not record "c'est normal".
+            ...(isDebit && unplanned !== (transaction.is_unplanned === true) ? { is_unplanned: unplanned ? true : null } : {}),
           },
         });
         toast.success("Transaction modifiée");
@@ -140,6 +148,15 @@ export function TransactionDialog({
             <Label>Catégorie</Label>
             <CategorySelect value={categoryId} onChange={setCategoryId} categories={categories} accountId={Number(accountId) || undefined} />
           </div>
+          {isEdit && isDebit && !transaction?.is_internal_transfer && (
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+              <span>
+                <span className="block text-sm font-medium">Dépense imprévue</span>
+                <span className="block text-xs text-muted-foreground">Dans le plan de budget, elle sort de son enveloppe et compte dans la provision pour imprévus.</span>
+              </span>
+              <Switch checked={unplanned} onCheckedChange={setUnplanned} aria-label="Dépense imprévue" />
+            </label>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Annuler</Button>

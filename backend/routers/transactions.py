@@ -707,6 +707,11 @@ async def update_transaction(
     if "category_id" in updates:
         await require_category(db, pid, updates["category_id"])
         await _reject_grouping_category(db, updates["category_id"])
+    if updates.get("is_unplanned") is True:
+        # « Imprévu » moves an EXPENSE out of its envelope in the budget plan.
+        is_expense = updates.get("is_debit", txn.is_debit) and not updates.get("is_internal_transfer", txn.is_internal_transfer)
+        if not is_expense:
+            raise HTTPException(status_code=400, detail="Seule une dépense peut être marquée comme imprévue.")
     for field, value in updates.items():
         if field in CORE_FIELDS and getattr(txn, field) != value:
             txn.is_manually_edited = True

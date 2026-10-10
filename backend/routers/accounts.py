@@ -7,6 +7,7 @@ from dependencies import current_profile_id
 from models import (
     Account, AccountBalanceSnapshot, Transaction, LoanDetails, LoanExtraPayment, Holding, ImportBatch,
     CategoryRule, Category, BudgetEntry, PlannedExpense, Goal, Setting,
+    BudgetEnvelope, BudgetEnvelopeAmount, BudgetEnvelopeCategory,
 )
 from schemas import (
     AccountCreate, AccountUpdate, AccountOut,
@@ -166,6 +167,12 @@ async def _purge_account(db: AsyncSession, pid: int, account: Account) -> None:
     await db.execute(update(Transaction).where(Transaction.transfer_pair_id.in_(own_txns)).values(transfer_pair_id=None))
     await db.execute(update(Goal).where(Goal.linked_account_id == aid).values(linked_account_id=None))
 
+    # The account's budget plan: amounts and memberships hang off its envelopes.
+    await db.execute(delete(BudgetEnvelopeAmount).where(
+        BudgetEnvelopeAmount.envelope_id.in_(select(BudgetEnvelope.id).where(BudgetEnvelope.account_id == aid))))
+    for model in (BudgetEnvelopeCategory, BudgetEnvelope):
+        await db.execute(delete(model).where(model.account_id == aid))
+
     for model in (LoanExtraPayment, LoanDetails, Holding, AccountBalanceSnapshot, PlannedExpense, BudgetEntry):
         await db.execute(delete(model).where(model.account_id == aid))
     await db.execute(delete(Transaction).where(Transaction.account_id == aid))   # before the imports they came from
@@ -186,6 +193,7 @@ async def _purge_account(db: AsyncSession, pid: int, account: Account) -> None:
         used = False
         for model, column in ((Transaction, Transaction.category_id), (CategoryRule, CategoryRule.category_id),
                               (BudgetEntry, BudgetEntry.category_id), (PlannedExpense, PlannedExpense.category_id),
+                              (BudgetEnvelopeCategory, BudgetEnvelopeCategory.category_id),
                               (Category, Category.parent_id)):
             if (await db.execute(select(func.count(model.id)).where(column == cat.id))).scalar():
                 used = True

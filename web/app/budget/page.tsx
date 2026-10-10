@@ -10,6 +10,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CourantTabs, type CourantSelection } from "@/components/analytics/courant-tabs";
 import { useAccounts, useBudgetMutation, usePlannedExpenseMutations, type BudgetFullResponse } from "@/lib/api/hooks";
 import { PlanExpenseDialog } from "@/components/budget/plan-expense-dialog";
+import { PlanTab } from "@/components/budget/plan/plan-tab";
+import { EvolutionTab } from "@/components/budget/plan/evolution-tab";
+import { Card } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CellTransactions } from "@/components/budget/cell-transactions";
 import { buildMonths, cellDisplayValue, cellType, mergeYears, parentSubtotalRow, selectionAmounts, signClass, yearOf, type CellSelection, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
 import { formatCents, formatMonthLabel, deriveCurrency } from "@/lib/format";
@@ -37,12 +41,79 @@ const SECTION: Record<string, { head: string; total: string }> = {
   depenses_variables: { head: "bg-info text-white", total: "bg-muted text-info" },
 };
 
+type View = "table" | "plan" | "evolution";
+
+/** Budget, three ways: the detailed table of what happened, the plan (a few
+ *  envelopes with a monthly amount, per account), and that plan over the months.
+ *  The account choice is shared by the three. */
 export default function BudgetPage() {
+  const { data: accounts = [] } = useAccounts();
+  const courant = useMemo(() => accounts.filter((a) => a.account_type === "courant"), [accounts]);
+  const [view, setView] = useState<View>("table");
+  const [accountSel, setAccountSel] = useState<CourantSelection>("all");
+  // The dashboard's « Budget du mois » card links straight to an account's plan.
+  // Read once, after hydration: the page is prerendered and knows no query string.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const wanted = params.get("vue");
+    if (wanted === "plan" || wanted === "evolution") setView(wanted);
+    const account = Number(params.get("compte"));
+    if (account) setAccountSel(account);
+  }, []);
+
+  // A plan is per account: with a single current account there is nothing to choose.
+  const planAccount = accountSel !== "all" ? courant.find((a) => a.id === accountSel) : courant.length === 1 ? courant[0] : undefined;
+
+  return (
+    <div className="space-y-4">
+      <Tabs value={view} onValueChange={(v) => setView(v as View)}>
+        <TabsList>
+          <TabsTrigger value="table">Tableau</TabsTrigger>
+          <TabsTrigger value="plan">Plan</TabsTrigger>
+          <TabsTrigger value="evolution">Évolution</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {view === "table" ? (
+        <BudgetTable accountSel={accountSel} setAccountSel={setAccountSel} />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              {view === "plan"
+                ? "Quelques enveloppes et un montant par mois : ce que vous prévoyez, face à ce qui se passe. Par compte, dans sa devise."
+                : "Le plan mois après mois : cliquez une ligne pour voir sa courbe."}
+            </p>
+            <CourantTabs accounts={accounts} value={accountSel} onChange={setAccountSel} />
+          </div>
+          {planAccount ? (
+            view === "plan"
+              ? <PlanTab key={planAccount.id} accountId={planAccount.id} accountName={planAccount.name} />
+              : <EvolutionTab key={planAccount.id} accountId={planAccount.id} />
+          ) : (
+            <Card className="space-y-3 p-6 text-center">
+              <p className="text-sm font-medium">{courant.length === 0 ? "Aucun compte courant" : "Choisissez un compte"}</p>
+              <p className="mx-auto max-w-md text-xs text-muted-foreground">
+                {courant.length === 0
+                  ? "Le plan de budget se fait sur un compte courant : créez-en un dans la page Comptes."
+                  : "Le plan se fait compte par compte, chacun dans sa devise : il n'y a pas de plan « tous comptes »."}
+              </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {courant.map((a) => <Button key={a.id} variant="outline" size="sm" onClick={() => setAccountSel(a.id)}>{a.name}</Button>)}
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function BudgetTable({ accountSel, setAccountSel }: { accountSel: CourantSelection; setAccountSel: (v: CourantSelection) => void }) {
   const { data: accounts = [] } = useAccounts();
   const courant = useMemo(() => accounts.filter((a) => a.account_type === "courant"), [accounts]);
   const courantIds = courant.map((a) => a.id);
   const courantKey = courantIds.join(",");
-  const [accountSel, setAccountSel] = useState<CourantSelection>("all");
   const accountId = accountSel === "all" ? undefined : accountSel;
   // The accounts an "all accounts" budget covers — the same list the API is given.
   const scopeIds = useMemo(() => (courantKey ? courantKey.split(",").map(Number) : null), [courantKey]);

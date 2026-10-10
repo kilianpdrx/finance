@@ -1,8 +1,8 @@
 from __future__ import annotations
 import datetime as _dt
 from datetime import date, datetime
-from typing import Optional, List
-from pydantic import BaseModel, ConfigDict, field_validator
+from typing import Literal, Optional, List
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 CURRENCY_SYMBOLS = {
@@ -220,6 +220,8 @@ class TransactionUpdate(BaseModel):
     notes: Optional[str] = None
     is_manually_reviewed: Optional[bool] = None
     is_internal_transfer: Optional[bool] = None
+    # Budget plan: true = unplanned expense, false = "c'est normal", null = undo the answer.
+    is_unplanned: Optional[bool] = None
 
 class TransactionOut(TransactionBase):
     model_config = ConfigDict(from_attributes=True)
@@ -231,6 +233,7 @@ class TransactionOut(TransactionBase):
     conflict_categories: List[str] = []  # names of the categories in conflict
     conflict_rule_ids: List[int] = []    # the rules that disagree, so the UI can open them
     category_source: Optional[str] = None  # "rule" (classified automatically) | "manual"
+    is_unplanned: Optional[bool] = None    # budget plan: marked as an unplanned expense
     # Set when the row was classified BY HAND and the rules all agree on another
     # category: that category, and the rules that say so (« ≠ règle » badge).
     rule_category_id: Optional[int] = None
@@ -495,6 +498,91 @@ class BudgetFullResponse(BaseModel):
     reste_row: BudgetTableRow
     grand_total_row: BudgetTableRow
     account_id: Optional[int] = None
+
+
+# ── Budget plan (envelopes) ──────────────────────────────────────────────────
+
+EnvelopeKind = Literal["income", "expense", "goal", "unplanned"]
+
+
+class EnvelopeIn(BaseModel):
+    id: Optional[int] = None          # None = a new envelope
+    name: str
+    kind: EnvelopeKind
+    amount_cents: int = Field(default=0, ge=0)
+    category_ids: List[int] = []
+
+
+class BudgetPlanIn(BaseModel):
+    envelopes: List[EnvelopeIn]
+
+
+class EnvelopeAmountIn(BaseModel):
+    amount_cents: int = Field(ge=0)
+
+
+class EnvelopeOut(BaseModel):
+    id: Optional[int]                 # None in a proposal (nothing saved yet)
+    name: str
+    kind: EnvelopeKind
+    category_ids: List[int]
+    amount_cents: int                 # in force for the month shown
+    planned_extra_cents: int          # « Planifier » entries of that month, added to the target
+    target_cents: int
+    realised_cents: int
+    # From the last 12 full months of this account (None without any).
+    typical_cents: Optional[int]
+    average_cents: Optional[int]
+    last_month_cents: Optional[int]
+    # « Imprévus » only: provision and spending cumulated since January.
+    ytd_provision_cents: Optional[int] = None
+    ytd_realised_cents: Optional[int] = None
+
+
+class BudgetPlanOut(BaseModel):
+    account_id: int
+    currency: str
+    month: str
+    exists: bool                      # false: no plan saved yet for this account
+    envelopes: List[EnvelopeOut]
+    # What no envelope covers: unassigned categories and uncategorised rows.
+    outside_spent_cents: int
+    outside_received_cents: int
+    outside_category_ids: List[int]
+    # Expenses marked unplanned this month (also the realised of the provision, when there is one).
+    unplanned_cents: int
+
+
+class EvolutionCell(BaseModel):
+    month: str
+    realised_cents: int
+    target_cents: Optional[int]       # None: no plan for this row in that month
+
+
+class EvolutionRow(BaseModel):
+    key: str                          # "envelope-<id>" | "unplanned" | "outside_spent" | "outside_received" | "remainder"
+    name: str
+    kind: str                         # an envelope kind, or "outside" / "remainder"
+    reference_cents: Optional[int]    # today's amount, drawn as the dashed line
+    cells: List[EvolutionCell]
+
+
+class BudgetEvolutionOut(BaseModel):
+    account_id: int
+    currency: str
+    months: List[str]
+    current_month: str
+    rows: List[EvolutionRow]
+
+
+class UnplannedSuggestion(BaseModel):
+    id: int
+    date: date
+    description: str
+    amount_cents: int
+    category_id: Optional[int]
+    typical_cents: int                # a typical month of that category on this account
+    envelope_name: Optional[str]
 
 
 # ── TransactionMeta ───────────────────────────────────────────────────────────

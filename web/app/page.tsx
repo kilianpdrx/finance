@@ -13,6 +13,7 @@ import { PatrimoineDonut } from "@/components/charts/patrimoine-donut";
 import { CashflowChart } from "@/components/charts/cashflow-chart";
 import { NetworthArea } from "@/components/charts/networth-area";
 import { TopExpenses } from "@/components/dashboard/top-expenses";
+import { BudgetPlanWidget } from "@/components/dashboard/budget-plan-widget";
 import { GoalsWidget } from "@/components/dashboard/goals-widget";
 import { LoansWidget } from "@/components/dashboard/loans-widget";
 import { PatrimoineNetWidget } from "@/components/dashboard/patrimoine-net-widget";
@@ -182,6 +183,9 @@ export default function DashboardPage() {
           <CurrencyBreakdownWidget summary={s} />
         </motion.div>
       )}
+
+      {/* The month against the budget plan — nothing shows until a plan exists. */}
+      {modules.includes("budgeting") && <BudgetPlanWidget />}
 
       {(showGoals || showLoans) && (
         <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-3">

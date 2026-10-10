@@ -33,7 +33,7 @@ installé. Le détail est dans le `README.md` fourni.
 |---|---|
 | **Transactions** | Import CSV multi-banques (détection des colonnes, dédoublonnage), classement automatique par règles (repéré sur chaque ligne), édition en masse, dépenses récurrentes et libellés sans règle |
 | **Analyses** | Dépenses par catégorie, tendances mensuelles avec moyenne mobile, flux de trésorerie |
-| **Budget** | Budget annuel par catégorie, dépenses planifiées, comparaison prévu / réalisé |
+| **Budget** | Budget annuel par catégorie, dépenses planifiées, comparaison prévu / réalisé ; plan mensuel par enveloppes (par compte), provision pour imprévus, évolution sur plusieurs mois |
 | **Comptes** | Courant, épargne, crédit, immobilier ; soldes manuels, patrimoine dans le temps, clôture (l'historique reste) ou suppression définitive |
 | **Investissements** | Portefeuille (actions, ETF, crypto), cours et dividendes automatiques, import de positions, synchro IBKR |
 | **Emprunts** | Amortissement, capital restant, intérêts, remboursements anticipés |
@@ -82,7 +82,7 @@ TypeScript, Next.js 15, React 19, TanStack Query, Tailwind, Recharts · Docker.
 
 ```bash
 ./start.sh                                  # API + interface en mode dev
-cd backend && python -m pytest              # 327 tests
+cd backend && python -m pytest              # 343 tests
 cd web && npx tsc --noEmit && npx vitest run
 cd web && npm run test:e2e                  # Playwright : démarre sa propre pile
 ```
