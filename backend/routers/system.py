@@ -1,16 +1,20 @@
+import asyncio
 import csv
 import io
 import logging
 import os
 import signal
+import sqlite3
 import subprocess
 import threading
 import time
+import uuid
 from datetime import datetime, date as _date
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from fastapi.responses import FileResponse, Response
+from starlette.background import BackgroundTask
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -286,22 +290,39 @@ def _prune_pre_restore_snapshots(keep: int = PRE_RESTORE_KEEP) -> None:
 
 
 @router.get("/backup")
-async def download_backup(db: AsyncSession = Depends(get_db)):
-    """Checkpoint SQLite WAL log and stream data/finance.db as a backup file."""
+async def download_backup():
+    """A consistent copy of the database, to download.
+
+    Made with SQLite's backup function into a temporary file next to the
+    database, then streamed and deleted. Streaming the live file — as this used
+    to — could catch it in the middle of a write (the price refresh runs every
+    30 minutes, an import can be in progress) and hand out a damaged backup,
+    which only shows the day it is needed."""
     if not DB_PATH.exists():
-        raise HTTPException(status_code=444, detail="Base de données introuvable")
+        raise HTTPException(status_code=404, detail="Base de données introuvable")
+
+    copy_path = DB_PATH.with_name(f"finance.backup-{uuid.uuid4().hex[:8]}.sqlite")
+
+    def _copy() -> None:
+        src = sqlite3.connect(DB_PATH)
+        dst = sqlite3.connect(copy_path)
+        try:
+            with dst:
+                src.backup(dst)
+        finally:
+            src.close()
+            dst.close()
 
     try:
-        # Flush pending WAL log pages to main database file
-        await db.execute(text("PRAGMA wal_checkpoint(TRUNCATE);"))
-    except Exception as e:
-        logger.warning("WAL checkpoint during backup warning: %s", e)
-
-    filename = f"finance-backup-{datetime.now().strftime('%Y-%m-%d')}.sqlite"
+        await asyncio.to_thread(_copy)
+    except Exception:
+        copy_path.unlink(missing_ok=True)
+        raise
     return FileResponse(
-        path=str(DB_PATH),
-        filename=filename,
+        path=str(copy_path),
+        filename=f"finance-backup-{datetime.now().strftime('%Y-%m-%d')}.sqlite",
         media_type="application/x-sqlite3",
+        background=BackgroundTask(copy_path.unlink, missing_ok=True),
     )
 
 

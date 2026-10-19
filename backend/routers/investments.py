@@ -319,7 +319,7 @@ async def create_holding(account_id: int, body: HoldingCreate, db: AsyncSession 
     acc = await db.execute(select(Account).where(Account.id == account_id, Account.profile_id == pid))
     acc = acc.scalar_one_or_none()
     if not acc:
-        raise HTTPException(404, "Account not found")
+        raise HTTPException(404, "Compte introuvable")
     h = Holding(
         account_id=account_id,
         profile_id=pid,
@@ -343,7 +343,7 @@ async def create_holding(account_id: int, body: HoldingCreate, db: AsyncSession 
 async def update_holding(holding_id: int, body: HoldingUpdate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     h = await db.get(Holding, holding_id)
     if not h or h.profile_id != pid:
-        raise HTTPException(404, "Holding not found")
+        raise HTTPException(404, "Position introuvable")
 
     old_ticker = h.ticker
     updates = body.model_dump(exclude_unset=True)
@@ -401,7 +401,7 @@ async def update_holding(holding_id: int, body: HoldingUpdate, db: AsyncSession 
 async def delete_holding(holding_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     h = await db.get(Holding, holding_id)
     if not h or h.profile_id != pid:
-        raise HTTPException(404, "Holding not found")
+        raise HTTPException(404, "Position introuvable")
     await db.delete(h)
     await db.commit()
     return {"ok": True}
@@ -504,7 +504,7 @@ async def benchmark_history(
 ):
     info = BENCHMARKS.get(key)
     if not info:
-        raise HTTPException(404, f"Unknown benchmark: {key}")
+        raise HTTPException(404, f"Indice de référence inconnu : {key}")
     data = await fetch_historical_prices(info["ticker"], period)
     return {"key": key, "name": info["name"], "data": _normalize_pct(data)}
 
@@ -522,7 +522,7 @@ async def account_performance(
     acc = await db.execute(select(Account).where(Account.id == account_id, Account.profile_id == pid))
     acc = acc.scalar_one_or_none()
     if not acc:
-        raise HTTPException(404, "Account not found")
+        raise HTTPException(404, "Compte introuvable")
     acc_ccy = acc.currency or "EUR"
 
     holdings = (await db.execute(
@@ -703,7 +703,7 @@ async def import_confirm(
     acc = await db.execute(select(Account).where(Account.id == body.account_id, Account.profile_id == pid))
     acc = acc.scalar_one_or_none()
     if not acc:
-        raise HTTPException(404, "Account not found")
+        raise HTTPException(404, "Compte introuvable")
 
     existing = await db.execute(
         select(Holding).where(Holding.account_id == body.account_id, Holding.profile_id == pid)
@@ -875,89 +875,6 @@ async def ibkr_sync_now(db: AsyncSession = Depends(get_db), pid: int = Depends(c
         created=res.get("created", 0), updated=res.get("updated", 0), skipped=0,
     )
 
-
-@router.get("/ibkr/dividends-probe")
-async def ibkr_dividends_probe(
-    query_id: str = Query("1554450"),
-    db: AsyncSession = Depends(get_db),
-    pid: int = Depends(current_profile_id),
-):
-    """PROTOTYPE / read-only: fetch an IBKR dividend Flex query and compare the
-    actual dividends it reports against the current yfinance estimates. Writes
-    nothing and does not touch the dividend cache — purely for assessment."""
-    from services.ibkr_flex import fetch_flex_statement, parse_dividends, get_setting, FlexError
-    from models import DividendCache
-
-    token = await get_setting(db, pid, "ibkr_flex_token")
-    if not token:
-        raise HTTPException(400, "Jeton IBKR Flex non configuré.")
-    try:
-        xml = await fetch_flex_statement(token, query_id)
-        parsed = parse_dividends(xml)
-    except FlexError as e:
-        status = 429 if e.kind == "rate_limit" else (400 if e.kind == "config" else 502)
-        raise HTTPException(status, str(e))
-
-    # IBKR actual: realised cash dividends summed per symbol over the statement period.
-    by_ticker_actual: dict[str, dict] = {}
-    dates: list[str] = []
-    for ev in parsed["events"]:
-        sym = (ev.get("symbol") or ev.get("isin") or "?").upper()
-        slot = by_ticker_actual.setdefault(sym, {"gross": 0.0, "tax": 0.0, "net": 0.0, "currency": ev.get("currency"), "count": 0})
-        amt = ev.get("amount") or 0.0
-        if "Withholding" in (ev.get("type") or ""):
-            slot["tax"] += amt          # tax amounts are negative in IBKR
-        else:
-            slot["gross"] += amt
-        slot["net"] += amt
-        slot["count"] += 1
-        if ev.get("date"):
-            dates.append(ev["date"])
-
-    period = {"from": min(dates), "to": max(dates)} if dates else None
-    span_days = None
-    if period:
-        try:
-            span_days = (datetime.fromisoformat(period["to"]) - datetime.fromisoformat(period["from"])).days or 1
-        except ValueError:
-            span_days = None
-
-    # yfinance estimate: annual_rate * quantity from dividend_cache, per held ticker.
-    holdings = (await db.execute(select(Holding).where(Holding.profile_id == pid))).scalars().all()
-    comparison = []
-    for h in holdings:
-        tkey = h.ticker.upper()
-        div = (await db.execute(select(DividendCache).where(DividendCache.ticker == tkey))).scalar_one_or_none()
-        yf_est = round((div.annual_rate or 0) * h.quantity, 2) if div and div.annual_rate else None
-        actual = by_ticker_actual.get(tkey) or (by_ticker_actual.get((h.isin or "").upper()) if h.isin else None)
-        ibkr_net = round(actual["net"], 2) if actual else None
-        ibkr_annualised = None
-        if actual and span_days and span_days > 0:
-            ibkr_annualised = round(actual["net"] * 365 / span_days, 2)
-        comparison.append({
-            "ticker": h.ticker,
-            "isin": h.isin,
-            "yf_est_annual": yf_est,
-            "ibkr_paid_period": ibkr_net,
-            "ibkr_annualised": ibkr_annualised,
-            "ibkr_currency": actual["currency"] if actual else None,
-            "ibkr_payments": actual["count"] if actual else 0,
-        })
-
-    return {
-        "query_id": query_id,
-        "sections": parsed["sections"],
-        "period": period,
-        "event_count": len(parsed["events"]),
-        "accrual_count": len(parsed["accruals"]),
-        "events": parsed["events"],
-        "accruals": parsed["accruals"],
-        "by_ticker_actual": by_ticker_actual,
-        "comparison": comparison,
-    }
-
-
-# ── Investment accounts (enhanced with holdings) ──────────────────────────────
 
 @router.get("/accounts")
 async def investment_accounts(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):

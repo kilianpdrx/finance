@@ -684,7 +684,7 @@ async def get_transaction(transaction_id: int, db: AsyncSession = Depends(get_db
     result = await db.execute(select(Transaction).where(Transaction.id == transaction_id, Transaction.profile_id == pid))
     txn = result.scalar_one_or_none()
     if not txn:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+        raise HTTPException(status_code=404, detail="Transaction introuvable")
     return TransactionOut.from_orm_with_display(txn)
 
 
@@ -698,7 +698,7 @@ async def update_transaction(
     result = await db.execute(select(Transaction).where(Transaction.id == transaction_id, Transaction.profile_id == pid))
     txn = result.scalar_one_or_none()
     if not txn:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+        raise HTTPException(status_code=404, detail="Transaction introuvable")
     # Editing one of these core fields (vs. just recategorizing) marks the row edited.
     CORE_FIELDS = {"account_id", "date", "description", "amount_cents", "currency", "is_debit"}
     updates = payload.model_dump(exclude_unset=True)
@@ -754,7 +754,7 @@ async def delete_transaction(transaction_id: int, db: AsyncSession = Depends(get
     result = await db.execute(select(Transaction).where(Transaction.id == transaction_id, Transaction.profile_id == pid))
     txn = result.scalar_one_or_none()
     if not txn:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+        raise HTTPException(status_code=404, detail="Transaction introuvable")
     await db.delete(txn)
     await db.commit()
 

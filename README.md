@@ -83,7 +83,7 @@ TypeScript, Next.js 15, React 19, TanStack Query, Tailwind, Recharts · Docker.
 ```bash
 ./start.sh                                  # API + interface en mode dev
 ./dev-data.sh                               # copie les données de l'application installée (voir INSTALL.md)
-cd backend && python -m pytest              # 367 tests
+cd backend && python -m pytest              # 375 tests
 cd web && npx tsc --noEmit && npx vitest run
 cd web && npm run test:e2e                  # Playwright : démarre sa propre pile
 ```

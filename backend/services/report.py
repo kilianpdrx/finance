@@ -278,9 +278,23 @@ def build_xlsx(data, base_ccy: str) -> bytes:
     if data.get("investments"):
         _xlsx_investments(wb, data, bold)
 
+    _no_formulas(wb)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _no_formulas(wb) -> None:
+    """openpyxl stores any text starting with "=" as a FORMULA, and the cells
+    here carry bank labels, category names, account names — text from outside.
+    A label like `=HYPERLINK("http://…")` would run when the file is opened.
+    The report never writes a formula on purpose: every such cell is text.
+    (The CSV exports have the same guard, `utils.csv_safe_cell`.)"""
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.data_type == "f":
+                    cell.data_type = "s"
 
 
 def _xlsx_budget_sheet(wb, budget, bold):

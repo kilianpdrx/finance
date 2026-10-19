@@ -23,31 +23,32 @@ function cell(over: Partial<MergedCell> = {}): MergedCell {
     planned_cents: 0,
     planned_matched: false,
     planned_id: null,
+    planned_count: 0,
+    planned_state: 'none',
+    planned_active_cents: 0,
     ...over,
   };
 }
 
 afterEach(() => vi.useRealTimers());
 
-describe('cellType — quatre états, dont un qui demande confirmation', () => {
-  it('« planned » : dépense prévue, aucune transaction encore', () => {
-    expect(cellType(cell({ planned_cents: 5000 }))).toBe('planned');
+// L'état d'une prévision est décidé par l'API, entrée par entrée, chacune face aux
+// transactions de SON compte (tests/test_planned_expenses.py) : la cellule ne
+// voit que le total, qui mélange les comptes dans « Tous ». Ici, on vérifie
+// seulement que l'écran lit cet état sans le recalculer.
+describe('cellType — lit l’état décidé par l’API', () => {
+  it('« planned » : une dépense prévue, sans transaction de son compte', () => {
+    // Même avec une transaction d'un AUTRE compte dans la cellule (vue « Tous »).
+    expect(cellType(cell({ planned_cents: 5000, planned_state: 'planned', planned_active_cents: 5000, actual_cents: 1350 }))).toBe('planned');
   });
 
-  it('« confirm » : une transaction est apparue, mais pas au montant prévu', () => {
-    // C'est le cœur de la fonctionnalité : un montant différent n'est pas
-    // rapproché automatiquement, l'utilisateur doit confirmer que c'est bien
-    // la dépense prévue — sinon on compterait deux fois.
-    expect(cellType(cell({ planned_cents: 5000, actual_cents: 4800 }))).toBe('confirm');
+  it('« confirm » : une transaction de son compte, d’un autre montant', () => {
+    expect(cellType(cell({ planned_cents: 5000, actual_cents: 4800, planned_state: 'confirm' }))).toBe('confirm');
   });
 
-  it('pas de confirmation quand le montant correspond exactement', () => {
-    expect(cellType(cell({ planned_cents: 5000, actual_cents: 5000 }))).not.toBe('confirm');
-  });
-
-  it('une prévision déjà rapprochée ne réclame plus rien', () => {
-    expect(cellType(cell({ planned_cents: 5000, actual_cents: 4800, planned_matched: true })))
-      .toBe('regular');
+  it('une prévision réglée (confirmée, ou au montant exact) ne réclame plus rien', () => {
+    expect(cellType(cell({ planned_cents: 5000, actual_cents: 4800, planned_matched: true }))).toBe('regular');
+    expect(cellType(cell({ planned_cents: 5000, actual_cents: 5000 }))).toBe('regular');
   });
 
   it('« manual » : ajustement saisi à la main', () => {
@@ -64,14 +65,15 @@ describe('cellDisplayValue — le réalisé compte toujours', () => {
     expect(cellDisplayValue(cell({ actual_cents: 1000, expected_cents: 250 }))).toBe(1250);
   });
 
-  it('ajoute la prévision tant que rien n’a été dépensé', () => {
-    expect(cellDisplayValue(cell({ planned_cents: 5000 }))).toBe(5000);
+  it('ajoute ce qui est encore prévu', () => {
+    expect(cellDisplayValue(cell({ planned_cents: 5000, planned_state: 'planned', planned_active_cents: 5000 }))).toBe(5000);
+    // « Tous » : l'achat d'un autre compte ET la prévision de celui-ci, encore à venir.
+    expect(cellDisplayValue(cell({ actual_cents: 1350, planned_state: 'planned', planned_active_cents: 31000 }))).toBe(32350);
   });
 
-  it('remplace la prévision par le réel dès qu’une transaction existe', () => {
-    // Le piège que la règle évite : additionner prévu ET réalisé, donc compter
-    // la dépense deux fois dans le mois où elle se concrétise.
-    expect(cellDisplayValue(cell({ planned_cents: 5000, actual_cents: 4800 }))).toBe(4800);
+  it('ne compte plus la prévision dès que la dépense de son compte existe', () => {
+    // Le piège évité : additionner prévu ET réalisé, donc compter la dépense deux fois.
+    expect(cellDisplayValue(cell({ planned_cents: 5000, actual_cents: 4800, planned_state: 'confirm' }))).toBe(4800);
   });
 
   it('ignore une prévision rapprochée même sans transaction visible', () => {
@@ -98,7 +100,7 @@ describe('parentSubtotalRow', () => {
 
   it('applique la règle prévu/réalisé aux enfants aussi', () => {
     const parent = row('Logement', [cell()]);
-    const kids = [row('Loyer', [cell({ planned_cents: 90000, actual_cents: 88000 })])];
+    const kids = [row('Loyer', [cell({ planned_cents: 90000, actual_cents: 88000, planned_state: 'confirm' })])];
 
     // 88 000 (le réel), pas 178 000.
     expect(parentSubtotalRow(parent, kids).cells[0].actual_cents).toBe(88000);
@@ -199,7 +201,7 @@ describe('selectionAmounts — les montants de la cellule choisie, lus dans le t
       rows: [
         row(10, [{ actual_cents: 1000 }, { actual_cents: 2000, expected_cents: 500 }, { actual_cents: 300 }]),
         row(20, [{}, { actual_cents: 100 }, {}]),                                        // a parent…
-        row(21, [{ actual_cents: 40 }, { planned_cents: 700 }, {}], { parent_id: 20 }),   // …and its child
+        row(21, [{ actual_cents: 40 }, { planned_cents: 700, planned_state: 'planned', planned_active_cents: 700 }, {}], { parent_id: 20 }),   // …and its child
         row(30, [{ actual_cents: 9000 }, {}, {}], { is_investment: true }),
       ],
       section_totals: row(-1, [{ actual_cents: 10040 }, { actual_cents: 2100, expected_cents: 1200 }, { actual_cents: 300 }], { category_id: null }),

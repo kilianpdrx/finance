@@ -68,7 +68,7 @@ async def create_profile(body: ProfileCreate, db: AsyncSession = Depends(get_db)
 async def update_profile(profile_id: int, body: ProfileUpdate, db: AsyncSession = Depends(get_db)):
     p = await db.get(Profile, profile_id)
     if not p:
-        raise HTTPException(404, "Profile not found")
+        raise HTTPException(404, "Profil introuvable")
     for field, val in body.model_dump(exclude_unset=True).items():
         setattr(p, field, val)
     await db.commit()
@@ -80,7 +80,7 @@ async def update_profile(profile_id: int, body: ProfileUpdate, db: AsyncSession 
 async def delete_profile(profile_id: int, db: AsyncSession = Depends(get_db)):
     p = await db.get(Profile, profile_id)
     if not p:
-        raise HTTPException(404, "Profile not found")
+        raise HTTPException(404, "Profil introuvable")
     count = (await db.execute(select(func.count(Profile.id)))).scalar()
     if p.is_default or count <= 1:
         raise HTTPException(400, "Impossible de supprimer le profil par défaut")

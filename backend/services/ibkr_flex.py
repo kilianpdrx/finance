@@ -283,64 +283,6 @@ def _attr_date(a: dict, *keys: str) -> str | None:
     return None
 
 
-def parse_dividends(xml_text: str) -> dict:
-    """Parse the dividend-related sections an IBKR Flex statement may carry.
-
-    Handles three shapes (a query can include any subset):
-      • CashTransaction (type contains "Dividend" or "Withholding Tax") → realised cash.
-      • OpenDividendAccrual / ChangeInDividendAccrual → upcoming / accrued amounts.
-    Returns {events, accruals, sections} — purely for assessment, no DB writes.
-    """
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError as e:
-        raise FlexError(f"Relevé dividendes IBKR illisible: {e}", kind="parse")
-
-    sections: dict[str, int] = {}
-    for el in root.iter():
-        if el.tag in (
-            "CashTransaction", "OpenDividendAccrual", "ChangeInDividendAccrual",
-            "OpenPosition", "Trade",
-        ):
-            sections[el.tag] = sections.get(el.tag, 0) + 1
-
-    events: list[dict] = []
-    for ct in root.iter("CashTransaction"):
-        a = ct.attrib
-        ttype = (a.get("type") or "").strip()
-        if "Dividend" not in ttype and "Withholding" not in ttype:
-            continue
-        events.append({
-            "symbol": (a.get("symbol") or "").strip().upper() or None,
-            "isin": (a.get("isin") or "").strip() or None,
-            "description": (a.get("description") or "").strip(),
-            "type": ttype,
-            "date": _attr_date(a, "dateTime", "settleDate", "reportDate"),
-            "amount": _float(a.get("amount")),
-            "currency": (a.get("currency") or "").strip() or None,
-        })
-
-    accruals: list[dict] = []
-    for tag in ("OpenDividendAccrual", "ChangeInDividendAccrual"):
-        for ac in root.iter(tag):
-            a = ac.attrib
-            accruals.append({
-                "kind": tag,
-                "symbol": (a.get("symbol") or "").strip().upper() or None,
-                "isin": (a.get("isin") or "").strip() or None,
-                "ex_date": _attr_date(a, "exDate"),
-                "pay_date": _attr_date(a, "payDate"),
-                "quantity": _float(a.get("quantity")),
-                "gross_rate": _float(a.get("grossRate")),
-                "gross_amount": _float(a.get("grossAmount")),
-                "tax": _float(a.get("tax")),
-                "net_amount": _float(a.get("netAmount")),
-                "currency": (a.get("currency") or "").strip() or None,
-            })
-
-    return {"events": events, "accruals": accruals, "sections": sections}
-
-
 # ── High-level sync (silent / auto mode) ─────────────────────────────────────
 
 async def sync_ibkr_holdings(db: AsyncSession, profile_id: int, mode: str = "auto") -> dict:

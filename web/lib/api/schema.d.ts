@@ -1240,28 +1240,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/investments/ibkr/dividends-probe": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Ibkr Dividends Probe
-         * @description PROTOTYPE / read-only: fetch an IBKR dividend Flex query and compare the
-         *     actual dividends it reports against the current yfinance estimates. Writes
-         *     nothing and does not touch the dividend cache — purely for assessment.
-         */
-        get: operations["ibkr_dividends_probe_api_investments_ibkr_dividends_probe_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/investments/accounts": {
         parameters: {
             query?: never;
@@ -1783,7 +1761,13 @@ export interface paths {
         };
         /**
          * Download Backup
-         * @description Checkpoint SQLite WAL log and stream data/finance.db as a backup file.
+         * @description A consistent copy of the database, to download.
+         *
+         *     Made with SQLite's backup function into a temporary file next to the
+         *     database, then streamed and deleted. Streaming the live file — as this used
+         *     to — could catch it in the middle of a write (the price refresh runs every
+         *     30 minutes, an import can be in progress) and hand out a damaged backup,
+         *     which only shows the day it is needed.
          */
         get: operations["download_backup_api_system_backup_get"];
         put?: never;
@@ -2335,6 +2319,22 @@ export interface components {
             planned_matched: boolean;
             /** Planned Id */
             planned_id?: number | null;
+            /**
+             * Planned Count
+             * @default 0
+             */
+            planned_count: number;
+            /**
+             * Planned State
+             * @default none
+             * @enum {string}
+             */
+            planned_state: "none" | "planned" | "confirm";
+            /**
+             * Planned Active Cents
+             * @default 0
+             */
+            planned_active_cents: number;
         };
         /** BudgetTableRow */
         BudgetTableRow: {
@@ -6196,39 +6196,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HoldingsImportConfirmResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    ibkr_dividends_probe_api_investments_ibkr_dividends_probe_get: {
-        parameters: {
-            query?: {
-                query_id?: string;
-            };
-            header?: {
-                "X-Profile-Id"?: number | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

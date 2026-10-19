@@ -79,3 +79,24 @@ def test_charts_render_png_and_font_registered():
         rc.dividend_stacked(months, [{"name": "Tech", "values_cents": [1, 2, 3]}], "EUR"),
     ):
         assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+async def test_report_xlsx_keeps_a_formula_like_label_as_text(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """A bank label is outside text: in a spreadsheet it must never run as a formula."""
+    import io
+    from openpyxl import load_workbook
+
+    pid = seed_data["profile"].id
+    label = '=HYPERLINK("https://evil.example","Cliquez")'
+    db_session.add(Transaction(profile_id=pid, account_id=seed_data["account_courant"].id, date=date(2026, 5, 2),
+                               description=label, amount_cents=999_00, currency="EUR", is_debit=True,
+                               category_id=seed_data["cat_courses"].id, import_hash="export_formula_1"))
+    await db_session.commit()
+    res = await client.get("/api/system/export/report.xlsx?date_from=2026-01-01&date_to=2026-06-30&include_investments=false",
+                           headers={"X-Profile-Id": str(pid)})
+    assert res.status_code == 200
+    wb = load_workbook(io.BytesIO(res.content))
+    cells = [c for ws in wb.worksheets for row in ws.iter_rows() for c in row if c.value == label]
+    assert cells, "the label should appear in the report"
+    assert all(c.data_type == "s" for c in cells)
+    assert not any(c.data_type == "f" for ws in wb.worksheets for row in ws.iter_rows() for c in row)

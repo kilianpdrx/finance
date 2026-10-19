@@ -15,7 +15,7 @@ import { EvolutionTab } from "@/components/budget/plan/evolution-tab";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CellTransactions } from "@/components/budget/cell-transactions";
-import { buildMonths, cellDisplayValue, cellType, mergeYears, parentSubtotalRow, selectionAmounts, signClass, yearOf, type CellSelection, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
+import { buildMonths, cellDisplayValue, cellType, emptyCell, mergeYears, parentSubtotalRow, selectionAmounts, signClass, yearOf, type CellSelection, type MergedBudget, type MergedRow, type MergedCell } from "@/lib/budget";
 import { formatCents, formatMonthLabel, deriveCurrency } from "@/lib/format";
 
 // Column geometry (must match the Tailwind widths used in the table).
@@ -328,6 +328,9 @@ function BudgetTable({ accountSel, setAccountSel }: { accountSel: CourantSelecti
             <td
               onClick={pick ? () => pickCell(pick, cell.month) : undefined}
               onDoubleClick={() => { setEditing(key); setEditValue(cell.expected_cents ? String(cell.expected_cents / 100) : ""); }}
+              title={cell.planned_count > 1 && type !== "regular" && type !== "manual"
+                ? `${cell.planned_count} dépenses planifiées ici : ouvrez le compte concerné pour confirmer ou retirer chacune.`
+                : undefined}
               className={`group/cell relative w-24 cursor-pointer px-2 py-2 text-right text-sm ${bg} ${isPicked(pick, cell.month) ? PICKED : ""}`}
             >
               {isEditing ? (
@@ -576,12 +579,9 @@ function BudgetTable({ accountSel, setAccountSel }: { accountSel: CourantSelecti
                         cells: data.months.map((m, i) => {
                           const actual = nonInvest.reduce((s, r) => s + r.cells[i].actual_cents, 0);
                           const expected = nonInvest.reduce((s, r) => s + r.cells[i].expected_cents, 0);
-                          // Include active planned forecasts (mirrors the backend totals).
-                          const planned = nonInvest.reduce((s, r) => {
-                            const c = r.cells[i];
-                            return s + (c.planned_cents !== 0 && !c.planned_matched && c.actual_cents === 0 ? c.planned_cents : 0);
-                          }, 0);
-                          return { month: m, actual_cents: actual, expected_cents: expected + planned, planned_cents: 0, planned_matched: false, planned_id: null };
+                          // Include what is still forecast (mirrors the backend totals).
+                          const planned = nonInvest.reduce((s, r) => s + r.cells[i].planned_active_cents, 0);
+                          return { ...emptyCell(m), actual_cents: actual, expected_cents: expected + planned };
                         }),
                       },
                     })}

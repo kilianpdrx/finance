@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import current_profile_id
 from models import (
-    Account, AccountBalanceSnapshot, Transaction, LoanDetails, LoanExtraPayment, Holding, ImportBatch,
+    Account, AccountBalanceSnapshot, AccountType, Transaction, LoanDetails, LoanExtraPayment, Holding, ImportBatch,
     CategoryRule, Category, BudgetEntry, PlannedExpense, Goal, Setting,
     BudgetEnvelope, BudgetEnvelopeAmount, BudgetEnvelopeCategory,
 )
@@ -48,12 +48,24 @@ async def get_account(account_id: int, db: AsyncSession = Depends(get_db), pid: 
     )
     account = result.scalar_one_or_none()
     if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="Compte introuvable")
     return account
+
+
+def _check_account_type(value) -> None:
+    """An unknown type used to reach the database and come back as a 500."""
+    if value is None:
+        return
+    known = {t.value for t in AccountType} | {t.name for t in AccountType}
+    if value not in known:
+        raise HTTPException(status_code=400, detail=(
+            f"Type de compte « {value} » inconnu. Types possibles : "
+            + ", ".join(t.value for t in AccountType) + "."))
 
 
 @router.post("", response_model=AccountOut, status_code=201)
 async def create_account(payload: AccountCreate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    _check_account_type(payload.account_type)
     account_data = payload.model_dump(exclude={"loan_details"})
     account = Account(**account_data, profile_id=pid)
     db.add(account)
@@ -82,7 +94,8 @@ async def update_account(account_id: int, payload: AccountUpdate, db: AsyncSessi
     )
     account = result.scalar_one_or_none()
     if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="Compte introuvable")
+    _check_account_type(payload.account_type)
     update_data = payload.model_dump(exclude_none=True, exclude={"loan_details"})
     for field, value in update_data.items():
         setattr(account, field, value)
@@ -109,7 +122,7 @@ async def _owned_account(db: AsyncSession, pid: int, account_id: int) -> Account
         select(Account).where(Account.id == account_id, Account.profile_id == pid)
     )).scalar_one_or_none()
     if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="Compte introuvable")
     return account
 
 
@@ -229,7 +242,7 @@ async def create_snapshot(
 ):
     acc = await db.execute(select(Account).where(Account.id == account_id, Account.profile_id == pid))
     if not acc.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="Compte introuvable")
     snap = AccountBalanceSnapshot(account_id=account_id, profile_id=pid, **payload.model_dump())
     db.add(snap)
     await db.commit()
@@ -255,7 +268,7 @@ async def delete_snapshot(
     )
     snap = result.scalar_one_or_none()
     if not snap:
-        raise HTTPException(status_code=404, detail="Snapshot not found")
+        raise HTTPException(status_code=404, detail="Relevé de solde introuvable")
     await db.delete(snap)
     await db.commit()
 
@@ -267,7 +280,7 @@ async def computed_balance(account_id: int, db: AsyncSession = Depends(get_db), 
         select(Account.id).where(Account.id == account_id, Account.profile_id == pid)
     )).scalar_one_or_none()
     if not owned:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="Compte introuvable")
     snap_result = await db.execute(
         select(AccountBalanceSnapshot)
         .where(AccountBalanceSnapshot.account_id == account_id, AccountBalanceSnapshot.profile_id == pid)

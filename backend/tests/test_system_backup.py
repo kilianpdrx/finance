@@ -5,23 +5,37 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_download_backup(client, seed_data, tmp_path, monkeypatch):
-    """Streams the database file.
+    """The download is a consistent COPY, made with SQLite's backup function —
+    not the live file, which a write could catch half-done — and the copy does
+    not stay behind.
 
     `DB_PATH` is pointed at a temp file: the endpoint reads the module-level path
     directly (not the test session), so without this the test only passes on a
-    machine that happens to have a real backend/data/finance.db — and 444s on a
-    fresh clone or in CI.
+    machine that happens to have a real backend/data/finance.db.
     """
     from routers import system
 
     db_file = tmp_path / "finance.db"
-    sqlite3.connect(db_file).close()  # a genuine (empty) SQLite file
+    con = sqlite3.connect(db_file)
+    con.execute("PRAGMA journal_mode=WAL")            # like the app's database
+    con.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, label TEXT)")
+    con.executemany("INSERT INTO t (label) VALUES (?)", [(f"ligne {i}",) for i in range(500)])
+    con.commit()                                     # left in the -wal file, not checkpointed
     monkeypatch.setattr(system, "DB_PATH", db_file)
 
     res = await client.get("/api/system/backup")
+    con.close()
     assert res.status_code == 200
     assert res.headers["content-type"] in ("application/x-sqlite3", "application/octet-stream")
     assert "finance-backup-" in res.headers.get("content-disposition", "")
+
+    downloaded = tmp_path / "downloaded.sqlite"
+    downloaded.write_bytes(res.content)
+    check = sqlite3.connect(downloaded)
+    assert check.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert check.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 500     # what was still in the -wal file too
+    check.close()
+    assert not list(tmp_path.glob("finance.backup-*"))                      # the temporary copy is gone
 
 
 @pytest.mark.asyncio
@@ -31,7 +45,7 @@ async def test_download_backup_without_database(client, tmp_path, monkeypatch):
 
     monkeypatch.setattr(system, "DB_PATH", tmp_path / "does-not-exist.db")
     res = await client.get("/api/system/backup")
-    assert res.status_code == 444
+    assert res.status_code == 404 and res.json()["detail"] == "Base de données introuvable"
 
 
 @pytest.mark.asyncio

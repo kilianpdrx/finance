@@ -433,10 +433,14 @@ class BudgetTableCell(BaseModel):
     month: str
     actual_cents: int
     expected_cents: int
-    # Planned-expense layer (forecast, separate from the manual expected adjustment).
-    planned_cents: int = 0
-    planned_matched: bool = False
-    planned_id: Optional[int] = None
+    # Planned-expense layer (forecast, separate from the manual expected adjustment),
+    # decided by the API entry by entry (`budget_full`, planned_cell).
+    planned_cents: int = 0               # every entry of the cell
+    planned_matched: bool = False        # all of them confirmed
+    planned_id: Optional[int] = None     # set when the cell holds exactly one entry
+    planned_count: int = 0
+    planned_state: Literal["none", "planned", "confirm"] = "none"
+    planned_active_cents: int = 0        # still a forecast: added to the displayed value
 
 class BudgetTableRow(BaseModel):
     category_id: Optional[int]

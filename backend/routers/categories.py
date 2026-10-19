@@ -93,7 +93,7 @@ async def get_category(category_id: int, db: AsyncSession = Depends(get_db), pid
     result = await db.execute(select(Category).where(Category.id == category_id, Category.profile_id == pid))
     cat = result.scalar_one_or_none()
     if not cat:
-        raise HTTPException(status_code=404, detail="Category not found")
+        raise HTTPException(status_code=404, detail="Catégorie introuvable")
     return cat
 
 
@@ -302,7 +302,7 @@ async def update_category(category_id: int, payload: CategoryUpdate, db: AsyncSe
     result = await db.execute(select(Category).where(Category.id == category_id, Category.profile_id == pid))
     cat = result.scalar_one_or_none()
     if not cat:
-        raise HTTPException(status_code=404, detail="Category not found")
+        raise HTTPException(status_code=404, detail="Catégorie introuvable")
     updates = payload.model_dump(exclude_unset=True)
     # Archiving/un-archiving cascades + touches rules — handled separately.
     archived = updates.pop("archived", None)
@@ -330,7 +330,7 @@ async def delete_category(category_id: int, replace_with_id: Optional[int] = Non
     result = await db.execute(select(Category).where(Category.id == category_id, Category.profile_id == pid))
     cat = result.scalar_one_or_none()
     if not cat:
-        raise HTTPException(status_code=404, detail="Category not found")
+        raise HTTPException(status_code=404, detail="Catégorie introuvable")
 
     # Find fallback category "Divers"
     fallback_id = replace_with_id
@@ -652,7 +652,7 @@ async def update_rule(rule_id: int, payload: CategoryRuleUpdate, db: AsyncSessio
     result = await db.execute(select(CategoryRule).where(CategoryRule.id == rule_id, CategoryRule.profile_id == pid))
     rule = result.scalar_one_or_none()
     if not rule:
-        raise HTTPException(status_code=404, detail="Rule not found")
+        raise HTTPException(status_code=404, detail="Règle introuvable")
     # Only what the client actually sent. `account_id: null` is meaningful — it
     # un-scopes the rule ("Tous les comptes") — so it must not be dropped like an
     # absent field; every other column is NOT NULL, so a null there is ignored.
@@ -682,14 +682,14 @@ class MergeRulesRequest(BaseModel):
 async def merge_rules(payload: MergeRulesRequest, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     """Merge multiple rules into one. All conditions are combined. Uses the oldest rule's category/account."""
     if len(payload.rule_ids) < 2:
-        raise HTTPException(status_code=400, detail="At least 2 rules required to merge")
+        raise HTTPException(status_code=400, detail="Il faut au moins deux règles pour les fusionner.")
 
     result = await db.execute(
         select(CategoryRule).where(CategoryRule.id.in_(payload.rule_ids), CategoryRule.profile_id == pid)
     )
     rules = result.scalars().all()
     if len(rules) != len(payload.rule_ids):
-        raise HTTPException(status_code=404, detail="One or more rules not found")
+        raise HTTPException(status_code=404, detail="Une ou plusieurs règles sont introuvables.")
 
     # Use the first rule as base
     first = min(rules, key=lambda r: r.id)
@@ -734,6 +734,6 @@ async def delete_rule(rule_id: int, db: AsyncSession = Depends(get_db), pid: int
     result = await db.execute(select(CategoryRule).where(CategoryRule.id == rule_id, CategoryRule.profile_id == pid))
     rule = result.scalar_one_or_none()
     if not rule:
-        raise HTTPException(status_code=404, detail="Rule not found")
+        raise HTTPException(status_code=404, detail="Règle introuvable")
     await db.delete(rule)
     await db.commit()

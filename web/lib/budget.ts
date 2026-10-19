@@ -5,24 +5,32 @@ export interface MergedCell {
   month: string;
   actual_cents: number;
   expected_cents: number;
+  /** Every planned entry of the cell, and whether all are confirmed. */
   planned_cents: number;
   planned_matched: boolean;
+  /** The entry to confirm or remove — only when the cell holds exactly one. */
   planned_id: number | null;
+  planned_count: number;
+  /** Decided by the API entry by entry, each against ITS account's transactions
+   *  (`budget_full`): the browser only sees the cell's total, which in « Tous »
+   *  mixes accounts — comparing with it offered to confirm an entry against
+   *  another account's purchase. */
+  planned_state: "none" | "planned" | "confirm";
+  /** The part still a forecast: added to the displayed value. */
+  planned_active_cents: number;
 }
 
 /** Cell classification for styling (three types + a confirm state):
  *  - "regular"  : plain actual value
  *  - "manual"   : a manual adjustment that adds on top of the actual (unchanged)
- *  - "planned"  : a forecast expense, no real transaction seen yet
- *  - "confirm"  : a transaction appeared but with a different amount than the plan
+ *  - "planned"  : a forecast expense, no real transaction seen yet for it
+ *  - "confirm"  : its account's transaction differs from the plan
  *                 → invite the user to confirm it matches the planned expense */
 export type CellType = "regular" | "manual" | "planned" | "confirm";
 
 export function cellType(cell: MergedCell): CellType {
-  const hasPlan = cell.planned_cents !== 0 && !cell.planned_matched;
-  if (hasPlan && cell.actual_cents === 0) return "planned";
-  // Exact-amount transaction auto-matches (no confirm needed); a different amount asks.
-  if (hasPlan && cell.actual_cents !== 0 && cell.actual_cents !== cell.planned_cents) return "confirm";
+  if (cell.planned_state === "confirm") return "confirm";
+  if (cell.planned_state === "planned") return "planned";
   if (cell.expected_cents !== 0) return "manual";
   return "regular";
 }
@@ -160,8 +168,15 @@ export function buildMonths(startOffset: number, endOffset: number): string[] {
  *  transaction amount instead of going blank. When there's no transaction yet the
  *  actual is 0, so a future cell still shows just its expected/planned forecast. */
 export function cellDisplayValue(cell: MergedCell, _currentMonth?: string): number {
-  const plannedActive = cell.planned_cents !== 0 && !cell.planned_matched && cell.actual_cents === 0;
-  return cell.actual_cents + cell.expected_cents + (plannedActive ? cell.planned_cents : 0);
+  return cell.actual_cents + cell.expected_cents + cell.planned_active_cents;
+}
+
+/** A cell with nothing in it. */
+export function emptyCell(month: string): MergedCell {
+  return {
+    month, actual_cents: 0, expected_cents: 0, planned_cents: 0, planned_matched: false, planned_id: null,
+    planned_count: 0, planned_state: "none", planned_active_cents: 0,
+  };
 }
 
 /** A parent's subtotal row: per-month sum of the parent's own displayed value
@@ -172,7 +187,7 @@ export function parentSubtotalRow(parent: MergedRow, children: MergedRow[], curr
     const sum =
       cellDisplayValue(pc, currentMonth) +
       children.reduce((s, ch) => s + cellDisplayValue(ch.cells[i], currentMonth), 0);
-    return { month: pc.month, actual_cents: sum, expected_cents: 0, planned_cents: 0, planned_matched: false, planned_id: null };
+    return { ...emptyCell(pc.month), actual_cents: sum };
   });
   return { ...parent, cells };
 }
@@ -184,9 +199,7 @@ export function mergeYears(responses: BudgetFullResponse[], targetMonths: string
     if (r.months.length > 0) byYear.set(yearOf(r.months[0]), r);
   }
 
-  const empty = (month: string): MergedCell => ({
-    month, actual_cents: 0, expected_cents: 0, planned_cents: 0, planned_matched: false, planned_id: null,
-  });
+  const empty = emptyCell;
   const findCell = (row: BudgetTableRow | undefined, resp: BudgetFullResponse | undefined, month: string): MergedCell => {
     if (!resp || !row) return empty(month);
     const idx = resp.months.indexOf(month);
@@ -199,6 +212,9 @@ export function mergeYears(responses: BudgetFullResponse[], targetMonths: string
       planned_cents: c.planned_cents ?? 0,
       planned_matched: c.planned_matched ?? false,
       planned_id: c.planned_id ?? null,
+      planned_count: c.planned_count ?? 0,
+      planned_state: c.planned_state ?? "none",
+      planned_active_cents: c.planned_active_cents ?? 0,
     };
   };
 

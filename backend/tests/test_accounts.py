@@ -284,3 +284,23 @@ async def test_permanent_delete_is_profile_scoped(client, db_session, seed_data,
     db_session.expire_all()
     assert (await db_session.execute(select(Account).where(Account.id == aid))).scalar_one_or_none() is not None
 
+
+
+async def test_an_unknown_account_type_is_a_clear_error(client, seed_data: dict):
+    """It used to reach the database and come back as a 500."""
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    created = await client.post("/api/accounts", headers=h, json={"name": "Prêt", "bank_name": "B", "account_type": "pret"})
+    assert created.status_code == 400 and "Type de compte « pret » inconnu" in created.json()["detail"]
+    assert "emprunt" in created.json()["detail"]
+
+    account_id = seed_data["account_courant"].id
+    updated = await client.put(f"/api/accounts/{account_id}", headers=h, json={"account_type": "livret"})
+    assert updated.status_code == 400
+    assert (await client.put(f"/api/accounts/{account_id}", headers=h, json={"account_type": "épargne"})).status_code == 200
+
+
+async def test_errors_are_in_french(client, seed_data: dict):
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+    assert (await client.get("/api/accounts/99999", headers=h)).json()["detail"] == "Compte introuvable"
+    assert (await client.delete("/api/transactions/99999", headers=h)).json()["detail"] == "Transaction introuvable"
+    assert (await client.get("/api/settings/inexistant", headers=h)).json()["detail"] == "Réglage « inexistant » introuvable"

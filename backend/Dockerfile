@@ -19,6 +19,12 @@ RUN mkdir -p /app/data
 ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION
 
+# "The current month" — and a budget amount set "from this month on" — follow
+# the user's clock, not UTC: otherwise the month changed 1–2 hours late here.
+# Set in the IMAGE because installs update by relaunching, which downloads
+# images, never a new compose file. A compose `TZ` still overrides it.
+ENV TZ=Europe/Paris
+
 EXPOSE 8000
 
 CMD ["sh", "-c", "python -m alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]

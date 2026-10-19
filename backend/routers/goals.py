@@ -167,7 +167,7 @@ async def create_goal(payload: GoalCreate, db: AsyncSession = Depends(get_db), p
 async def update_goal(goal_id: int, payload: GoalUpdate, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     goal = (await db.execute(select(Goal).where(Goal.id == goal_id, Goal.profile_id == pid))).scalar_one_or_none()
     if not goal:
-        raise HTTPException(status_code=404, detail="Goal not found")
+        raise HTTPException(status_code=404, detail="Objectif introuvable")
     # exclude_unset (not exclude_none) so the client CAN clear deadline / linked account by sending null.
     updates = payload.model_dump(exclude_unset=True)
     # Same check as create_goal: without it a goal can be re-pointed at another
@@ -191,7 +191,7 @@ async def update_goal(goal_id: int, payload: GoalUpdate, db: AsyncSession = Depe
 async def delete_goal(goal_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     goal = (await db.execute(select(Goal).where(Goal.id == goal_id, Goal.profile_id == pid))).scalar_one_or_none()
     if not goal:
-        raise HTTPException(status_code=404, detail="Goal not found")
+        raise HTTPException(status_code=404, detail="Objectif introuvable")
     await db.execute(GoalContribution.__table__.delete().where(GoalContribution.goal_id == goal_id))
     await db.delete(goal)
     await db.commit()
@@ -203,7 +203,7 @@ async def delete_goal(goal_id: int, db: AsyncSession = Depends(get_db), pid: int
 async def list_contributions(goal_id: int, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     goal = (await db.execute(select(Goal).where(Goal.id == goal_id, Goal.profile_id == pid))).scalar_one_or_none()
     if not goal:
-        raise HTTPException(404, "Goal not found")
+        raise HTTPException(404, "Objectif introuvable")
     rows = (await db.execute(
         select(GoalContribution)
         .where(GoalContribution.goal_id == goal_id)
@@ -219,7 +219,7 @@ async def add_contribution(
 ):
     goal = (await db.execute(select(Goal).where(Goal.id == goal_id, Goal.profile_id == pid))).scalar_one_or_none()
     if not goal:
-        raise HTTPException(404, "Goal not found")
+        raise HTTPException(404, "Objectif introuvable")
     if goal.linked_account_id is not None:
         raise HTTPException(400, "Cet objectif est lié à un compte ; sa progression suit le solde du compte.")
     contrib = GoalContribution(goal_id=goal_id, profile_id=pid, **payload.model_dump())
@@ -242,6 +242,6 @@ async def delete_contribution(
         )
     )).scalar_one_or_none()
     if not contrib:
-        raise HTTPException(404, "Contribution not found")
+        raise HTTPException(404, "Versement introuvable")
     await db.delete(contrib)
     await db.commit()

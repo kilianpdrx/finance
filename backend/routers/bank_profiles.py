@@ -32,7 +32,7 @@ async def get_bank_profile(profile_id: int, db: AsyncSession = Depends(get_db), 
     result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id, BankProfile.profile_id == pid))
     profile = result.scalar_one_or_none()
     if not profile:
-        raise HTTPException(status_code=404, detail="Bank profile not found")
+        raise HTTPException(status_code=404, detail="Profil bancaire introuvable")
     return profile
 
 
@@ -50,7 +50,7 @@ async def update_bank_profile(profile_id: int, payload: BankProfileUpdate, db: A
     result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id, BankProfile.profile_id == pid))
     profile = result.scalar_one_or_none()
     if not profile:
-        raise HTTPException(status_code=404, detail="Bank profile not found")
+        raise HTTPException(status_code=404, detail="Profil bancaire introuvable")
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(profile, field, value)
     await db.commit()
@@ -63,6 +63,6 @@ async def delete_bank_profile(profile_id: int, db: AsyncSession = Depends(get_db
     result = await db.execute(select(BankProfile).where(BankProfile.id == profile_id, BankProfile.profile_id == pid))
     profile = result.scalar_one_or_none()
     if not profile:
-        raise HTTPException(status_code=404, detail="Bank profile not found")
+        raise HTTPException(status_code=404, detail="Profil bancaire introuvable")
     await db.delete(profile)
     await db.commit()

@@ -770,8 +770,12 @@ async def budget_full(
         .group_by("month", Transaction.account_id, Transaction.category_id, Transaction.is_debit)
     )
     actuals: dict = defaultdict(lambda: defaultdict(int))
+    # The same, account by account: a planned expense is judged against its OWN account.
+    actuals_by_account: dict = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
     for r in rows:
-        actuals[r.category_id][r.month] += await in_table_currency(r.total, r.account_id, r.month)
+        converted = await in_table_currency(r.total, r.account_id, r.month)
+        actuals[r.category_id][r.month] += converted
+        actuals_by_account[r.category_id][r.month][r.account_id] += converted
 
     budget_filters = [BudgetEntry.month.in_(month_list), BudgetEntry.profile_id == pid]
     if account_id is not None:
@@ -797,12 +801,44 @@ async def budget_full(
         planned_filters.append(PlannedExpense.account_id.in_(parsed_acc_ids) | (PlannedExpense.account_id == None))
     else:
         planned_filters.append(PlannedExpense.account_id == None)
-    planned_rows = await db.execute(select(PlannedExpense).where(and_(*planned_filters)))
-    planned: dict = defaultdict(dict)
-    planned_amount: dict[int, int] = {}
+    planned_rows = await db.execute(select(PlannedExpense).where(and_(*planned_filters)).order_by(PlannedExpense.id))
+    # Every entry of a cell — in « Tous » there can be one per account, plus one
+    # typed in « Tous » itself. Keeping only the last one hid the others.
+    planned: dict = defaultdict(lambda: defaultdict(list))
     for p in planned_rows.scalars():
-        planned[p.category_id][p.month] = p
-        planned_amount[p.id] = await in_table_currency(p.amount_cents, p.account_id, p.month)
+        planned[p.category_id][p.month].append((p, await in_table_currency(p.amount_cents, p.account_id, p.month)))
+
+    def planned_cell(category_id: int, month: str) -> dict:
+        """The planned layer of one cell, decided entry by entry — here, not in
+        the browser, which only sees the cell's total. An entry is compared with
+        the transactions of ITS account (all of them for one typed in « Tous »):
+        in « Tous », another account's purchase used to offer to "confirm" it,
+        which hid it from its own account's table while the budget plan still
+        counted it.
+          - confirmed by the user, or met by a transaction of the same amount: done;
+          - no transaction yet: still a forecast (`planned_active_cents`);
+          - a transaction of another amount: to confirm."""
+        entries = planned[category_id].get(month, [])
+        active = 0
+        states = set()
+        for p, amount in entries:
+            own = actuals[category_id].get(month, 0) if p.account_id is None \
+                else actuals_by_account[category_id][month].get(p.account_id, 0)
+            if p.matched or own == amount:
+                continue
+            if own == 0:
+                active += amount
+                states.add("planned")
+            else:
+                states.add("confirm")
+        return dict(
+            planned_cents=sum(amount for _, amount in entries),
+            planned_matched=bool(entries) and all(p.matched for p, _ in entries),
+            planned_id=entries[0][0].id if len(entries) == 1 else None,
+            planned_count=len(entries),
+            planned_state="confirm" if "confirm" in states else "planned" if states else "none",
+            planned_active_cents=active,
+        )
 
     cats_result = await db.execute(select(Category).where(Category.profile_id == pid))
     all_cats = list(cats_result.scalars())
@@ -847,17 +883,11 @@ async def budget_full(
             for month in month_list:
                 actual = actuals[cat.id].get(month, 0)
                 expected = budgets[cat.id].get(month, 0)
-                p = planned[cat.id].get(month)
-                cells.append(BudgetTableCell(
-                    month=month, actual_cents=actual, expected_cents=expected,
-                    planned_cents=(planned_amount[p.id] if p else 0),
-                    planned_matched=(bool(p.matched) if p else False),
-                    planned_id=(p.id if p else None),
-                ))
+                layer = planned_cell(cat.id, month)
+                cells.append(BudgetTableCell(month=month, actual_cents=actual, expected_cents=expected, **layer))
                 section_totals_actual[month] += actual
                 section_totals_expected[month] += expected
-                if p and not p.matched and actual == 0:
-                    section_totals_planned[month] += planned_amount[p.id]
+                section_totals_planned[month] += layer["planned_active_cents"]
                 row_total_actual += actual
                 row_total_expected += expected
             rows_out.append(BudgetTableRow(

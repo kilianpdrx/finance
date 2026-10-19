@@ -31,7 +31,7 @@ async def get_setting(key: str, db: AsyncSession = Depends(get_db), pid: int = D
     if not setting:
         if key == "base_currency":
             return {"key": key, "value": await get_base_currency(db, pid)}
-        raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
+        raise HTTPException(status_code=404, detail=f"Réglage « {key} » introuvable")
     return {"key": setting.key, "value": None if key in SECRET_KEYS else setting.value}
 
 
@@ -39,7 +39,7 @@ async def get_setting(key: str, db: AsyncSession = Depends(get_db), pid: int = D
 async def update_setting(key: str, body: dict, db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     value = body.get("value")
     if value is None:
-        raise HTTPException(status_code=422, detail="Missing 'value' field")
+        raise HTTPException(status_code=422, detail="Le champ « value » est manquant.")
     if key == "base_currency":
         value = str(value).strip().upper()
         if value not in ALLOWED_CURRENCIES:

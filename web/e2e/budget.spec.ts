@@ -72,6 +72,39 @@ test.describe("Budget", () => {
     }
   });
 
+  test("« Tous » compare une dépense planifiée avec son propre compte", async ({ page, api }) => {
+    // 310 planned on the current account; a 13,50 subscription on ANOTHER account.
+    // « Tous » used to offer to confirm the 310 against the 13,50 — which hid it.
+    const profile = await budgetProfile(api, "Budget Tous E2E");
+    try {
+      const own = (await api.accounts()).find((a) => a.name === "Compte courant")!;
+      const joint = await api.createAccount({ name: "Compte joint", bank_name: "Banque Test" });
+      await api.importCsv(joint.id, ["Date;Libelle;Montant", `${thisMonth}-04;PRLV ABONNEMENT STREAMING;-13,50`].join("\n") + "\n");
+      const [subscription] = await api.transactions({ search: "STREAMING" });
+      await api.setCategory(subscription.id, "Abonnements");
+      await api.planExpense(own.id, "Abonnements", thisMonth, 31000);
+
+      await useProfile(page, profile.id);
+      await page.goto("/budget");
+      await expectAppReady(page);
+      const row = () => page.getByRole("row", { name: /Abonnements/ });
+
+      // « Tous »: still a forecast, added to the other account's 13,50 — nothing to confirm.
+      await expect(page.getByRole("button", { name: "Tous", exact: true })).toHaveAttribute("aria-pressed", "true");
+      await expect(row().locator("td", { hasText: "323,5" }).first()).toBeVisible();
+      await expect(page.getByTitle(/Confirmer : cette transaction correspond/)).toHaveCount(0);
+
+      // Each account shows its own part.
+      await page.getByRole("button", { name: "Compte courant", exact: true }).click();
+      await expect(row().locator("td", { hasText: "310,0" }).first()).toBeVisible();
+      await page.getByRole("button", { name: "Compte joint", exact: true }).click();
+      await expect(row().locator("td", { hasText: "13,5" }).first()).toBeVisible();
+      await expect(row().locator("td", { hasText: "310,0" })).toHaveCount(0);
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
   test("une transaction du panneau montre son libellé entier et change de catégorie", async ({ page, api }) => {
     const profile = await budgetProfile(api, "Budget édition E2E");
     try {
