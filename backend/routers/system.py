@@ -23,8 +23,28 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Ports used by the app: frontend (Next.js dev 3000) and backend (8000).
-_APP_PORTS = (3000, 8000)
+def _app_ports() -> tuple[int, ...]:
+    """Ports used by the app: frontend (3000) and backend (8000), unless start.sh
+    had to move one because another program held it (FINANCE_APP_PORTS)."""
+    try:
+        ports = tuple(int(p) for p in os.environ.get("FINANCE_APP_PORTS", "").split(",") if p.strip())
+    except ValueError:
+        ports = ()
+    return ports or (3000, 8000)
+
+
+_APP_PORTS = _app_ports()
+
+
+def _data_copied_at() -> str | None:
+    """When this data folder is a COPY of an installed app's data (made by
+    dev-data.sh, which leaves a `.copie` file): the date of the copy. The UI says
+    so on every page — two instances of the same data look exactly alike, and
+    what is typed into the copy is gone at the next refresh."""
+    try:
+        return (DB_PATH.parent / ".copie").read_text(encoding="utf-8").splitlines()[0].strip() or None
+    except (OSError, IndexError):
+        return None
 
 
 # Only processes whose command line looks like this app's own servers may be
@@ -124,7 +144,10 @@ async def version():
     reports "dev". `is_container` lets the UI tailor its update instructions
     (relaunch the app vs. restart start.sh).
     """
-    return {"version": os.getenv("APP_VERSION", "dev"), "is_container": _in_container()}
+    return {
+        "version": os.getenv("APP_VERSION", "dev"), "is_container": _in_container(),
+        "data_copied_at": _data_copied_at(),
+    }
 
 
 @router.post("/shutdown")
@@ -234,7 +257,9 @@ async def diagnostics(db: AsyncSession = Depends(get_db)):
     log_file = DB_PATH.parent / "logs" / "finance.log"
     try:
         lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
-        out["recent_logs"] = lines[-200:]
+        # A broker token may sit in an old line (see fetch_flex_statement).
+        from services.ibkr_flex import redact_secrets
+        out["recent_logs"] = [redact_secrets(line) for line in lines[-200:]]
     except OSError:
         out["recent_logs"] = []
 

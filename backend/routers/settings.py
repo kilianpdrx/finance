@@ -8,11 +8,16 @@ from services.base_currency import ALLOWED_CURRENCIES, get_base_currency
 
 router = APIRouter()
 
+# Stored like any setting, but never sent back: the browser does not need them
+# (the IBKR tab asks /investments/ibkr/status whether one is configured), and
+# whatever the API returns, a hostile page reading it would get too.
+SECRET_KEYS = frozenset({"ibkr_flex_token"})
+
 
 @router.get("")
 async def get_all_settings(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     result = await db.execute(select(Setting).where(Setting.profile_id == pid))
-    settings = {s.key: s.value for s in result.scalars()}
+    settings = {s.key: s.value for s in result.scalars() if s.key not in SECRET_KEYS}
     # Always answer with the currency the profile actually reports in, even
     # before one is stored, so no client has to guess a fallback.
     settings.setdefault("base_currency", await get_base_currency(db, pid))
@@ -27,7 +32,7 @@ async def get_setting(key: str, db: AsyncSession = Depends(get_db), pid: int = D
         if key == "base_currency":
             return {"key": key, "value": await get_base_currency(db, pid)}
         raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
-    return {"key": setting.key, "value": setting.value}
+    return {"key": setting.key, "value": None if key in SECRET_KEYS else setting.value}
 
 
 @router.put("/{key}")
@@ -49,4 +54,4 @@ async def update_setting(key: str, body: dict, db: AsyncSession = Depends(get_db
     else:
         db.add(Setting(key=key, value=str(value), profile_id=pid))
     await db.commit()
-    return {"key": key, "value": str(value)}
+    return {"key": key, "value": None if key in SECRET_KEYS else str(value)}

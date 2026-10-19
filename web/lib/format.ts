@@ -29,6 +29,8 @@ export function formatCents(cents: number, currency = "EUR", opts: MoneyOpts = {
     maximumFractionDigits: decimals,
   });
   const base = `${formatted} ${currencySymbol(currency)}`;
+  // An amount that DISPLAYS as zero takes no sign: "+0 €" and "−0 €" say nothing.
+  if (Number((abs / 100).toFixed(decimals)) === 0) return base;
   if (sign) return cents < 0 ? `−${base}` : `+${base}`;
   return cents < 0 ? `−${base}` : base;
 }

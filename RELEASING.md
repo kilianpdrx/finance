@@ -100,6 +100,11 @@ PY
 > façon de viser une autre base que celle de production. Ne lancez pas
 > `alembic upgrade head` sans ce patch, vous migreriez vos vraies données.
 
+> Pour **voir** la version en cours sur vos données avant de la publier :
+> `./dev-data.sh` puis `./start.sh` (voir `INSTALL.md`). La copie est migrée au démarrage,
+> ce qui joue aussi la migration — mais une seule fois : le test ci-dessus reste celui qui
+> vérifie qu'elle est rejouable.
+
 ### 2. Pousser
 
 ```bash

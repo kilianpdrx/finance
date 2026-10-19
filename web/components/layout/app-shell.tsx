@@ -5,6 +5,7 @@ import { Sidebar, SidebarBrand, SidebarNav } from "./sidebar";
 import { Topbar } from "./topbar";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { ConnectionBanner } from "./connection-banner";
+import { DataCopyBanner } from "./data-copy-banner";
 import { usePrivacyStore } from "@/lib/stores";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar onMenuClick={() => setMobileOpen(true)} />
         <ConnectionBanner />
+        <DataCopyBanner />
         <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
           <div className="mx-auto w-full max-w-[110rem]">{children}</div>
         </main>

@@ -142,14 +142,21 @@ async def _ensure_parent_group(db: AsyncSession, pid: int, parent: Category) -> 
     links = (await db.execute(select(BudgetEnvelopeCategory).where(
         BudgetEnvelopeCategory.category_id == parent.id, BudgetEnvelopeCategory.profile_id == pid,
     ))).scalars().all()
+    lost_a_line: set[int] = set()
     for link in links:
         taken = (await db.execute(select(BudgetEnvelopeCategory.id).where(
             BudgetEnvelopeCategory.category_id == autre.id, BudgetEnvelopeCategory.account_id == link.account_id,
         ))).scalar_one_or_none()
         if taken is None:
-            link.category_id = autre.id
+            link.category_id = autre.id        # its own amount, if any, follows
         else:
+            if link.amount_cents is not None:
+                lost_a_line.add(link.envelope_id)
             await db.delete(link)
+    if lost_a_line:
+        from services import budget_plan
+        await db.flush()
+        await budget_plan.resync_detailed_amounts(db, pid, lost_a_line)
     return autre
 
 
@@ -350,8 +357,15 @@ async def delete_category(category_id: int, replace_with_id: Optional[int] = Non
     await db.execute(update(Category).where(Category.parent_id == category_id).values(parent_id=None))
 
     # It leaves the budget plan: an envelope cannot hold a category that is gone.
+    # An envelope planned category by category loses that line of its amount.
+    from services import budget_plan
+    detailed = set((await db.execute(select(BudgetEnvelopeCategory.envelope_id).where(
+        BudgetEnvelopeCategory.category_id == category_id, BudgetEnvelopeCategory.profile_id == pid,
+        BudgetEnvelopeCategory.amount_cents.isnot(None),
+    ))).scalars())
     await db.execute(delete(BudgetEnvelopeCategory).where(
         BudgetEnvelopeCategory.category_id == category_id, BudgetEnvelopeCategory.profile_id == pid))
+    await budget_plan.resync_detailed_amounts(db, pid, detailed)
 
     # Delete associated rules first
     rules = await db.execute(select(CategoryRule).where(CategoryRule.category_id == category_id))

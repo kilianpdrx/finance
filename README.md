@@ -33,7 +33,7 @@ installé. Le détail est dans le `README.md` fourni.
 |---|---|
 | **Transactions** | Import CSV multi-banques (détection des colonnes, dédoublonnage), classement automatique par règles (repéré sur chaque ligne), édition en masse, dépenses récurrentes et libellés sans règle |
 | **Analyses** | Dépenses par catégorie, tendances mensuelles avec moyenne mobile, flux de trésorerie |
-| **Budget** | Budget annuel par catégorie, dépenses planifiées, comparaison prévu / réalisé ; plan mensuel par enveloppes (par compte), provision pour imprévus, évolution sur plusieurs mois |
+| **Budget** | Budget annuel par catégorie (un compte, ou tous convertis dans une seule devise), dépenses planifiées, comparaison prévu / réalisé ; plan mensuel par enveloppes (par compte) ou détaillé catégorie par catégorie, provision pour imprévus, évolution sur plusieurs mois |
 | **Comptes** | Courant, épargne, crédit, immobilier ; soldes manuels, patrimoine dans le temps, clôture (l'historique reste) ou suppression définitive |
 | **Investissements** | Portefeuille (actions, ETF, crypto), cours et dividendes automatiques, import de positions, synchro IBKR |
 | **Emprunts** | Amortissement, capital restant, intérêts, remboursements anticipés |
@@ -82,7 +82,8 @@ TypeScript, Next.js 15, React 19, TanStack Query, Tailwind, Recharts · Docker.
 
 ```bash
 ./start.sh                                  # API + interface en mode dev
-cd backend && python -m pytest              # 343 tests
+./dev-data.sh                               # copie les données de l'application installée (voir INSTALL.md)
+cd backend && python -m pytest              # 367 tests
 cd web && npx tsc --noEmit && npx vitest run
 cd web && npm run test:e2e                  # Playwright : démarre sa propre pile
 ```
@@ -97,8 +98,12 @@ Pour publier une version : **[RELEASING.md](RELEASING.md)**.
 L'application **n'a pas d'authentification**. C'est volontaire : elle n'est accessible que
 depuis votre propre ordinateur.
 
-- `start.sh` lie les serveurs à `127.0.0.1`.
+- `start.sh` lie les serveurs — l'API **et** l'interface — à `127.0.0.1`.
 - `docker-compose.yml` publie `127.0.0.1:3000` et **ne publie pas** le port de l'API.
+- Les autres sites ouverts dans votre navigateur restent dehors : l'interface et l'API
+  refusent une écriture venue d'un autre site, et ne répondent qu'aux noms `localhost` et
+  `127.0.0.1` (ce qui bloque le « DNS rebinding »). Voir `backend/request_guard.py`.
+- Le jeton IBKR n'est jamais renvoyé au navigateur ni écrit dans le journal.
 
 Quiconque peut atteindre un port publié a un accès complet en lecture et en écriture à tous
 les profils. Ne retirez donc pas le préfixe `127.0.0.1:`, ne publiez pas le port 8000, et ne

@@ -56,7 +56,7 @@ export function BudgetPlanWidget() {
           {plan.envelopes.map((e) => (
             <li key={e.id} className="min-w-0 space-y-1.5">
               <p className="truncate text-sm font-medium">{e.name}</p>
-              <EnvelopeBar kind={e.kind} realised={e.realised_cents} target={e.target_cents} pace={pace} currency={plan.currency} compact />
+              <EnvelopeBar kind={e.kind} realised={e.realised_cents} target={e.amount_cents} pace={pace} currency={plan.currency} compact />
             </li>
           ))}
         </ul>

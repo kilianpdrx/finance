@@ -1,7 +1,7 @@
 from __future__ import annotations
 import datetime as _dt
 from datetime import date, datetime
-from typing import Literal, Optional, List
+from typing import Dict, Literal, Optional, List
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -498,6 +498,11 @@ class BudgetFullResponse(BaseModel):
     reste_row: BudgetTableRow
     grand_total_row: BudgetTableRow
     account_id: Optional[int] = None
+    # The currency every amount is in: the account's, or — several accounts — the
+    # one they share, else the base currency (each month converted at its rate).
+    currency: str = "EUR"
+    # A rate was missing: some amounts were added without being converted.
+    fx_incomplete: bool = False
 
 
 # ── Budget plan (envelopes) ──────────────────────────────────────────────────
@@ -511,6 +516,10 @@ class EnvelopeIn(BaseModel):
     kind: EnvelopeKind
     amount_cents: int = Field(default=0, ge=0)
     category_ids: List[int] = []
+    # The detail: what is planned for a category alone, {category_id: cents}.
+    # With at least one, the envelope's amount is their sum and `amount_cents`
+    # is not read (a category left out counts for 0).
+    category_amounts: Optional[Dict[int, int]] = None
 
 
 class BudgetPlanIn(BaseModel):
@@ -521,14 +530,44 @@ class EnvelopeAmountIn(BaseModel):
     amount_cents: int = Field(ge=0)
 
 
+class EnvelopeCategoryOut(BaseModel):
+    """One category of an envelope, read like the envelope itself."""
+    category_id: int
+    amount_cents: Optional[int]       # None: no amount of its own
+    planned_cents: int                # « Planifier » entries of the month: a note, in no amount
+    realised_cents: int
+    typical_cents: Optional[int]
+    average_cents: Optional[int]
+    last_month_cents: Optional[int]
+
+
+class PlannedEntryOut(BaseModel):
+    """A « Planifier » entry of the month shown, behind `planned_cents`."""
+    id: int
+    category_id: int
+    amount_cents: int
+
+
+class CategoryStatsOut(BaseModel):
+    """What a category did on this account, to choose its amount knowingly."""
+    category_id: int
+    typical_cents: Optional[int]
+    average_cents: Optional[int]
+    last_month_cents: Optional[int]
+
+
 class EnvelopeOut(BaseModel):
     id: Optional[int]                 # None in a proposal (nothing saved yet)
     name: str
     kind: EnvelopeKind
     category_ids: List[int]
     amount_cents: int                 # in force for the month shown
-    planned_extra_cents: int          # « Planifier » entries of that month, added to the target
-    target_cents: int
+    detailed: bool                    # the amount is the sum of its categories' amounts
+    categories: List[EnvelopeCategoryOut]
+    # « Planifier » entries of that month in its categories. A note: the month
+    # is compared with `amount_cents` alone.
+    planned_cents: int
+    planned: List[PlannedEntryOut]
     realised_cents: int
     # From the last 12 full months of this account (None without any).
     typical_cents: Optional[int]

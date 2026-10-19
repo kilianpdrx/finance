@@ -13,6 +13,7 @@ The Flex flow is a 2-step handshake:
 """
 
 import asyncio
+import re
 import logging
 import xml.etree.ElementTree as ET
 from datetime import date, datetime
@@ -146,13 +147,36 @@ async def _get_statement(client: httpx.AsyncClient, statement_url: str, ref: str
 
 
 async def fetch_flex_statement(token: str, query_id: str) -> str:
-    """Full handshake + poll. Returns the raw statement XML. Raises FlexError."""
+    """Full handshake + poll. Returns the raw statement XML. Raises FlexError —
+    and only FlexError.
+
+    The Flex service takes the token as a query parameter (`t=`), so an httpx
+    error names it: "Server error '503' for url '…SendRequest?t=<token>…'". Left
+    to propagate, that went into finance.log, and from there into the
+    diagnostics export meant to be sent to someone. Every network error is
+    therefore restated without its URL, and `from None` keeps the original out
+    of the traceback too."""
     if not token or not query_id:
         raise FlexError("Token ou identifiant de requête IBKR non configuré", kind="config")
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-        ref, url = await _send_request(client, token, query_id)
-        await asyncio.sleep(INITIAL_WAIT_SECONDS)
-        return await _get_statement(client, url, ref, token)
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+            ref, url = await _send_request(client, token, query_id)
+            await asyncio.sleep(INITIAL_WAIT_SECONDS)
+            return await _get_statement(client, url, ref, token)
+    except httpx.HTTPStatusError as e:
+        raise FlexError(f"IBKR a répondu {e.response.status_code}", kind="transient") from None
+    except httpx.HTTPError as e:
+        raise FlexError(f"IBKR injoignable ({type(e).__name__})", kind="transient") from None
+
+
+# A Flex token in a URL's query string: `…?t=123456…&q=…`.
+_TOKEN_IN_URL = re.compile(r"([?&]t=)[^&\s'\"]+")
+
+
+def redact_secrets(text: str) -> str:
+    """Mask any Flex token a URL carries — for log lines written before
+    `fetch_flex_statement` stopped letting them through."""
+    return _TOKEN_IN_URL.sub(r"\1•••", text)
 
 
 # ── Statement parsing ────────────────────────────────────────────────────────

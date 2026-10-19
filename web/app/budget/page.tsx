@@ -61,8 +61,10 @@ export default function BudgetPage() {
     if (account) setAccountSel(account);
   }, []);
 
-  // A plan is per account: with a single current account there is nothing to choose.
-  const planAccount = accountSel !== "all" ? courant.find((a) => a.id === accountSel) : courant.length === 1 ? courant[0] : undefined;
+  // A plan is per account, in its currency: there is no « Tous » to show there.
+  // Coming from the table on « Tous », the first account is shown (the table
+  // keeps its own selection for when you go back).
+  const planAccount = (accountSel !== "all" ? courant.find((a) => a.id === accountSel) : undefined) ?? courant[0];
 
   return (
     <div className="space-y-4">
@@ -78,29 +80,22 @@ export default function BudgetPage() {
         <BudgetTable accountSel={accountSel} setAccountSel={setAccountSel} />
       ) : (
         <>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">
-              {view === "plan"
-                ? "Quelques enveloppes et un montant par mois : ce que vous prévoyez, face à ce qui se passe. Par compte, dans sa devise."
-                : "Le plan mois après mois : cliquez une ligne pour voir sa courbe."}
-            </p>
-            <CourantTabs accounts={accounts} value={accountSel} onChange={setAccountSel} />
-          </div>
+          {/* Only rendered when there is an account to choose: alone, it would be an empty gap. */}
+          {planAccount && courant.length > 1 && (
+            <div className="flex justify-end">
+              <CourantTabs accounts={accounts} value={planAccount.id} onChange={setAccountSel} withAll={false} />
+            </div>
+          )}
           {planAccount ? (
             view === "plan"
               ? <PlanTab key={planAccount.id} accountId={planAccount.id} accountName={planAccount.name} />
               : <EvolutionTab key={planAccount.id} accountId={planAccount.id} />
           ) : (
             <Card className="space-y-3 p-6 text-center">
-              <p className="text-sm font-medium">{courant.length === 0 ? "Aucun compte courant" : "Choisissez un compte"}</p>
+              <p className="text-sm font-medium">Aucun compte courant</p>
               <p className="mx-auto max-w-md text-xs text-muted-foreground">
-                {courant.length === 0
-                  ? "Le plan de budget se fait sur un compte courant : créez-en un dans la page Comptes."
-                  : "Le plan se fait compte par compte, chacun dans sa devise : il n'y a pas de plan « tous comptes »."}
+                Le plan de budget se fait sur un compte courant : créez-en un dans la page Comptes.
               </p>
-              <div className="flex flex-wrap justify-center gap-2">
-                {courant.map((a) => <Button key={a.id} variant="outline" size="sm" onClick={() => setAccountSel(a.id)}>{a.name}</Button>)}
-              </div>
             </Card>
           )}
         </>
@@ -133,7 +128,6 @@ function BudgetTable({ accountSel, setAccountSel }: { accountSel: CourantSelecti
   const targetMonths = useMemo(() => buildMonths(range.start, range.end), [range]);
   const years = useMemo(() => Array.from(new Set(targetMonths.map(yearOf))).map(Number).sort(), [targetMonths]);
 
-  const currency = deriveCurrency(courant, accountId != null ? [accountId] : null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pendingPrepend = useRef(0);
   const extending = useRef(false);
@@ -191,11 +185,18 @@ function BudgetTable({ accountSel, setAccountSel }: { accountSel: CourantSelecti
     })),
   });
 
-  const data: MergedBudget | null = useMemo(() => {
-    const resp = results.map((r) => r.data).filter(Boolean) as BudgetFullResponse[];
-    return resp.length ? mergeYears(resp, targetMonths) : null;
+  const responses = useMemo(
+    () => results.map((r) => r.data).filter(Boolean) as BudgetFullResponse[],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results.map((r) => r.dataUpdatedAt).join(","), targetMonths]);
+    [results.map((r) => r.dataUpdatedAt).join(",")],
+  );
+  const data: MergedBudget | null = useMemo(() => (responses.length ? mergeYears(responses, targetMonths) : null), [responses, targetMonths]);
+  // The API says which currency its amounts are in: the account's, or — several
+  // accounts — the one they share, else the base currency, each month converted
+  // at its own rate. Until it answers, the same guess the API will make.
+  const currency = responses[0]?.currency ?? deriveCurrency(courant, accountId != null ? [accountId] : null);
+  const converted = accountId == null ? Array.from(new Set(courant.map((a) => a.currency))).filter((c) => c !== currency) : [];
+  const fxIncomplete = responses.some((r) => r.fx_incomplete);
   // Only block the whole table on the very first load — extensions fill in place.
   const loading = !data;
   // The selected cell's amounts, read from the current data so the panel follows
@@ -493,6 +494,14 @@ function BudgetTable({ accountSel, setAccountSel }: { accountSel: CourantSelecti
           <Button size="sm" onClick={() => openPlan()}><CalendarPlus className="mr-1.5 size-4" /> Planifier</Button>
         </div>
       </div>
+
+      {converted.length > 0 && (
+        <p role="note" className={`rounded-lg px-3 py-2 text-xs ${fxIncomplete ? "bg-warning/15 text-foreground" : "bg-muted/60 text-muted-foreground"}`}>
+          « Tous » additionne des comptes de devises différentes : les montants en {converted.join(", ")} sont convertis en {currency},
+          chaque mois à son propre taux. Un ajustement ou une dépense planifiée saisis ici sont en {currency}.
+          {fxIncomplete && <span className="font-medium"> Il manque un taux de change : certains montants sont additionnés sans être convertis.</span>}
+        </p>
+      )}
 
       {/* Table on the left; on the right, the transactions of the clicked cell. */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">

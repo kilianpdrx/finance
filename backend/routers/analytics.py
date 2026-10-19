@@ -733,19 +733,45 @@ async def budget_full(
     elif parsed_acc_ids:
         txn_filters.append(Transaction.account_id.in_(parsed_acc_ids))
 
+    # One account reads in its own currency, untouched. Several accounts only add
+    # up once they are in ONE currency: the one they all share, else the base
+    # currency — each (account, month) bucket converted at that month's rate, like
+    # every other flow. Adding raw cents made 100 CHF + 100 € read as "200 €".
+    acc_ccys = await _load_account_currencies(db, None, pid)
+    if account_id is not None:
+        scope_ccys = {acc_ccys.get(account_id, "EUR")}
+    else:
+        scope_ccys = {ccy for aid, ccy in acc_ccys.items() if not parsed_acc_ids or aid in parsed_acc_ids}
+    currency = next(iter(scope_ccys)) if len(scope_ccys) == 1 else await get_base_currency(db, pid)
+    rates = RateCache()
+    fx_incomplete = False
+
+    async def in_table_currency(cents: int, from_account: Optional[int], month: str) -> int:
+        """An amount of `from_account` (None: typed in the all-accounts view, so
+        already in the table's currency) as the table shows it."""
+        nonlocal fx_incomplete
+        ccy = currency if from_account is None else acc_ccys.get(from_account, currency)
+        if ccy == currency:
+            return cents
+        converted, ok = await rates.convert_checked(db, cents, ccy, currency, _month_end(month))
+        if not ok:
+            fx_incomplete = True
+        return converted
+
     rows = await db.execute(
         select(
             func.strftime("%Y-%m", Transaction.date).label("month"),
+            Transaction.account_id,
             Transaction.category_id,
             Transaction.is_debit,
             func.sum(Transaction.amount_cents).label("total"),
         )
         .where(and_(*txn_filters))
-        .group_by("month", Transaction.category_id, Transaction.is_debit)
+        .group_by("month", Transaction.account_id, Transaction.category_id, Transaction.is_debit)
     )
     actuals: dict = defaultdict(lambda: defaultdict(int))
     for r in rows:
-        actuals[r.category_id][r.month] += r.total
+        actuals[r.category_id][r.month] += await in_table_currency(r.total, r.account_id, r.month)
 
     budget_filters = [BudgetEntry.month.in_(month_list), BudgetEntry.profile_id == pid]
     if account_id is not None:
@@ -760,7 +786,7 @@ async def budget_full(
     )
     budgets: dict = defaultdict(lambda: defaultdict(int))
     for b in budget_rows.scalars():
-        budgets[b.category_id][b.month] = b.expected_amount_cents
+        budgets[b.category_id][b.month] = await in_table_currency(b.expected_amount_cents, b.account_id, b.month)
 
     # Planned expenses (forecast layer) — same account scoping as budgets.
     from models import PlannedExpense
@@ -773,8 +799,10 @@ async def budget_full(
         planned_filters.append(PlannedExpense.account_id == None)
     planned_rows = await db.execute(select(PlannedExpense).where(and_(*planned_filters)))
     planned: dict = defaultdict(dict)
+    planned_amount: dict[int, int] = {}
     for p in planned_rows.scalars():
         planned[p.category_id][p.month] = p
+        planned_amount[p.id] = await in_table_currency(p.amount_cents, p.account_id, p.month)
 
     cats_result = await db.execute(select(Category).where(Category.profile_id == pid))
     all_cats = list(cats_result.scalars())
@@ -822,14 +850,14 @@ async def budget_full(
                 p = planned[cat.id].get(month)
                 cells.append(BudgetTableCell(
                     month=month, actual_cents=actual, expected_cents=expected,
-                    planned_cents=(p.amount_cents if p else 0),
+                    planned_cents=(planned_amount[p.id] if p else 0),
                     planned_matched=(bool(p.matched) if p else False),
                     planned_id=(p.id if p else None),
                 ))
                 section_totals_actual[month] += actual
                 section_totals_expected[month] += expected
                 if p and not p.matched and actual == 0:
-                    section_totals_planned[month] += p.amount_cents
+                    section_totals_planned[month] += planned_amount[p.id]
                 row_total_actual += actual
                 row_total_expected += expected
             rows_out.append(BudgetTableRow(
@@ -915,4 +943,6 @@ async def budget_full(
         reste_row=reste_row,
         grand_total_row=grand_total_row,
         account_id=account_id,
+        currency=currency,
+        fx_incomplete=fx_incomplete,
     )

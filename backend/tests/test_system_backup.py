@@ -118,6 +118,32 @@ async def test_version_defaults_to_dev(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_version_says_when_the_data_is_a_copy(client, monkeypatch, tmp_path):
+    """dev-data.sh leaves a `.copie` file next to the database it copied: the UI
+    shows it on every page, because the copy looks exactly like the real app."""
+    import routers.system as system
+
+    monkeypatch.setattr(system, "DB_PATH", tmp_path / "finance.db")
+    assert (await client.get("/api/system/version")).json()["data_copied_at"] is None
+
+    (tmp_path / ".copie").write_text("2026-10-11T21:40\n/somewhere/data\n", encoding="utf-8")
+    assert (await client.get("/api/system/version")).json()["data_copied_at"] == "2026-10-11T21:40"
+
+
+def test_app_ports_follow_start_sh(monkeypatch):
+    """start.sh moves a port another program holds, and says which ones it used —
+    the in-app stop button must free THOSE, not 3000 and 8000 by habit."""
+    import routers.system as system
+
+    monkeypatch.delenv("FINANCE_APP_PORTS", raising=False)
+    assert system._app_ports() == (3000, 8000)
+    monkeypatch.setenv("FINANCE_APP_PORTS", "3001,8000")
+    assert system._app_ports() == (3001, 8000)
+    monkeypatch.setenv("FINANCE_APP_PORTS", "pas-un-port")
+    assert system._app_ports() == (3000, 8000)
+
+
+@pytest.mark.asyncio
 async def test_diagnostics_has_shape_but_no_financial_content(client, seed_data, db_session):
     """The export is meant to be sent to someone else, so it must describe the
     shape of the data (counts, versions, cache freshness) and never its content."""
@@ -164,7 +190,7 @@ async def test_unhandled_error_returns_french_message_and_reference(test_engine)
 
     try:
         transport = ASGITransport(app=main.app, raise_app_exceptions=False)
-        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        async with AsyncClient(transport=transport, base_url="http://127.0.0.1") as ac:
             res = await ac.get("/api/_boom_test")
         assert res.status_code == 500
         body = res.json()

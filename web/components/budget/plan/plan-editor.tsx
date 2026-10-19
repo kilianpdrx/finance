@@ -9,13 +9,17 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchBudgetProposal, previewBudgetPlan, useBudgetPlanMutations, useCategories, type Category } from "@/lib/api/hooks";
+import { fetchBudgetProposal, previewBudgetPlan, useBudgetCategoryStats, useBudgetPlanMutations, useCategories, type Category } from "@/lib/api/hooks";
 import {
-  AMOUNT_LABEL, amountToCents, centsToAmount, draftsFromPlan, draftsToPayload, eligibleCategories, fitsKind, moveCategory,
-  planTotals, type BudgetPlan, type DraftEnvelope, type EnvelopeKind,
+  AMOUNT_LABEL, centsToAmount, draftAmountCents, draftsFromPlan, draftsToPayload, eligibleCategories, fitsKind, isDetailed,
+  moveCategory, planTotals, type BudgetPlan, type DraftEnvelope, type EnvelopeKind,
 } from "@/lib/budget-plan";
 import { currencySymbol, formatCents } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { PlanSheet } from "./plan-sheet";
+
+/** The editor's two ways to look at the same plan. */
+export type PlanEditorView = "envelopes" | "sheet";
 
 interface Stats { typical: number | null; average: number | null }
 
@@ -31,7 +35,11 @@ const KIND_CHOICES: { value: EnvelopeKind; label: string; hint: string }[] = [
  *  from its last twelve months — which is only a starting point: nothing exists
  *  until « Enregistrer ». Each envelope shows a typical month for the categories
  *  it currently holds (recomputed when they move), so the amount is chosen
- *  knowingly rather than guessed. */
+ *  knowingly rather than guessed.
+ *
+ *  Two views of one working copy: « Enveloppes » to shape them (names, kinds,
+ *  which categories), « Détail par catégorie » to plan line by line, as in a
+ *  sheet. An envelope with lines is their sum. */
 export function PlanEditor({
   open,
   onOpenChange,
@@ -39,6 +47,7 @@ export function PlanEditor({
   accountName,
   currency,
   plan,
+  initialView = "envelopes",
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -47,9 +56,14 @@ export function PlanEditor({
   currency: string;
   /** The saved plan, when there is one. */
   plan: BudgetPlan | undefined;
+  /** The view to open on. */
+  initialView?: PlanEditorView;
 }) {
   const { data: categories = [] } = useCategories();
   const { save } = useBudgetPlanMutations();
+  const { data: categoryStats = [] } = useBudgetCategoryStats(accountId, open);
+  const statsById = useMemo(() => new Map(categoryStats.map((c) => [c.category_id, c])), [categoryStats]);
+  const [view, setView] = useState<PlanEditorView>(initialView);
   const [drafts, setDrafts] = useState<DraftEnvelope[] | null>(null);
   const [stats, setStats] = useState<Record<string, Stats>>({});
   const [proposed, setProposed] = useState(false);
@@ -67,6 +81,7 @@ export function PlanEditor({
       setStats(Object.fromEntries(initial.map((d, i) => [d.key, { typical: source.envelopes[i].typical_cents ?? null, average: source.envelopes[i].average_cents ?? null }])));
     };
     setDrafts(null);
+    setView(initialView);
     if (plan?.exists) start(plan, false);
     else fetchBudgetProposal(accountId).then((p) => start(p, true)).catch((e) => {
       if (!cancelled) { toast.error(e instanceof Error ? e.message : "Erreur"); setDrafts([]); setProposed(false); }
@@ -103,7 +118,7 @@ export function PlanEditor({
     patch(d.key, { kind, categoryIds: d.categoryIds.filter((id) => { const c = byId.get(id); return c ? fitsKind(c, kind) : false; }) });
   const move = (categoryId: number, toKey: string | null) => setDrafts((ds) => moveCategory(ds ?? [], categoryId, toKey));
   const add = (kind: EnvelopeKind) =>
-    setDrafts((ds) => [...(ds ?? []), { key: `n${nextKey.current++}`, id: null, name: kind === "unplanned" ? "Imprévus" : "", kind, amount: "", categoryIds: [] }]);
+    setDrafts((ds) => [...(ds ?? []), { key: `n${nextKey.current++}`, id: null, name: kind === "unplanned" ? "Imprévus" : "", kind, amount: "", categoryIds: [], categoryAmounts: {} }]);
   const remove = (key: string) => setDrafts((ds) => (ds ?? []).filter((d) => d.key !== key));
   const shift = (index: number, by: -1 | 1) =>
     setDrafts((ds) => {
@@ -114,7 +129,7 @@ export function PlanEditor({
       return next;
     });
 
-  const totals = planTotals((drafts ?? []).map((d) => ({ kind: d.kind, target_cents: amountToCents(d.amount) })));
+  const totals = planTotals((drafts ?? []).map((d) => ({ kind: d.kind, amount_cents: draftAmountCents(d) })));
   const unnamed = (drafts ?? []).some((d) => !d.name.trim());
   const hasProvision = (drafts ?? []).some((d) => d.kind === "unplanned");
 
@@ -155,20 +170,36 @@ export function PlanEditor({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] max-w-3xl flex-col">
-        <DialogHeader className="shrink-0">
+      {/* Escape does not close it: reached for to leave a field or a list, it
+          would throw the whole plan away. Annuler, Enregistrer, the ✕ and a click
+          outside do. A list opened inside still closes on Escape — it is the top
+          layer and takes the key itself. */}
+      <DialogContent onEscapeKeyDown={(e) => e.preventDefault()}
+        className={cn("flex max-h-[90vh] flex-col", view === "sheet" ? "max-w-5xl" : "max-w-3xl")}>
+        <DialogHeader className="shrink-0 flex-row flex-wrap items-center gap-x-4 gap-y-2 pr-8">
           <DialogTitle>Plan de budget · {accountName}</DialogTitle>
+          <div role="tablist" aria-label="Vue du plan" className="inline-flex rounded-lg border border-border bg-surface p-0.5 text-sm">
+            {([["envelopes", "Enveloppes"], ["sheet", "Détail par catégorie"]] as const).map(([value, label]) => (
+              <button key={value} type="button" role="tab" aria-selected={view === value} onClick={() => setView(value)}
+                className={cn("rounded-md px-3 py-1 font-medium transition-colors", view === value ? "bg-brand/15 text-brand" : "text-muted-foreground hover:text-foreground")}>
+                {label}
+              </button>
+            ))}
+          </div>
         </DialogHeader>
 
         <div className="flex-1 space-y-3 overflow-y-auto px-1">
           {drafts === null ? (
             <Skeleton className="h-64 w-full" />
+          ) : view === "sheet" ? (
+            <PlanSheet drafts={drafts} onChange={setDrafts} byId={byId} unassigned={unassigned} stats={statsById} currency={currency} />
           ) : (
             <>
               {proposed && (
                 <p className="rounded-lg bg-brand/10 px-3 py-2 text-xs text-foreground">
                   Proposition de départ, calculée sur les 12 derniers mois de ce compte : chaque montant est un mois type.
-                  Divisez « Dépenses variables » en autant d&apos;enveloppes que vous voulez, puis enregistrez. Rien n&apos;existe avant.
+                  Divisez « Dépenses variables » en autant d&apos;enveloppes que vous voulez, ou prévoyez ligne par ligne dans
+                  « Détail par catégorie », puis enregistrez. Rien n&apos;existe avant.
                 </p>
               )}
 
@@ -190,11 +221,20 @@ export function PlanEditor({
                           </SelectContent>
                         </Select>
                       )}
-                      <div className="flex items-center gap-1.5">
-                        <Input aria-label={`Montant mensuel (${AMOUNT_LABEL[d.kind]})`} inputMode="decimal" value={d.amount} placeholder="0"
-                          onChange={(e) => patch(d.key, { amount: e.target.value })} className="nums w-28 text-right" />
-                        <span className="text-xs text-muted-foreground">{currencySymbol(currency)} / mois</span>
-                      </div>
+                      {isDetailed(d) ? (
+                        // Planned line by line: the amount is their sum, edited in the sheet.
+                        <button type="button" onClick={() => setView("sheet")} title="La somme des montants par catégorie — ouvrir le détail"
+                          className="flex items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-sm hover:border-brand">
+                          <span className="nums blurable font-semibold">{formatCents(draftAmountCents(d), currency)}</span>
+                          <span className="text-xs text-muted-foreground">/ mois · détaillé</span>
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <Input aria-label={`Montant mensuel (${AMOUNT_LABEL[d.kind]})`} inputMode="decimal" value={d.amount} placeholder="0"
+                            onChange={(e) => patch(d.key, { amount: e.target.value })} className="nums w-28 text-right" />
+                          <span className="text-xs text-muted-foreground">{currencySymbol(currency)} / mois</span>
+                        </div>
+                      )}
                       <div className="flex shrink-0 items-center">
                         <Button variant="ghost" size="icon" className="size-8" aria-label="Monter" disabled={index === 0} onClick={() => shift(index, -1)}><ArrowUp className="size-4" /></Button>
                         <Button variant="ghost" size="icon" className="size-8" aria-label="Descendre" disabled={index === drafts.length - 1} onClick={() => shift(index, 1)}><ArrowDown className="size-4" /></Button>
@@ -208,10 +248,12 @@ export function PlanEditor({
                         <>
                           <span>· mois type <span className="nums blurable font-medium text-foreground">{formatCents(s.typical, currency)}</span></span>
                           {s.average != null && s.average !== s.typical && <span>· moyenne <span className="nums blurable">{formatCents(s.average, currency)}</span></span>}
-                          <button type="button" className="text-brand hover:underline"
-                            onClick={() => patch(d.key, { amount: centsToAmount(Math.round(s.typical! / 100) * 100) })}>
-                            Utiliser le mois type
-                          </button>
+                          {!isDetailed(d) && (
+                            <button type="button" className="text-brand hover:underline"
+                              onClick={() => patch(d.key, { amount: centsToAmount(Math.round(s.typical! / 100) * 100) })}>
+                              Utiliser le mois type
+                            </button>
+                          )}
                         </>
                       )}
                     </p>

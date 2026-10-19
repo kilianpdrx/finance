@@ -291,7 +291,11 @@ class BudgetEnvelope(Base):
 class BudgetEnvelopeCategory(Base):
     """A category's place in an account's plan. `account_id` repeats the
     envelope's so the database itself refuses a category in two envelopes of
-    the same account."""
+    the same account.
+
+    `amount_cents` is what is planned for this category alone — NULL when the
+    envelope is planned as one amount. As soon as one category of an envelope
+    has an amount, the envelope's amount is the sum of them (a blank one is 0)."""
     __tablename__ = "budget_envelope_categories"
 
     id = Column(Integer, primary_key=True)
@@ -299,6 +303,7 @@ class BudgetEnvelopeCategory(Base):
     envelope_id = Column(Integer, ForeignKey("budget_envelopes.id"), nullable=False)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    amount_cents = Column(Integer, nullable=True)
 
     __table_args__ = (UniqueConstraint("account_id", "category_id", name="uq_envelope_category_per_account"),)
 

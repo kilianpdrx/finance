@@ -130,3 +130,69 @@ async def test_closed_account_keeps_its_history(client: AsyncClient, db_session:
 
     after = total_for((await client.get("/api/analytics/by-category", headers=h)).json())
     assert after == before, "closing an account must not retroactively change spending history"
+
+
+# ── The budget table ────────────────────────────────────────────────────────
+
+def _budget_cell(table: dict, category_id: int, month: str) -> dict:
+    row = next(r for s in table["sections"] for r in s["rows"] if r["category_id"] == category_id)
+    return next(c for c in row["cells"] if c["month"] == month)
+
+
+async def test_budget_all_accounts_converts_each_month(client: AsyncClient, usd_flows: dict, seed_data: dict):
+    """« Tous » adds accounts up only once they are in one currency. It used to
+    add raw cents: 10 $ + 10 € read as "20 €"."""
+    cat, usd, eur = usd_flows["cat"].id, usd_flows["usd"].id, seed_data["account_courant"].id
+    table = (await client.get("/api/analytics/budget-full",
+                              params={"year": 2026, "account_ids": f"{eur},{usd}"})).json()
+    assert table["currency"] == "EUR" and table["fx_incomplete"] is False
+    assert _budget_cell(table, cat, "2026-06")["actual_cents"] == 800      # 1000 $ × 0.80
+    assert _budget_cell(table, cat, "2026-07")["actual_cents"] == 900      # 1000 $ × 0.90
+    totals = next(s for s in table["sections"] if s["section"] == "depenses_variables")["section_totals"]
+    assert totals["total_actual_cents"] == 1700
+
+
+async def test_budget_of_one_account_stays_in_its_currency(client: AsyncClient, usd_flows: dict):
+    cat, usd = usd_flows["cat"].id, usd_flows["usd"].id
+    for params in ({"account_id": usd}, {"account_ids": str(usd)}):       # one account, or several sharing a currency
+        table = (await client.get("/api/analytics/budget-full", params={"year": 2026, **params})).json()
+        assert table["currency"] == "USD" and table["fx_incomplete"] is False
+        assert _budget_cell(table, cat, "2026-06")["actual_cents"] == 1000
+        assert _budget_cell(table, cat, "2026-07")["actual_cents"] == 1000
+
+
+async def test_budget_converts_what_was_typed_in_an_account(client: AsyncClient, usd_flows: dict, seed_data: dict):
+    """A manual adjustment or a planned expense entered in the USD account's own
+    view is in dollars; one entered in « Tous » is already in the table's currency."""
+    cat, usd, eur = usd_flows["cat"].id, usd_flows["usd"].id, seed_data["account_courant"].id
+    await client.put("/api/analytics/budget", params={"category_id": cat, "month": "2026-06", "expected_amount_cents": 5000, "account_id": usd})
+    await client.post("/api/planned-expenses", json={"category_id": cat, "month": "2026-07", "amount_cents": 20000, "account_id": usd})
+    await client.post("/api/planned-expenses", json={"category_id": cat, "month": "2026-04", "amount_cents": 30000})
+
+    table = (await client.get("/api/analytics/budget-full", params={"year": 2026, "account_ids": f"{eur},{usd}"})).json()
+    assert _budget_cell(table, cat, "2026-06")["expected_cents"] == 4000     # 50 $ × 0.80
+    assert _budget_cell(table, cat, "2026-07")["planned_cents"] == 18000     # 200 $ × 0.90
+    assert _budget_cell(table, cat, "2026-04")["planned_cents"] == 30000     # typed in « Tous »: untouched
+
+    own = (await client.get("/api/analytics/budget-full", params={"year": 2026, "account_id": usd})).json()
+    assert _budget_cell(own, cat, "2026-06")["expected_cents"] == 5000
+    assert _budget_cell(own, cat, "2026-07")["planned_cents"] == 20000
+
+
+async def test_budget_says_when_a_rate_is_missing(client: AsyncClient, db_session: AsyncSession, seed_data: dict):
+    from services import fx
+
+    profile = seed_data["profile"]
+    chf = Account(profile_id=profile.id, name="CHF", bank_name="Banque", account_type=AccountType.courant, currency="CHF")
+    db_session.add(chf)
+    await db_session.commit()
+    await db_session.refresh(chf)
+    db_session.add(Transaction(profile_id=profile.id, account_id=chf.id, date=date(2026, 3, 3), description="Sans taux",
+                               amount_cents=1000, currency="CHF", is_debit=True,
+                               category_id=seed_data["cat_courses"].id, import_hash="fx_chf"))
+    await db_session.commit()
+    fx._mark_pair_failed("CHF", "EUR")      # no rate, and no network to find one
+
+    table = (await client.get("/api/analytics/budget-full", params={"year": 2026})).json()
+    assert table["currency"] == "EUR" and table["fx_incomplete"] is True
+    assert _budget_cell(table, seed_data["cat_courses"].id, "2026-03")["actual_cents"] == 1000    # passed through, and flagged

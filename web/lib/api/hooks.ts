@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap } from "./client";
 import type { components } from "./schema";
-import type { BudgetPlan, BudgetEvolution, EnvelopeIn, UnplannedSuggestion } from "@/lib/budget-plan";
+import type { BudgetPlan, BudgetEvolution, CategoryStats, EnvelopeIn, UnplannedSuggestion } from "@/lib/budget-plan";
 import { useDateRangeStore, useSelectedAccountsStore } from "../stores";
 import { DEFAULT_CURRENCY } from "../format";
 
@@ -397,14 +397,15 @@ export function useDividendCalendar(months = 12) {
   });
 }
 /** Which build is running (stamped into the image by CI). `is_container` tells the
- *  UI whether updating means relaunching the app or restarting start.sh. */
+ *  UI whether updating means relaunching the app or restarting start.sh;
+ *  `data_copied_at` is set when the data is a copy made by dev-data.sh. */
 export function useAppVersion() {
   return useQuery({
     queryKey: ["system", "version"],
     queryFn: async () => {
       const res = await fetch("/api/system/version");
       if (!res.ok) throw new Error("Failed to fetch version");
-      return res.json() as Promise<{ version: string; is_container: boolean }>;
+      return res.json() as Promise<{ version: string; is_container: boolean; data_copied_at?: string | null }>;
     },
     staleTime: Infinity,
   });
@@ -551,6 +552,15 @@ export function fetchBudgetProposal(accountId: number): Promise<BudgetPlan> {
 export function previewBudgetPlan(accountId: number, envelopes: EnvelopeIn[]): Promise<BudgetPlan> {
   return unwrap(api.POST("/api/budget-plan/preview", { params: { query: { account_id: accountId } }, body: { envelopes } })) as Promise<BudgetPlan>;
 }
+/** What each category the plan may hold did on this account — the figures the
+ *  editor's sheet shows next to the amount being typed. */
+export function useBudgetCategoryStats(accountId: number | null, enabled = true) {
+  return useQuery({
+    queryKey: ["budget-plan", "category-stats", accountId],
+    enabled: accountId != null && enabled,
+    queryFn: () => unwrap(api.GET("/api/budget-plan/category-stats", { params: { query: { account_id: accountId as number } } })) as Promise<CategoryStats[]>,
+  });
+}
 export function useBudgetEvolution(accountId: number | null, months: number) {
   return useQuery({
     queryKey: ["budget-plan", "evolution", accountId, months],
@@ -597,7 +607,7 @@ export interface RecurringPlan {
 
 export function usePlannedExpenseMutations() {
   const qc = useQueryClient();
-  // A planned expense raises its month's target in the budget plan.
+  // A planned expense shows as a note on its envelope in the budget plan.
   const invalidate = () => { qc.invalidateQueries({ queryKey: ["budget-full"] }); qc.invalidateQueries({ queryKey: ["budget-plan"] }); };
   return {
     create: useMutation({

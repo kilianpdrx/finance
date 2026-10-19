@@ -149,7 +149,7 @@ async def test_an_amount_applies_from_the_month_it_is_set(client: AsyncClient, s
     w = await _world(db_session, seed_data)
     db_session.add_all([
         *[_txn(w, f"2026-{m:02d}-05", (m * 100) * 100, w["courses"]) for m in (3, 4, 5, 6)],
-        # A known one-off, entered with « Planifier »: it raises May's target.
+        # Entered with « Planifier » for May: a note on the month, never part of its target.
         PlannedExpense(profile_id=w["pid"], category_id=w["courses"], account_id=w["account"], month="2026-05", amount_cents=200_00),
     ])
     await db_session.commit()
@@ -169,13 +169,14 @@ async def test_an_amount_applies_from_the_month_it_is_set(client: AsyncClient, s
     assert [(c["realised_cents"], c["target_cents"]) for c in row["cells"]] == [
         (300_00, None),               # before the plan: what happened, uncompared
         (400_00, 400_00),
-        (500_00, 400_00 + 200_00),    # the amount of the time, plus the planned one-off
+        (500_00, 400_00),             # the amount of the time — the planned 200 changes nothing
         (600_00, 500_00),             # the new amount, from the month it was set
     ]
     assert row["reference_cents"] == 500_00
 
     may = _by_name(await _plan(client, w, "2026-05"))["Courses"]
-    assert (may["amount_cents"], may["planned_extra_cents"], may["target_cents"]) == (400_00, 200_00, 600_00)
+    assert (may["amount_cents"], may["planned_cents"]) == (400_00, 200_00)
+    assert "target_cents" not in may                   # one figure: the month is compared with the amount
 
     # Setting the same month twice replaces that month's amount, it does not stack.
     await client.put(f"/api/budget-plan/envelopes/{envelope_id}/amount", headers=w["h"], json={"amount_cents": 550_00})
@@ -508,3 +509,174 @@ async def test_deleting_a_profile_with_a_plan(client: AsyncClient, seed_data: di
 
     assert res.status_code in (200, 204), res.text
     assert (await db_session.execute(select(func.count(BudgetEnvelope.id)))).scalar() == 0
+
+
+# ── The detail: an amount per category ──────────────────────────────────────
+
+async def test_a_detailed_envelope_is_the_sum_of_its_categories(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """Planned category by category, the envelope's amount is the sum — whatever
+    `amount_cents` says — and each category reads against its own line."""
+    w = await _world(db_session, seed_data)
+    db_session.add_all([
+        _txn(w, "2026-06-03", 260_00, w["courses"]),
+        _txn(w, "2026-06-04", 140_00, w["loisirs"]),
+        _txn(w, "2026-06-09", 500_00, w["loisirs"], is_unplanned=True),      # out of its line too
+        _txn(w, "2026-05-03", 310_00, w["courses"]),
+        _txn(w, "2026-04-03", 290_00, w["courses"]),
+        _txn(w, "2026-03-03", 900_00, w["courses"]),
+    ])
+    await db_session.commit()
+    res = await _save(client, w, [
+        _env("Quotidien", "expense", 999_99, [w["courses"], w["loisirs"]],
+             category_amounts={w["courses"]: 300_00, w["loisirs"]: 120_00}),
+        _env("Logement", "expense", 800_00, [w["loyer"]]),
+    ])
+    assert res.status_code == 200, res.text
+
+    env = _by_name(await _plan(client, w))
+    daily = env["Quotidien"]
+    assert daily["detailed"] is True and daily["amount_cents"] == 420_00
+    lines = {c["category_id"]: c for c in daily["categories"]}
+    assert (lines[w["courses"]]["amount_cents"], lines[w["courses"]]["realised_cents"]) == (300_00, 260_00)
+    assert (lines[w["loisirs"]]["amount_cents"], lines[w["loisirs"]]["realised_cents"]) == (120_00, 140_00)
+    assert sum(c["realised_cents"] for c in daily["categories"]) == daily["realised_cents"] == 400_00
+    # A category's own typical month: March's 900 does not move the median.
+    assert (lines[w["courses"]]["typical_cents"], lines[w["courses"]]["last_month_cents"]) == (310_00, 310_00)
+
+    plain = env["Logement"]
+    assert plain["detailed"] is False and plain["amount_cents"] == 800_00
+    assert [c["amount_cents"] for c in plain["categories"]] == [None]
+
+    # The sum is versioned like any amount, and the detail survives a reload.
+    rows = (await db_session.execute(select(BudgetEnvelopeCategory.category_id, BudgetEnvelopeCategory.amount_cents))).all()
+    assert sorted(rows) == sorted([(w["courses"], 300_00), (w["loisirs"], 120_00), (w["loyer"], None)])
+
+
+async def test_a_blank_line_counts_for_nothing(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    w = await _world(db_session, seed_data)
+    await _save(client, w, [_env("Quotidien", "expense", 0, [w["courses"], w["loisirs"]], category_amounts={w["courses"]: 250_00})])
+    daily = _by_name(await _plan(client, w))["Quotidien"]
+    assert daily["detailed"] is True and daily["amount_cents"] == 250_00
+    assert {c["category_id"]: c["amount_cents"] for c in daily["categories"]} == {w["courses"]: 250_00, w["loisirs"]: None}
+
+    # A typed zero is a line too: "nothing planned here" is a plan.
+    await _save(client, w, [_env("Quotidien", "expense", 400_00, [w["courses"]], id=daily["id"], category_amounts={w["courses"]: 0})])
+    daily = _by_name(await _plan(client, w))["Quotidien"]
+    assert daily["detailed"] is True and daily["amount_cents"] == 0
+
+    # Without any line, the envelope is one figure again.
+    await _save(client, w, [_env("Quotidien", "expense", 400_00, [w["courses"]], id=daily["id"])])
+    daily = _by_name(await _plan(client, w))["Quotidien"]
+    assert daily["detailed"] is False and daily["amount_cents"] == 400_00
+
+
+async def test_detail_is_checked(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    w = await _world(db_session, seed_data)
+    stray = await _save(client, w, [_env("Quotidien", "expense", 0, [w["courses"]], category_amounts={w["loisirs"]: 50_00})])
+    assert stray.status_code == 400 and "pas dans l'enveloppe" in stray.json()["detail"]
+    negative = await _save(client, w, [_env("Quotidien", "expense", 0, [w["courses"]], category_amounts={w["courses"]: -1})])
+    assert negative.status_code == 400 and "négatif" in negative.json()["detail"]
+    assert (await db_session.execute(select(func.count()).select_from(BudgetEnvelope))).scalar() == 0
+
+
+async def test_a_detailed_amount_is_not_edited_as_one_figure(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """Changing the total alone would leave it disagreeing with its own lines."""
+    w = await _world(db_session, seed_data)
+    await _save(client, w, [
+        _env("Quotidien", "expense", 0, [w["courses"]], category_amounts={w["courses"]: 300_00}),
+        _env("Logement", "expense", 800_00, [w["loyer"]]),
+    ])
+    env = _by_name(await _plan(client, w))
+    refused = await client.put(f"/api/budget-plan/envelopes/{env['Quotidien']['id']}/amount", headers=w["h"], json={"amount_cents": 500_00})
+    assert refused.status_code == 409 and "somme de ses catégories" in refused.json()["detail"]
+    allowed = await client.put(f"/api/budget-plan/envelopes/{env['Logement']['id']}/amount", headers=w["h"], json={"amount_cents": 850_00})
+    assert allowed.status_code == 204
+    env = _by_name(await _plan(client, w))
+    assert (env["Quotidien"]["amount_cents"], env["Logement"]["amount_cents"]) == (300_00, 850_00)
+
+
+async def test_preview_reads_a_draft_detail(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    w = await _world(db_session, seed_data)
+    res = await client.post("/api/budget-plan/preview", params={"account_id": w["account"]}, headers=w["h"], json={"envelopes": [
+        _env("Quotidien", "expense", 10_00, [w["courses"], w["loisirs"]], category_amounts={w["courses"]: 200_00, w["loisirs"]: 80_00}),
+    ]})
+    assert res.status_code == 200, res.text
+    daily = res.json()["envelopes"][0]
+    assert daily["detailed"] is True and daily["amount_cents"] == 280_00
+    assert (await db_session.execute(select(func.count()).select_from(BudgetEnvelope))).scalar() == 0     # saved nothing
+
+
+async def test_deleting_a_category_takes_its_line_out_of_the_sum(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    w = await _world(db_session, seed_data)
+    await _save(client, w, [_env("Quotidien", "expense", 0, [w["courses"], w["loisirs"]],
+                                 category_amounts={w["courses"]: 300_00, w["loisirs"]: 120_00})])
+    assert (await client.delete(f"/api/categories/{w['loisirs']}", headers=w["h"])).status_code in (200, 204)
+
+    daily = _by_name(await _plan(client, w))["Quotidien"]
+    assert daily["category_ids"] == [w["courses"]]
+    assert daily["detailed"] is True and daily["amount_cents"] == 300_00       # no longer promising the deleted line's 120
+
+
+async def test_category_stats_cover_what_no_envelope_holds(client: AsyncClient, seed_data: dict, db_session: AsyncSession, extra_profile):
+    """The editor's sheet shows every category the plan may hold, in an envelope
+    or not, with what it did on THIS account."""
+    w = await _world(db_session, seed_data)
+    other = Account(profile_id=w["pid"], name="Autre", bank_name="B", account_type=AccountType.courant, currency="EUR")
+    db_session.add(other)
+    await db_session.flush()
+    db_session.add_all([
+        _txn(w, "2026-05-03", 310_00, w["courses"]),
+        _txn(w, "2026-04-03", 290_00, w["courses"]),
+        _txn(w, "2026-03-03", 900_00, w["courses"]),
+        _txn(w, "2026-05-11", 999_00, w["courses"], account=other.id),       # another account: not counted
+        _txn(w, "2026-06-03", 60_00, w["courses"]),                          # the current month is not history
+    ])
+    await db_session.commit()
+
+    res = await client.get("/api/budget-plan/category-stats", params={"account_id": w["account"], "month": NOW}, headers=w["h"])
+    assert res.status_code == 200, res.text
+    stats = {s["category_id"]: s for s in res.json()}
+    assert set(stats) == {w["courses"], w["salaire"], w["loyer"], w["loisirs"], w["bourse"]}
+    assert (stats[w["courses"]]["typical_cents"], stats[w["courses"]]["average_cents"], stats[w["courses"]]["last_month_cents"]) == (310_00, 500_00, 310_00)
+    assert stats[w["loisirs"]]["typical_cents"] == 0
+
+    foreign = await client.get("/api/budget-plan/category-stats", params={"account_id": w["account"]}, headers={"X-Profile-Id": str(extra_profile.id)})
+    assert foreign.status_code == 404
+
+
+async def test_planned_entries_are_a_note_not_an_amount(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """A « Planifier » entry forecasts a cell of the budget table — the usual
+    rent as readily as a one-off. The plan names it (which entries, in which
+    category) and compares the month with what was planned in the editor, no
+    more: adding it made the totals differ from the ones just saved."""
+    w = await _world(db_session, seed_data)
+    db_session.add_all([
+        _txn(w, "2026-06-01", 2500_00, w["salaire"], debit=False),
+        PlannedExpense(profile_id=w["pid"], category_id=w["courses"], account_id=w["account"], month=NOW, amount_cents=310_00, matched=True),
+        PlannedExpense(profile_id=w["pid"], category_id=w["loyer"], account_id=w["account"], month="2026-07", amount_cents=50_00),
+        PlannedExpense(profile_id=w["pid"], category_id=w["courses"], account_id=None, month=NOW, amount_cents=70_00),   # « Tous »: not this account's
+    ])
+    await db_session.commit()
+    await _save(client, w, [
+        _env("Revenus", "income", 2500_00, [w["salaire"]]),
+        _env("Quotidien", "expense", 400_00, [w["courses"], w["loisirs"]]),
+        _env("Logement", "expense", 800_00, [w["loyer"]]),
+    ])
+
+    env = _by_name(await _plan(client, w))
+    daily = env["Quotidien"]
+    assert (daily["amount_cents"], daily["planned_cents"]) == (400_00, 310_00)
+    assert [(p["category_id"], p["amount_cents"]) for p in daily["planned"]] == [(w["courses"], 310_00)]
+    assert {c["category_id"]: c["planned_cents"] for c in daily["categories"]} == {w["courses"]: 310_00, w["loisirs"]: 0}
+    assert (env["Logement"]["planned_cents"], env["Logement"]["planned"]) == (0, [])     # July's entry is July's
+
+    # What the plan leaves, month by month: 2 500 − 400 − 800, with or without the entry.
+    evolution = (await client.get("/api/budget-plan/evolution", headers=w["h"], params={"account_id": w["account"], "months": 2, "month": NOW})).json()
+    rows = {r["key"]: r for r in evolution["rows"]}
+    assert rows["remainder"]["cells"][-1]["target_cents"] == rows["remainder"]["reference_cents"] == 1300_00
+    assert rows[f"envelope-{daily['id']}"]["cells"][-1]["target_cents"] == 400_00
+
+    # Withdrawing the entry removes the note, and no amount moves.
+    assert (await client.delete(f"/api/planned-expenses/{daily['planned'][0]['id']}", headers=w["h"])).status_code == 204
+    daily = _by_name(await _plan(client, w))["Quotidien"]
+    assert (daily["amount_cents"], daily["planned_cents"], daily["planned"]) == (400_00, 0, [])

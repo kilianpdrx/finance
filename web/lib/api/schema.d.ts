@@ -1556,6 +1556,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/budget-plan/category-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Category Stats
+         * @description What each category the account's plan may hold did over the last twelve
+         *     full months — in an envelope or not: it is what the editor's sheet shows
+         *     next to the amount being typed.
+         */
+        get: operations["get_category_stats_api_budget_plan_category_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/budget-plan/evolution": {
         parameters: {
             query?: never;
@@ -2246,6 +2268,16 @@ export interface components {
             grand_total_row: components["schemas"]["BudgetTableRow"];
             /** Account Id */
             account_id?: number | null;
+            /**
+             * Currency
+             * @default EUR
+             */
+            currency: string;
+            /**
+             * Fx Incomplete
+             * @default false
+             */
+            fx_incomplete: boolean;
         };
         /** BudgetPlanIn */
         BudgetPlanIn: {
@@ -2519,6 +2551,20 @@ export interface components {
             /** Logic Operator */
             logic_operator?: string | null;
         };
+        /**
+         * CategoryStatsOut
+         * @description What a category did on this account, to choose its amount knowingly.
+         */
+        CategoryStatsOut: {
+            /** Category Id */
+            category_id: number;
+            /** Typical Cents */
+            typical_cents: number | null;
+            /** Average Cents */
+            average_cents: number | null;
+            /** Last Month Cents */
+            last_month_cents: number | null;
+        };
         /** CategoryUpdate */
         CategoryUpdate: {
             /** Name */
@@ -2577,6 +2623,26 @@ export interface components {
             /** Amount Cents */
             amount_cents: number;
         };
+        /**
+         * EnvelopeCategoryOut
+         * @description One category of an envelope, read like the envelope itself.
+         */
+        EnvelopeCategoryOut: {
+            /** Category Id */
+            category_id: number;
+            /** Amount Cents */
+            amount_cents: number | null;
+            /** Planned Cents */
+            planned_cents: number;
+            /** Realised Cents */
+            realised_cents: number;
+            /** Typical Cents */
+            typical_cents: number | null;
+            /** Average Cents */
+            average_cents: number | null;
+            /** Last Month Cents */
+            last_month_cents: number | null;
+        };
         /** EnvelopeIn */
         EnvelopeIn: {
             /** Id */
@@ -2598,6 +2664,10 @@ export interface components {
              * @default []
              */
             category_ids: number[];
+            /** Category Amounts */
+            category_amounts?: {
+                [key: string]: number;
+            } | null;
         };
         /** EnvelopeOut */
         EnvelopeOut: {
@@ -2614,10 +2684,14 @@ export interface components {
             category_ids: number[];
             /** Amount Cents */
             amount_cents: number;
-            /** Planned Extra Cents */
-            planned_extra_cents: number;
-            /** Target Cents */
-            target_cents: number;
+            /** Detailed */
+            detailed: boolean;
+            /** Categories */
+            categories: components["schemas"]["EnvelopeCategoryOut"][];
+            /** Planned Cents */
+            planned_cents: number;
+            /** Planned */
+            planned: components["schemas"]["PlannedEntryOut"][];
             /** Realised Cents */
             realised_cents: number;
             /** Typical Cents */
@@ -2994,6 +3068,18 @@ export interface components {
             existing_quantity?: number | null;
             /** Existing Cost Basis Cents */
             existing_cost_basis_cents?: number | null;
+        };
+        /**
+         * PlannedEntryOut
+         * @description A « Planifier » entry of the month shown, behind `planned_cents`.
+         */
+        PlannedEntryOut: {
+            /** Id */
+            id: number;
+            /** Category Id */
+            category_id: number;
+            /** Amount Cents */
+            amount_cents: number;
         };
         /** PlannedExpenseCreate */
         PlannedExpenseCreate: {
@@ -6914,6 +7000,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BudgetPlanOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_category_stats_api_budget_plan_category_stats_get: {
+        parameters: {
+            query: {
+                account_id: number;
+                month?: string | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategoryStatsOut"][];
                 };
             };
             /** @description Validation Error */

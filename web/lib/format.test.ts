@@ -33,6 +33,13 @@ describe('format.ts', () => {
       expect(formatCents(123456, 'EUR', { decimals: 2 })).toBe('1 234,56 €');
     });
 
+    it('gives no sign to an amount shown as zero', () => {
+      expect(formatCents(0, 'EUR', { sign: true })).toMatch(/^0\s€$/);
+      expect(formatCents(40, 'CHF', { sign: true })).toMatch(/^0\sCHF$/);        // 0,40 rounds to 0
+      expect(formatCents(-40, 'EUR')).toMatch(/^0\s€$/);
+      expect(formatCents(40, 'EUR', { sign: true, decimals: 2 })).toMatch(/^\+0,40\s€$/);
+    });
+
     it('includes sign when requested', () => {
       expect(formatCents(123456, 'EUR', { sign: true })).toBe('+1 235 €');
       expect(formatCents(-123456, 'EUR', { sign: true })).toBe('−1 235 €');

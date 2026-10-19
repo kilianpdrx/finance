@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 import database
 from models import Base
 
-HEAD = "016_budget_plan"
+HEAD = "017_envelope_category_amount"
 
 
 @pytest.fixture
@@ -180,3 +180,45 @@ def test_budget_plan_is_added_to_an_existing_database(temp_db):
     assert unique == {"uq_envelope_category_per_account", "uq_envelope_amount_month"}
     assert (row.id, row.amount_cents, row.is_unplanned) == (5, 1000, None)
 
+
+
+def test_category_amount_is_added_to_an_existing_plan(temp_db):
+    """An install on 016 has plans without per-category amounts: upgrading adds
+    the column, leaves every membership as it was (no amount: the envelope stays
+    planned as one amount), and keeps the one-envelope-per-account constraint."""
+    eng = create_engine(f"sqlite:///{temp_db}")
+    Base.metadata.create_all(eng)
+    with eng.begin() as c:
+        c.execute(text("ALTER TABLE budget_envelope_categories DROP COLUMN amount_cents"))
+        c.execute(text("INSERT INTO profiles (id, name, color, is_default) VALUES (1, 'P', '#000', 1)"))
+        c.execute(text("INSERT INTO accounts (id, profile_id, name, bank_name, account_type, currency, color, is_active)"
+                       " VALUES (1, 1, 'A', 'B', 'courant', 'EUR', '#000', 1)"))
+        c.execute(text("INSERT INTO categories (id, profile_id, name, color) VALUES (7, 1, 'Courses', '#000')"))
+        c.execute(text("INSERT INTO budget_envelopes (id, profile_id, account_id, name, kind, position)"
+                       " VALUES (3, 1, 1, 'Quotidien', 'expense', 0)"))
+        c.execute(text("INSERT INTO budget_envelope_categories (id, profile_id, envelope_id, category_id, account_id)"
+                       " VALUES (9, 1, 3, 7, 1)"))
+        c.execute(text("INSERT INTO budget_envelope_amounts (id, profile_id, envelope_id, effective_from, amount_cents)"
+                       " VALUES (4, 1, 3, '2026-10', 40000)"))
+    eng.dispose()
+    database._sync_schema_blocking()  # stamps head (no alembic_version yet)
+    eng = create_engine(f"sqlite:///{temp_db}")
+    with eng.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num='016_budget_plan'"))
+    eng.dispose()
+
+    database._sync_schema_blocking()  # upgrade path: runs 017
+    database._sync_schema_blocking()  # and again: nothing left to do
+
+    assert _version(temp_db) == HEAD
+    eng = create_engine(f"sqlite:///{temp_db}")
+    try:
+        unique = {u["name"] for u in inspect(eng).get_unique_constraints("budget_envelope_categories")}
+        with eng.connect() as c:
+            link = c.execute(text("SELECT id, envelope_id, category_id, account_id, amount_cents FROM budget_envelope_categories")).one()
+            amount = c.execute(text("SELECT amount_cents FROM budget_envelope_amounts WHERE envelope_id = 3")).scalar()
+    finally:
+        eng.dispose()
+    assert tuple(link) == (9, 3, 7, 1, None)
+    assert amount == 40000
+    assert unique == {"uq_envelope_category_per_account"}

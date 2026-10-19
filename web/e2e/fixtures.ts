@@ -169,6 +169,19 @@ export class Api {
     return res.json();
   }
 
+  /** Plan a one-off expense, as « Planifier » does from an account's budget table. */
+  async planExpense(accountId: number, categoryName: string, month: string, amountCents: number) {
+    const cats: { id: number; name: string }[] = await this.categories();
+    const cat = cats.find((c) => c.name === categoryName);
+    expect(cat, `category ${categoryName} must exist`).toBeTruthy();
+    const res = await this.request.post(`${BACKEND}/api/planned-expenses`, {
+      headers: this.headers(),
+      data: { category_id: cat!.id, month, amount_cents: amountCents, account_id: accountId },
+    });
+    expect(res.ok(), await res.text()).toBeTruthy();
+    return res.json();
+  }
+
   async plannedExpenses(): Promise<{ month: string; amount_cents: number }[]> {
     const res = await this.request.get(`${BACKEND}/api/planned-expenses`, { headers: this.headers() });
     return res.json();

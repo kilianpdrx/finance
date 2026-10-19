@@ -112,7 +112,10 @@ class AccountSums:
     uncategorised_spent: dict = field(default_factory=lambda: defaultdict(int))
     uncategorised_received: dict = field(default_factory=lambda: defaultdict(int))
     unplanned: dict = field(default_factory=lambda: defaultdict(int))
-    planned_extra: dict = field(default_factory=lambda: defaultdict(lambda: defaultdict(int)))
+    # « Planifier » entries, per (category, month) — shown as a note, see `Envelope.planned`.
+    planned: dict = field(default_factory=lambda: defaultdict(lambda: defaultdict(int)))
+    # The entries behind `planned`: (id, category, month, cents).
+    planned_entries: list = field(default_factory=list)
 
 
 async def load_sums(db: AsyncSession, pid: int, account_id: int, first: str, last: str) -> AccountSums:
@@ -147,7 +150,8 @@ async def load_sums(db: AsyncSession, pid: int, account_id: int, first: str, las
     for plan in (await db.execute(select(PlannedExpense).where(
         PlannedExpense.profile_id == pid, PlannedExpense.account_id == account_id, PlannedExpense.month.in_(months),
     ))).scalars():
-        sums.planned_extra[plan.category_id][plan.month] += plan.amount_cents
+        sums.planned[plan.category_id][plan.month] += plan.amount_cents
+        sums.planned_entries.append((plan.id, plan.category_id, plan.month, plan.amount_cents))
     return sums
 
 
@@ -181,20 +185,35 @@ class Envelope:
     kind: str
     category_ids: list[int]
     amounts: list[tuple[str, int]]      # (effective_from, cents)
+    # The detail: {category: cents} for the categories planned on their own.
+    # Not versioned — it is today's breakdown; the envelope's amount (their sum,
+    # versioned like any other) is what past months are compared with.
+    category_amounts: dict = field(default_factory=dict)
+
+    @property
+    def detailed(self) -> bool:
+        """Planned category by category: its amount is the sum of theirs."""
+        return bool(self.category_amounts)
 
     def realised(self, sums: AccountSums, month: str) -> int:
         if self.kind == UNPLANNED:
             return sums.unplanned.get(month, 0)
         return sum(sums.by_category[c].get(month, 0) for c in self.category_ids)
 
-    def planned_extra(self, sums: AccountSums, month: str) -> int:
-        """« Planifier » entries of that month: a known one-off raises the
-        month's target instead of reading as an overrun."""
-        return sum(sums.planned_extra[c].get(month, 0) for c in self.category_ids)
+    def planned(self, sums: AccountSums, month: str) -> int:
+        """« Planifier » entries of that month in this envelope's categories.
+
+        A NOTE, never part of an amount. « Planifier » forecasts a whole cell of
+        the budget table, which the real transaction then replaces: it holds the
+        usual rent as readily as a one-off, so adding it to the envelope's
+        amount counts twice whatever the envelope already includes — and made
+        the plan's totals differ from the ones the editor had just shown."""
+        return sum(sums.planned[c].get(month, 0) for c in self.category_ids)
 
     def target(self, sums: AccountSums, month: str) -> Optional[int]:
-        amount = amount_in_force(self.amounts, month)
-        return None if amount is None else amount + self.planned_extra(sums, month)
+        """What `month` is compared with: the amount in force, and nothing else
+        (None before the envelope had one)."""
+        return amount_in_force(self.amounts, month)
 
 
 async def load_envelopes(db: AsyncSession, pid: int, account_id: int) -> list[Envelope]:
@@ -207,16 +226,53 @@ async def load_envelopes(db: AsyncSession, pid: int, account_id: int) -> list[En
         return []
     ids = [r.id for r in rows]
     categories = defaultdict(list)
+    detail = defaultdict(dict)
     for link in (await db.execute(select(BudgetEnvelopeCategory).where(
         BudgetEnvelopeCategory.profile_id == pid, BudgetEnvelopeCategory.envelope_id.in_(ids),
     ))).scalars():
         categories[link.envelope_id].append(link.category_id)
+        if link.amount_cents is not None:
+            detail[link.envelope_id][link.category_id] = link.amount_cents
     amounts = defaultdict(list)
     for amount in (await db.execute(select(BudgetEnvelopeAmount).where(
         BudgetEnvelopeAmount.profile_id == pid, BudgetEnvelopeAmount.envelope_id.in_(ids),
     ))).scalars():
         amounts[amount.envelope_id].append((amount.effective_from, amount.amount_cents))
-    return [Envelope(r.id, r.name, r.kind, sorted(categories[r.id]), sorted(amounts[r.id])) for r in rows]
+    return [Envelope(r.id, r.name, r.kind, sorted(categories[r.id]), sorted(amounts[r.id]), detail[r.id]) for r in rows]
+
+
+async def set_amount(db: AsyncSession, pid: int, envelope_id: int, month: str, amount_cents: int) -> None:
+    """Plan `amount_cents` from `month` on. Earlier months keep their amount."""
+    row = (await db.execute(select(BudgetEnvelopeAmount).where(
+        BudgetEnvelopeAmount.envelope_id == envelope_id, BudgetEnvelopeAmount.effective_from == month,
+        BudgetEnvelopeAmount.profile_id == pid,
+    ))).scalar_one_or_none()
+    if row is None:
+        db.add(BudgetEnvelopeAmount(profile_id=pid, envelope_id=envelope_id, effective_from=month, amount_cents=amount_cents))
+    else:
+        row.amount_cents = amount_cents
+
+
+async def resync_detailed_amounts(db: AsyncSession, pid: int, envelope_ids: set[int]) -> None:
+    """A detailed envelope's amount IS the sum of its categories' amounts. When
+    one of them leaves outside the editor (its category is deleted), plan the
+    new sum from the current month on — otherwise the envelope would keep
+    promising money for a line that no longer exists."""
+    if not envelope_ids:
+        return
+    month = current_month()
+    for envelope_id in envelope_ids:
+        left = (await db.execute(select(BudgetEnvelopeCategory.amount_cents).where(
+            BudgetEnvelopeCategory.profile_id == pid, BudgetEnvelopeCategory.envelope_id == envelope_id,
+            BudgetEnvelopeCategory.amount_cents.isnot(None),
+        ))).scalars().all()
+        if not left:
+            continue        # no detail left: the envelope keeps its amount, as one figure
+        in_force = amount_in_force(list((await db.execute(select(
+            BudgetEnvelopeAmount.effective_from, BudgetEnvelopeAmount.amount_cents,
+        ).where(BudgetEnvelopeAmount.profile_id == pid, BudgetEnvelopeAmount.envelope_id == envelope_id))).all()), month)
+        if in_force != sum(left):
+            await set_amount(db, pid, envelope_id, month, sum(left))
 
 
 @dataclass
@@ -278,12 +334,21 @@ def provision_year_to_date(envelope: Envelope, sums: AccountSums, month: str) ->
     return provision, spent
 
 
-def history_stats(envelope: Envelope, sums: AccountSums, months: list[str]) -> tuple[Optional[int], Optional[int], Optional[int]]:
-    """(typical, average, last month) of an envelope over `months`."""
-    values = [envelope.realised(sums, m) for m in months]
+def _stats(values: list[int]) -> tuple[Optional[int], Optional[int], Optional[int]]:
     if not values:
         return None, None, None
     return typical(values), round(mean(values)), values[-1]
+
+
+def history_stats(envelope: Envelope, sums: AccountSums, months: list[str]) -> tuple[Optional[int], Optional[int], Optional[int]]:
+    """(typical, average, last month) of an envelope over `months`."""
+    return _stats([envelope.realised(sums, m) for m in months])
+
+
+def category_stats(category_id: int, sums: AccountSums, months: list[str]) -> tuple[Optional[int], Optional[int], Optional[int]]:
+    """The same three figures for one category. Typical months do not add up:
+    an envelope's is not the sum of its categories' (each has its own median)."""
+    return _stats([sums.by_category[category_id].get(m, 0) for m in months])
 
 
 # ── Unusual expenses: "imprévu ?" ───────────────────────────────────────────

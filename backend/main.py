@@ -11,6 +11,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import init_db, AsyncSessionLocal, sync_schema
 from routers import accounts, transactions, categories, upload, analytics
 from routers import bank_profiles, investments, settings, system, profiles, goals, loans, planned, budget_plan
+from request_guard import RequestGuardMiddleware
 from services.base_currency import DEFAULT_BASE_CURRENCY
 
 logger = logging.getLogger(__name__)
@@ -307,6 +308,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last, so it runs first: another website's requests never reach a route
+# (request_guard.py). CORS only hides answers; it never stopped a write.
+app.add_middleware(RequestGuardMiddleware)
 
 app.include_router(accounts.router, prefix="/api/accounts", tags=["accounts"])
 app.include_router(transactions.router, prefix="/api/transactions", tags=["transactions"])

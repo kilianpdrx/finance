@@ -50,6 +50,27 @@ Installe les dépendances Python et Node, puis démarre l'API sur `127.0.0.1:800
 `--reload`) et l'interface sur `127.0.0.1:3000`. `MODE=prod ./start.sh` fait un build de
 production.
 
+Si un port est pris par un autre programme, `start.sh` prend le suivant et l'affiche —
+typiquement `3001` quand l'application installée (Docker) occupe déjà `3000` : les deux
+tournent côte à côte. Un lancement précédent de `start.sh`, lui, est arrêté et remplacé.
+Pour imposer un port : `UI_PORT=3005 API_PORT=8005 ./start.sh`.
+
+### Essayer le code en cours sur vos vraies données
+```bash
+./dev-data.sh        # copie les données de l'application installée dans backend/data
+./start.sh           # ouvre l'application de développement sur cette copie
+```
+`dev-data.sh` trouve le dossier de l'application installée par son conteneur
+(`finance-backend`) ; sinon, donnez-le : `./dev-data.sh "/chemin/vers/Suivi finance/data"`.
+L'application installée n'est que lue. La copie, elle, est **jetable** : relancer le script
+la remplace, et ce que vous y avez modifié est perdu. Une base qui n'était pas une copie
+est mise de côté dans `backend/data/avant-copie-…`, jamais supprimée.
+
+Sur une copie, l'application affiche un bandeau « Copie de test » sur chaque page, et
+`start.sh` ne lance pas les tâches réseau (cours, taux de change, synchronisation du
+courtier) : elles restent l'affaire de l'application installée. `backend/data/` est ignoré
+par git — la copie ne peut pas partir dans un commit.
+
 ### Lancer la version conteneurisée depuis les sources
 ```bash
 docker compose up -d --build
@@ -58,7 +79,7 @@ Construit les images localement et sert l'application sur http://127.0.0.1:3000.
 
 ### Tests
 ```bash
-cd backend && python -m pytest        # 343 tests
+cd backend && python -m pytest        # 367 tests
 cd web && npx tsc --noEmit && npx vitest run
 cd web && npm run test:e2e            # Playwright — démarre sa propre pile isolée
 ```
@@ -92,7 +113,8 @@ Ces dossiers sont ignorés par git : un `git clone` ou un ZIP téléchargé depu
 L'application **n'a pas de mot de passe**, par conception : elle n'écoute que sur
 `127.0.0.1`, c'est-à-dire uniquement votre propre machine.
 
-- `start.sh` lance les serveurs sur `127.0.0.1` explicitement.
+- `start.sh` lance les serveurs sur `127.0.0.1` explicitement — l'interface aussi (`-H 127.0.0.1` :
+  sans cette option, Next écoute sur toutes les interfaces du réseau).
 - `docker-compose.yml` publie `127.0.0.1:3000:3000` — et **ne publie pas** le port 8000,
   l'interface joignant l'API par le réseau interne de Docker.
 

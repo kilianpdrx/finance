@@ -50,7 +50,8 @@ export default defineConfig({
       stderr: "pipe",
     },
     {
-      command: `npx next start -p ${E2E_WEB_PORT}`,
+      // -H: Next listens on every interface by default.
+      command: `npx next start -H 127.0.0.1 -p ${E2E_WEB_PORT}`,
       url: `http://127.0.0.1:${E2E_WEB_PORT}`,
       reuseExistingServer: false,
       timeout: 120_000,

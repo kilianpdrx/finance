@@ -11,6 +11,8 @@ export type EnvelopeKind = Envelope["kind"];
 export type BudgetEvolution = components["schemas"]["BudgetEvolutionOut"];
 export type EvolutionRow = components["schemas"]["EvolutionRow"];
 export type UnplannedSuggestion = components["schemas"]["UnplannedSuggestion"];
+export type EnvelopeCategory = components["schemas"]["EnvelopeCategoryOut"];
+export type CategoryStats = components["schemas"]["CategoryStatsOut"];
 
 export const KIND_LABEL: Record<EnvelopeKind, string> = {
   income: "Revenus",
@@ -84,9 +86,10 @@ export interface PlanTotals {
   unassigned: number;
 }
 
-/** What the envelopes' targets add up to for the month shown. */
-export function planTotals(envelopes: Pick<Envelope, "kind" | "target_cents">[]): PlanTotals {
-  const sum = (kind: EnvelopeKind) => envelopes.filter((e) => e.kind === kind).reduce((s, e) => s + e.target_cents, 0);
+/** What the envelopes' amounts add up to. The same figures in the editor and
+ *  in the plan once saved: nothing else (a « Planifier » entry, say) is added. */
+export function planTotals(envelopes: Pick<Envelope, "kind" | "amount_cents">[]): PlanTotals {
+  const sum = (kind: EnvelopeKind) => envelopes.filter((e) => e.kind === kind).reduce((s, e) => s + e.amount_cents, 0);
   const income = sum("income"), ceilings = sum("expense"), goals = sum("goal"), provision = sum("unplanned");
   return { income, ceilings, goals, provision, unassigned: income - ceilings - goals - provision };
 }
@@ -98,18 +101,41 @@ export interface DraftEnvelope {
   id: number | null;
   name: string;
   kind: EnvelopeKind;
-  amount: string;              // as typed
+  amount: string;              // as typed: the envelope planned as ONE figure
   categoryIds: number[];
+  /** The detail, as typed: what is planned for a category alone. A category
+   *  without an entry (or with an empty one) has no line of its own. */
+  categoryAmounts: Record<number, string>;
 }
 
 /** "412,50" → 41250. Empty or unreadable is 0: an amount is never negative. */
 export function amountToCents(text: string): number {
-  const n = Number(String(text).trim().replace(/[\s  ]/g, "").replace(",", "."));
+  const n = Number(String(text).trim().replace(/[\s\u00a0\u202f]/g, "").replace(",", "."));
   return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : 0;
 }
 
 export function centsToAmount(cents: number): string {
   return cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2).replace(".", ",");
+}
+
+/** Something was typed: an empty cell is "no line", a typed 0 is a line. */
+function hasLine(text: string | undefined): boolean {
+  return text != null && text.trim() !== "";
+}
+
+type Lines = Pick<DraftEnvelope, "kind" | "amount" | "categoryIds" | "categoryAmounts">;
+
+/** Planned category by category: at least one of its categories has a line. */
+export function isDetailed(d: Omit<Lines, "amount">): boolean {
+  return d.kind !== "unplanned" && d.categoryIds.some((id) => hasLine(d.categoryAmounts[id]));
+}
+
+/** What the envelope plans per month. With a detail it IS the sum of its lines
+ *  (a blank one counts for nothing) — the one figure is then not read, so the
+ *  two can never disagree. */
+export function draftAmountCents(d: Lines): number {
+  if (!isDetailed(d)) return amountToCents(d.amount);
+  return d.categoryIds.reduce((sum, id) => sum + amountToCents(d.categoryAmounts[id] ?? ""), 0);
 }
 
 export function draftsFromPlan(plan: Pick<BudgetPlan, "envelopes">): DraftEnvelope[] {
@@ -120,26 +146,63 @@ export function draftsFromPlan(plan: Pick<BudgetPlan, "envelopes">): DraftEnvelo
     kind: e.kind,
     amount: centsToAmount(e.amount_cents),
     categoryIds: [...e.category_ids],
+    categoryAmounts: Object.fromEntries(
+      (e.categories ?? []).flatMap((c) => (c.amount_cents != null ? [[c.category_id, centsToAmount(c.amount_cents)]] : [])),
+    ),
   }));
 }
 
 /** Put a category in one envelope (or in none: `toKey` null). A category is in
- *  at most one envelope, so it leaves wherever it was. */
+ *  at most one envelope, so it leaves wherever it was. Its line follows it only
+ *  into an envelope already planned line by line: dropped into one planned as a
+ *  single figure, it would turn that figure into its own amount. */
 export function moveCategory(drafts: DraftEnvelope[], categoryId: number, toKey: string | null): DraftEnvelope[] {
+  const carried = drafts.map((d) => d.categoryAmounts[categoryId]).find(hasLine);
   return drafts.map((d) => {
     const without = d.categoryIds.filter((c) => c !== categoryId);
-    return { ...d, categoryIds: d.key === toKey ? [...without, categoryId] : without };
+    const { [categoryId]: _left, ...amounts } = d.categoryAmounts;
+    if (d.key !== toKey) return { ...d, categoryIds: without, categoryAmounts: amounts };
+    const keep = carried !== undefined && isDetailed({ ...d, categoryIds: without, categoryAmounts: amounts });
+    return { ...d, categoryIds: [...without, categoryId], categoryAmounts: keep ? { ...amounts, [categoryId]: carried } : amounts };
   });
 }
 
+/** Type an amount on a category's line, in whichever envelope holds it. */
+export function setCategoryAmount(drafts: DraftEnvelope[], categoryId: number, text: string): DraftEnvelope[] {
+  return drafts.map((d) => (d.categoryIds.includes(categoryId) ? { ...d, categoryAmounts: { ...d.categoryAmounts, [categoryId]: text } } : d));
+}
+
+/** Start an envelope's detail from what each category usually does: its typical
+ *  month, to the unit. A category with no history gets a 0 to correct. */
+export function fillWithTypical(d: DraftEnvelope, typicalOf: (categoryId: number) => number | null | undefined): DraftEnvelope {
+  return {
+    ...d,
+    categoryAmounts: Object.fromEntries(d.categoryIds.map((id) => [id, centsToAmount(Math.round(Math.max(0, typicalOf(id) ?? 0) / 100) * 100)])),
+  };
+}
+
+/** Back to one figure: the lines go, and what they added up to stays. */
+export function clearDetail(d: DraftEnvelope): DraftEnvelope {
+  return { ...d, amount: centsToAmount(draftAmountCents(d)), categoryAmounts: {} };
+}
+
 export function draftsToPayload(drafts: DraftEnvelope[]): EnvelopeIn[] {
-  return drafts.map((d) => ({
-    id: d.id,
-    name: d.name.trim(),
-    kind: d.kind,
-    amount_cents: amountToCents(d.amount),
-    category_ids: d.kind === "unplanned" ? [] : d.categoryIds,
-  }));
+  return drafts.map((d) => {
+    const base = {
+      id: d.id,
+      name: d.name.trim(),
+      kind: d.kind,
+      amount_cents: draftAmountCents(d),
+      category_ids: d.kind === "unplanned" ? [] : d.categoryIds,
+    };
+    if (!isDetailed(d)) return base;
+    return {
+      ...base,
+      category_amounts: Object.fromEntries(
+        d.categoryIds.filter((id) => hasLine(d.categoryAmounts[id])).map((id) => [id, amountToCents(d.categoryAmounts[id])]),
+      ),
+    };
+  });
 }
 
 /** The categories an envelope of this account may hold: unarchived leaves,

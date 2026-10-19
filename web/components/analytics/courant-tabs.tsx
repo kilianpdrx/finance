@@ -6,23 +6,26 @@ import { cn } from "@/lib/utils";
 export type CourantSelection = "all" | number;
 
 /** Segmented button group over the current accounts: [Tous] [Compte A] [Compte B]…
- *  Replaces the header account dropdown on Budget and Analyse des dépenses. */
+ *  Replaces the header account dropdown on Budget and Analyse des dépenses.
+ *  `withAll={false}` leaves « Tous » out, where a view only exists per account. */
 export function CourantTabs({
   accounts,
   value,
   onChange,
   className,
+  withAll = true,
 }: {
   accounts: Account[];
   value: CourantSelection;
   onChange: (v: CourantSelection) => void;
   className?: string;
+  withAll?: boolean;
 }) {
   const courant = accounts.filter((a) => a.account_type === "courant");
   if (courant.length <= 1) return null; // nothing to switch between
 
   const options: { key: string; label: string; value: CourantSelection; color?: string }[] = [
-    { key: "all", label: "Tous", value: "all" },
+    ...(withAll ? [{ key: "all", label: "Tous", value: "all" as CourantSelection }] : []),
     ...courant.map((a) => ({ key: String(a.id), label: a.name, value: a.id as CourantSelection, color: a.color })),
   ];
 
@@ -33,6 +36,7 @@ export function CourantTabs({
         return (
           <button
             key={o.key}
+            aria-pressed={active}
             onClick={() => onChange(o.value)}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",

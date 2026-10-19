@@ -134,6 +134,148 @@ test.describe("Plan de budget", () => {
     }
   });
 
+  test("le détail par catégorie : une enveloppe devient la somme de ses lignes", async ({ page, api }) => {
+    const { profile } = await household(api, "Détail E2E");
+    try {
+      await useProfile(page, profile.id);
+      await page.goto("/budget?vue=plan");
+      await expectAppReady(page);
+      await page.getByRole("button", { name: "Créer mon plan" }).click();
+      const editor = page.getByRole("dialog", { name: "Plan de budget · Compte courant" });
+      await editor.getByRole("tab", { name: "Détail par catégorie" }).click();
+
+      // One line per category, with what it usually does; the envelope is still one figure.
+      const sheet = editor.getByRole("table", { name: "Détail par catégorie" });
+      const variable = sheet.getByRole("rowgroup", { name: "Dépenses variables" });
+      await expect(variable.getByLabel("Montant mensuel de Dépenses variables")).toHaveValue("300");
+      await expect(variable.getByRole("row", { name: /Alimentation/ }).getByRole("button", { name: /300\s€/ })).toBeVisible();
+
+      // Detail it: each category starts from its typical month, and the envelope is their sum.
+      await variable.getByRole("button", { name: "Détailler avec le mois type" }).click();
+      await expect(sheet.getByLabel("Montant prévu pour Alimentation")).toHaveValue("300");
+      await expect(variable.getByLabel("Montant mensuel de Dépenses variables")).toHaveCount(0);
+
+      // A category nothing held joins the envelope, with a line of its own.
+      const outside = sheet.getByRole("rowgroup", { name: "Hors enveloppes" });
+      await outside.getByLabel("Enveloppe de Transport").click();
+      await page.getByRole("option", { name: "Dépenses variables" }).click();
+      await sheet.getByLabel("Montant prévu pour Transport").fill("80");
+      await expect(variable.getByRole("row").first()).toContainText(/380\s€/);
+      // 2 000 − (700 + 380), nothing set aside.
+      await expect(editor.getByText(/non affectés/)).toContainText(/\+920\s€/);
+
+      // The other view shows the same plan: the amount there is the sum, not a field.
+      await editor.getByRole("tab", { name: "Enveloppes" }).click();
+      await expect(editor.getByRole("region", { name: "Dépenses variables" }).getByRole("button", { name: /380\s€.*détaillé/ })).toBeVisible();
+      await editor.getByRole("button", { name: "Enregistrer" }).click();
+      await expect(page.getByText("Plan enregistré")).toBeVisible();
+
+      // In the plan, the envelope unfolds into its categories, each against its line.
+      const envelopes = page.getByRole("list", { name: "Enveloppes" });
+      const line = envelopes.getByRole("listitem").filter({ hasText: "Dépenses variables" });
+      await expect(line).toContainText(/plafond \/ mois · détaillé/);
+      await expect(line).toContainText(/reste 260\s€/);
+      await line.getByRole("button", { name: "Détail de Dépenses variables" }).click();
+      const categories = page.getByRole("list", { name: "Catégories de Dépenses variables" }).getByRole("listitem");
+      await expect(categories).toHaveCount(2);
+      await expect(categories.filter({ hasText: "Alimentation" })).toContainText(/120\s€ dépensés/);
+      await expect(categories.filter({ hasText: "Alimentation" })).toContainText(/reste 180\s€/);
+      await expect(categories.filter({ hasText: "Transport" })).toContainText(/reste 80\s€/);
+
+      // An envelope kept as one figure unfolds too: what each category did, and its typical month.
+      await envelopes.getByRole("button", { name: "Détail de Dépenses fixes" }).click();
+      const fixed = page.getByRole("list", { name: "Catégories de Dépenses fixes" }).getByRole("listitem");
+      await expect(fixed).toContainText(/700\s€ dépensés/);
+      await expect(fixed).toContainText(/mois type 700\s€/);
+
+      // The sum is not typed over: its amount opens the sheet, where it can become one figure again.
+      await line.getByRole("button", { name: /^380\s€$/ }).click();
+      await expect(editor.getByRole("tab", { name: "Détail par catégorie" })).toHaveAttribute("aria-selected", "true");
+      await editor.getByRole("button", { name: "Revenir à un seul montant" }).click();
+      const total = editor.getByLabel("Montant mensuel de Dépenses variables");
+      await expect(total).toHaveValue("380");
+
+      // Escape leaves a list or a field, never the popup: nothing typed is lost.
+      await total.fill("395");
+      await editor.getByLabel("Enveloppe de Transport").click();
+      await expect(page.getByRole("option", { name: "Hors enveloppes" })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("option", { name: "Hors enveloppes" })).toBeHidden();
+      await total.focus();
+      await page.keyboard.press("Escape");
+      await expect(editor).toBeVisible();
+      await expect(total).toHaveValue("395");
+      // A click outside the box closes it, like Annuler.
+      await page.mouse.click(8, 8);
+      await expect(editor).toBeHidden();
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
+  test("« planifiés » est un rappel : il ne change aucun montant du plan", async ({ page, api }) => {
+    const { profile, account } = await household(api, "Planifié E2E");
+    try {
+      await api.savePlan(account.id, PLAN);
+      await api.planExpense(account.id, "Alimentation", month(0), 31000);
+
+      await useProfile(page, profile.id);
+      await page.goto("/budget?vue=plan");
+      await expectAppReady(page);
+
+      // The plan reads as it was saved: 250 of ceiling and 120 spent, 2 000 − 950 − 150 left
+      // unassigned. The 310 planned in the budget table are named, and added to nothing.
+      const line = page.getByRole("list", { name: "Enveloppes" }).getByRole("listitem").filter({ hasText: "Courses" });
+      const unassigned = page.getByText("Non affecté").locator("xpath=..");
+      await expect(line).toContainText(/reste 130\s€/);
+      await expect(unassigned).toContainText(/\+900\s€/);
+      await line.getByRole("button", { name: /^310\s€ planifiés ce mois-ci$/ }).click();
+
+      const planned = page.getByRole("list", { name: "Dépenses planifiées" }).getByRole("listitem");
+      await expect(page.getByText(/ne change ni le montant de l'enveloppe, ni les totaux du plan/)).toBeVisible();
+      await expect(planned).toHaveCount(1);
+      await expect(planned).toContainText("Alimentation");
+      await expect(planned).toContainText(/310\s€/);
+
+      // Withdrawing it removes the reminder — here and in the budget table — and no amount moves.
+      await planned.getByRole("button", { name: "Retirer la dépense planifiée de Alimentation" }).click();
+      await expect(page.getByText("Dépense planifiée retirée")).toBeVisible();
+      await expect(line).not.toContainText("planifiés");
+      await expect(line).toContainText(/reste 130\s€/);
+      await expect(unassigned).toContainText(/\+900\s€/);
+      expect(await api.plannedExpenses()).toHaveLength(0);
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
+  test("le plan se choisit par compte : pas de « Tous »", async ({ page, api }) => {
+    const { profile } = await household(api, "Comptes E2E");
+    try {
+      await api.createAccount({ name: "Compte joint", bank_name: "Banque Test" });
+      await useProfile(page, profile.id);
+      await page.goto("/budget");
+      await expectAppReady(page);
+
+      // The table adds the accounts up: « Tous » is there, and selected.
+      await expect(page.getByRole("button", { name: "Tous", exact: true })).toHaveAttribute("aria-pressed", "true");
+
+      // A plan is per account: no « Tous », the first account is shown at once.
+      for (const tab of ["Plan", "Évolution"]) {
+        await page.getByRole("tab", { name: tab }).click();
+        await expect(page.getByRole("button", { name: "Tous", exact: true })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Compte courant", exact: true })).toHaveAttribute("aria-pressed", "true");
+        await expect(page.getByText("Choisissez un compte")).toHaveCount(0);
+      }
+      await page.getByRole("tab", { name: "Plan" }).click();
+      await expect(page.getByText("Pas encore de plan pour ce compte")).toBeVisible();
+      await page.getByRole("button", { name: "Compte joint", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Compte joint", exact: true })).toHaveAttribute("aria-pressed", "true");
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
   test("l'évolution montre chaque mois, et le tableau de bord le mois en cours", async ({ page, api }) => {
     const { profile, account } = await household(api, "Évolution E2E");
     try {
