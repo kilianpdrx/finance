@@ -9,8 +9,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import (
-    Account, AccountType, BudgetEntry, BudgetEnvelope, BudgetEnvelopeAmount, BudgetEnvelopeCategory, Category,
-    PlannedExpense, Transaction,
+    Account, AccountType, BudgetEntry, BudgetEnvelope, BudgetEnvelopeAmount, BudgetEnvelopeCategory, BudgetEnvelopeLine,
+    BudgetPlanNote, Category, PlannedExpense, Transaction,
 )
 from services import budget_plan as bp
 
@@ -57,9 +57,9 @@ def _env(name: str, kind: str, amount: int, categories=(), **kw) -> dict:
     return {"name": name, "kind": kind, "amount_cents": amount, "category_ids": list(categories), **kw}
 
 
-async def _save(client: AsyncClient, w: dict, envelopes: list, account=None):
+async def _save(client: AsyncClient, w: dict, envelopes: list, account=None, note=None):
     return await client.put("/api/budget-plan", params={"account_id": account or w["account"]},
-                            headers=w["h"], json={"envelopes": envelopes})
+                            headers=w["h"], json={"envelopes": envelopes, **({"note": note} if note is not None else {})})
 
 
 async def _plan(client: AsyncClient, w: dict, month: str = NOW, account=None) -> dict:
@@ -476,7 +476,9 @@ async def test_plan_is_scoped_to_its_profile(client: AsyncClient, seed_data: dic
 async def test_deleting_what_a_plan_points_at(client: AsyncClient, seed_data: dict, db_session: AsyncSession, extra_profile):
     w = await _world(db_session, seed_data)
     await _save(client, w, [
-        _env("Vie courante", "expense", 300_00, [w["courses"], w["loisirs"]]), _env("Imprévus", "unplanned", 100_00)])
+        _env("Vie courante", "expense", 300_00, [w["courses"], w["loisirs"]]), _env("Imprévus", "unplanned", 100_00),
+        _env("Placements", "goal", 0, [w["bourse"]], lines=[{"name": "Actions", "amount_cents": 200_00}], note="ETF le 5"),
+    ], note="Objectif : 20 %")
 
     # A category that becomes a group hands its place to its "Autre …" leaf.
     created = await client.post("/api/categories", headers=w["h"], json={"name": "Cinéma", "parent_id": w["loisirs"]})
@@ -492,7 +494,7 @@ async def test_deleting_what_a_plan_points_at(client: AsyncClient, seed_data: di
     await client.delete(f"/api/accounts/{w['account']}", headers=w["h"])
     gone = await client.delete(f"/api/accounts/{w['account']}", params={"permanent": "true"}, headers=w["h"])
     assert gone.status_code == 204, gone.text
-    for model in (BudgetEnvelope, BudgetEnvelopeCategory, BudgetEnvelopeAmount):
+    for model in (BudgetEnvelope, BudgetEnvelopeCategory, BudgetEnvelopeAmount, BudgetEnvelopeLine, BudgetPlanNote):
         assert (await db_session.execute(select(func.count(model.id)))).scalar() == 0
 
 
@@ -503,12 +505,14 @@ async def test_deleting_a_profile_with_a_plan(client: AsyncClient, seed_data: di
     db_session.add_all([account, category])
     await db_session.commit()
     w = {"h": {"X-Profile-Id": str(pid)}, "account": account.id}
-    assert (await _save(client, w, [_env("Courses", "expense", 300_00, [category.id])])).status_code == 200
+    assert (await _save(client, w, [_env("Courses", "expense", 0, [category.id],
+                                         lines=[{"name": "Marché", "amount_cents": 80_00}])], note="Serré ce mois-ci")).status_code == 200
 
     res = await client.delete(f"/api/profiles/{pid}")
 
     assert res.status_code in (200, 204), res.text
-    assert (await db_session.execute(select(func.count(BudgetEnvelope.id)))).scalar() == 0
+    for model in (BudgetEnvelope, BudgetEnvelopeLine, BudgetPlanNote):
+        assert (await db_session.execute(select(func.count(model.id)))).scalar() == 0
 
 
 # ── The detail: an amount per category ──────────────────────────────────────
@@ -588,7 +592,7 @@ async def test_a_detailed_amount_is_not_edited_as_one_figure(client: AsyncClient
     ])
     env = _by_name(await _plan(client, w))
     refused = await client.put(f"/api/budget-plan/envelopes/{env['Quotidien']['id']}/amount", headers=w["h"], json={"amount_cents": 500_00})
-    assert refused.status_code == 409 and "somme de ses catégories" in refused.json()["detail"]
+    assert refused.status_code == 409 and "somme de ses lignes" in refused.json()["detail"]
     allowed = await client.put(f"/api/budget-plan/envelopes/{env['Logement']['id']}/amount", headers=w["h"], json={"amount_cents": 850_00})
     assert allowed.status_code == 204
     env = _by_name(await _plan(client, w))
@@ -680,3 +684,99 @@ async def test_planned_entries_are_a_note_not_an_amount(client: AsyncClient, see
     assert (await client.delete(f"/api/planned-expenses/{daily['planned'][0]['id']}", headers=w["h"])).status_code == 204
     daily = _by_name(await _plan(client, w))["Quotidien"]
     assert (daily["amount_cents"], daily["planned_cents"], daily["planned"]) == (400_00, 0, [])
+
+
+# ── Sub-lines and notes ─────────────────────────────────────────────────────
+
+def _lines(*pairs) -> list:
+    return [{"name": name, "amount_cents": cents} for name, cents in pairs]
+
+
+async def test_sub_lines_make_the_amount_without_being_categories(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """« Investissements » split into « Épargne » and « Actions »: what the
+    envelope plans is their sum; what it realised is still its category's."""
+    w = await _world(db_session, seed_data)
+    db_session.add(Transaction(profile_id=w["pid"], account_id=w["account"], date=date(2026, 6, 3), description="VIR COURTIER",
+                               amount_cents=250_00, is_debit=True, category_id=w["bourse"], import_hash="sub-1"))
+    await db_session.commit()
+    res = await _save(client, w, [
+        _env("Investissements", "goal", 999_00, [w["bourse"]], lines=_lines(("Épargne", 500_00), ("Actions", 300_00))),
+        _env("Quotidien", "expense", 0, [w["courses"]], category_amounts={w["courses"]: 300_00},
+             lines=_lines(("Cadeaux", 50_00))),
+    ])
+    assert res.status_code == 200, res.text
+    env = _by_name(await _plan(client, w))
+    invest = env["Investissements"]
+    assert (invest["amount_cents"], invest["detailed"], invest["realised_cents"]) == (800_00, True, 250_00)
+    assert [(ln["name"], ln["amount_cents"]) for ln in invest["lines"]] == [("Épargne", 500_00), ("Actions", 300_00)]
+    assert all(ln["id"] for ln in invest["lines"])
+    # Category lines and sub-lines add up.
+    assert env["Quotidien"]["amount_cents"] == 350_00
+
+    # The inline amount is theirs to give: refused.
+    refused = await client.put(f"/api/budget-plan/envelopes/{invest['id']}/amount", headers=w["h"], json={"amount_cents": 1})
+    assert refused.status_code == 409 and "somme de ses lignes" in refused.json()["detail"]
+
+    # Saving again rewrites the sub-lines whole, and the amount follows.
+    await _save(client, w, [_env("Investissements", "goal", 0, [w["bourse"]], id=invest["id"], lines=_lines(("Actions", 400_00)))])
+    invest = _by_name(await _plan(client, w))["Investissements"]
+    assert (invest["amount_cents"], [ln["name"] for ln in invest["lines"]]) == (400_00, ["Actions"])
+    assert (await db_session.execute(select(func.count(BudgetEnvelopeLine.id)))).scalar() == 1
+
+
+async def test_deleting_a_category_keeps_the_sub_lines_in_the_sum(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    w = await _world(db_session, seed_data)
+    await _save(client, w, [_env("Quotidien", "expense", 0, [w["courses"], w["loisirs"]],
+                                 category_amounts={w["loisirs"]: 120_00}, lines=_lines(("Cadeaux", 50_00)))])
+    assert (await client.delete(f"/api/categories/{w['loisirs']}", headers=w["h"])).status_code in (200, 204)
+    daily = _by_name(await _plan(client, w))["Quotidien"]
+    assert (daily["detailed"], daily["amount_cents"]) == (True, 50_00)      # the sub-line is still planned
+
+
+async def test_notes_are_saved_with_the_plan(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    w = await _world(db_session, seed_data)
+    note = "Objectif : épargner 20 %.\nRevoir en janvier."
+    await _save(client, w, [_env("Courses", "expense", 300_00, [w["courses"]], note="Marché le samedi  ")], note=note)
+    plan = await _plan(client, w)
+    assert plan["note"] == note
+    assert _by_name(plan)["Courses"]["note"] == "Marché le samedi"           # trailing blanks dropped
+
+    # A second save replaces them; an empty note is no note.
+    courses = _by_name(plan)["Courses"]["id"]
+    await _save(client, w, [_env("Courses", "expense", 300_00, [w["courses"]], id=courses, note="  ")], note="")
+    plan = await _plan(client, w)
+    assert (plan["note"], _by_name(plan)["Courses"]["note"]) == (None, None)
+    assert (await db_session.execute(select(func.count(BudgetPlanNote.id)))).scalar() == 1
+
+    # Another account of the profile has a plan note of its own.
+    other = Account(profile_id=w["pid"], name="Joint", bank_name="B", account_type=AccountType.courant, currency="EUR")
+    db_session.add(other)
+    await db_session.commit()
+    await _save(client, w, [_env("Courses", "expense", 100_00, [w["courses"]])], account=other.id, note="Compte joint")
+    assert (await _plan(client, w))["note"] is None
+    assert (await _plan(client, w, account=other.id))["note"] == "Compte joint"
+
+
+async def test_sub_lines_and_notes_are_checked(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    w = await _world(db_session, seed_data)
+    cases = [
+        ([_env("Placements", "goal", 0, [w["bourse"]], lines=_lines(("  ", 100_00)))], None, "doit avoir un nom"),
+        ([_env("Placements", "goal", 0, [w["bourse"]], lines=_lines(("Actions", -1)))], None, "négatif"),
+        ([_env("Placements", "goal", 0, [w["bourse"]], lines=_lines(("x" * 81, 1)))], None, "80 caractères"),
+        ([_env("Imprévus", "unplanned", 100_00, lines=_lines(("Voiture", 50_00)))], None, "pas de sous-lignes"),
+        ([_env("Courses", "expense", 300_00, [w["courses"]], note="x" * 5001)], None, "5000 caractères"),
+        ([_env("Courses", "expense", 300_00, [w["courses"]])], "x" * 5001, "5000 caractères"),
+    ]
+    for envelopes, note, message in cases:
+        res = await _save(client, w, envelopes, note=note)
+        assert res.status_code == 400 and message in res.json()["detail"], (message, res.text)
+    assert (await db_session.execute(select(func.count()).select_from(BudgetEnvelope))).scalar() == 0
+
+    # In the editor, a sub-line being named is fine: the preview reads it.
+    preview = await client.post("/api/budget-plan/preview", params={"account_id": w["account"]}, headers=w["h"], json={
+        "envelopes": [_env("Placements", "goal", 0, [w["bourse"]], lines=_lines(("", 100_00), ("Actions", 50_00)))],
+        "note": "brouillon"})
+    assert preview.status_code == 200, preview.text
+    assert (preview.json()["envelopes"][0]["amount_cents"], preview.json()["note"]) == (150_00, "brouillon")
+    assert (await db_session.execute(select(func.count()).select_from(BudgetEnvelopeLine))).scalar() == 0
+

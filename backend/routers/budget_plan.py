@@ -12,16 +12,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies import current_profile_id
-from models import Account, AccountType, BudgetEnvelope, BudgetEnvelopeAmount, BudgetEnvelopeCategory
+from models import (
+    Account, AccountType, BudgetEnvelope, BudgetEnvelopeAmount, BudgetEnvelopeCategory, BudgetEnvelopeLine, BudgetPlanNote,
+)
 from schemas import (
     BudgetEvolutionOut, BudgetPlanIn, BudgetPlanOut, CategoryStatsOut, EnvelopeAmountIn, EnvelopeCategoryOut, EnvelopeIn,
-    EnvelopeOut, EvolutionCell, EvolutionRow, PlannedEntryOut, UnplannedSuggestion,
+    EnvelopeLineOut, EnvelopeOut, EvolutionCell, EvolutionRow, PlannedEntryOut, UnplannedSuggestion,
 )
 from services import budget_plan as bp
 
 router = APIRouter()
 
 _MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+NOTE_MAX = 5000
+LINE_NAME_MAX = 80
 
 
 async def _account(db: AsyncSession, pid: int, account_id: int) -> Account:
@@ -61,6 +65,8 @@ def _envelope_out(e: bp.Envelope, sums: bp.AccountSums, month: str, past: list[s
         id=e.id, name=e.name, kind=e.kind, category_ids=e.category_ids,
         amount_cents=amount, detailed=e.detailed,
         categories=[_category_out(e, c, sums, month, past) for c in e.category_ids],
+        lines=[EnvelopeLineOut(id=i, name=name, amount_cents=cents) for i, name, cents in e.lines],
+        note=e.note,
         planned_cents=e.planned(sums, month),
         planned=[PlannedEntryOut(id=i, category_id=c, amount_cents=cents)
                  for i, c, m, cents in sums.planned_entries if m == month and c in members],
@@ -73,7 +79,7 @@ def _envelope_out(e: bp.Envelope, sums: bp.AccountSums, month: str, past: list[s
 
 
 async def _plan_out(db: AsyncSession, pid: int, account: Account, month: str,
-                    envelopes: list[bp.Envelope], exists: bool) -> BudgetPlanOut:
+                    envelopes: list[bp.Envelope], exists: bool, note: Optional[str] = None) -> BudgetPlanOut:
     """One month of a plan — the saved one, or a proposal that is not saved."""
     categories = await bp.profile_categories(db, pid)
     past = bp.history_months(month, await bp.first_month_of(db, pid, account.id))
@@ -83,7 +89,7 @@ async def _plan_out(db: AsyncSession, pid: int, account: Account, month: str,
     income_ids = {cid for cid, c in categories.items() if c.is_income}
     out = bp.outside(sums, envelopes, income_ids, month)
     return BudgetPlanOut(
-        account_id=account.id, currency=account.currency or "EUR", month=month, exists=exists,
+        account_id=account.id, currency=account.currency or "EUR", month=month, exists=exists, note=note,
         envelopes=[_envelope_out(e, sums, month, past) for e in envelopes],
         outside_spent_cents=out.spent, outside_received_cents=out.received, outside_category_ids=out.category_ids,
         unplanned_cents=sums.unplanned.get(month, 0),
@@ -100,7 +106,8 @@ async def get_plan(
     """The account's plan read against one month (the current one by default)."""
     account = await _account(db, pid, account_id)
     envelopes = await bp.load_envelopes(db, pid, account.id)
-    return await _plan_out(db, pid, account, _month(month), envelopes, exists=bool(envelopes))
+    return await _plan_out(db, pid, account, _month(month), envelopes, exists=bool(envelopes),
+                           note=await bp.load_plan_note(db, pid, account.id))
 
 
 @router.get("/proposal", response_model=BudgetPlanOut)
@@ -225,6 +232,8 @@ def _check_plan(payload: BudgetPlanIn, categories: dict, account: Account, owned
     A `draft` is the editor's work in progress: a name still being typed is fine."""
     if sum(e.kind == bp.UNPLANNED for e in payload.envelopes) > 1:
         raise HTTPException(status_code=400, detail="Une seule enveloppe « Imprévus » par compte.")
+    if len(payload.note or "") > NOTE_MAX:
+        raise HTTPException(status_code=400, detail=f"La note du plan dépasse {NOTE_MAX} caractères.")
     eligible = bp.eligible_categories(categories, account.id)
     seen: set[int] = set()
     for e in payload.envelopes:
@@ -234,6 +243,17 @@ def _check_plan(payload: BudgetPlanIn, categories: dict, account: Account, owned
             raise HTTPException(status_code=404, detail="Enveloppe introuvable")
         if e.kind == bp.UNPLANNED and e.category_ids:
             raise HTTPException(status_code=400, detail="L'enveloppe « Imprévus » ne contient pas de catégories : elle reçoit les dépenses que vous marquez.")
+        if e.kind == bp.UNPLANNED and e.lines:
+            raise HTTPException(status_code=400, detail="L'enveloppe « Imprévus » n'a pas de sous-lignes : c'est une provision.")
+        if len(e.note or "") > NOTE_MAX:
+            raise HTTPException(status_code=400, detail=f"La note de « {e.name.strip()} » dépasse {NOTE_MAX} caractères.")
+        for line in e.lines or []:
+            if not line.name.strip() and not draft:
+                raise HTTPException(status_code=400, detail=f"Chaque sous-ligne de « {e.name.strip()} » doit avoir un nom.")
+            if len(line.name.strip()) > LINE_NAME_MAX:
+                raise HTTPException(status_code=400, detail=f"Le nom d'une sous-ligne ne dépasse pas {LINE_NAME_MAX} caractères.")
+            if line.amount_cents < 0:
+                raise HTTPException(status_code=400, detail="Un montant prévu ne peut pas être négatif.")
         for category_id, cents in (e.category_amounts or {}).items():
             if category_id not in e.category_ids:
                 raise HTTPException(status_code=400, detail="Un montant est prévu pour une catégorie qui n'est pas dans l'enveloppe.")
@@ -257,12 +277,21 @@ def _check_plan(payload: BudgetPlanIn, categories: dict, account: Account, owned
                 raise HTTPException(status_code=400, detail=f"« {category.name} » est une catégorie {side} : elle ne va pas dans cette enveloppe.")
 
 
-def _amounts(e: EnvelopeIn) -> tuple[int, dict[int, int]]:
-    """(the envelope's amount, its per-category detail). With a detail, the
-    amount is its sum — whatever `amount_cents` says: two figures that must
-    agree are one figure too many."""
+def _amounts(e: EnvelopeIn) -> tuple[int, dict[int, int], list[tuple[None, str, int]]]:
+    """(the envelope's amount, its per-category detail, its sub-lines). With
+    either, the amount is their sum — whatever `amount_cents` says: two figures
+    that must agree are one figure too many."""
     detail = dict(e.category_amounts or {})
-    return (sum(detail.values()) if detail else e.amount_cents), detail
+    lines = [(None, line.name.strip(), line.amount_cents) for line in e.lines or []]
+    if not detail and not lines:
+        return e.amount_cents, detail, lines
+    return sum(detail.values()) + sum(cents for _, _, cents in lines), detail, lines
+
+
+def _note(text: Optional[str]) -> Optional[str]:
+    """A note as stored: trailing blanks gone, nothing at all when empty."""
+    text = (text or "").rstrip()
+    return text or None
 
 
 @router.post("/preview", response_model=BudgetPlanOut)
@@ -284,9 +313,10 @@ async def preview_plan(
     _check_plan(payload, categories, account, owned, draft=True)
     envelopes = []
     for e in payload.envelopes:
-        amount, detail = _amounts(e)
-        envelopes.append(bp.Envelope(e.id, e.name, e.kind, sorted(e.category_ids), [(month, amount)], detail))
-    return await _plan_out(db, pid, account, month, envelopes, exists=False)
+        amount, detail, lines = _amounts(e)
+        envelopes.append(bp.Envelope(e.id, e.name, e.kind, sorted(e.category_ids), [(month, amount)], detail,
+                                     lines, _note(e.note)))
+    return await _plan_out(db, pid, account, month, envelopes, exists=False, note=_note(payload.note))
 
 
 @router.put("", response_model=BudgetPlanOut)
@@ -310,9 +340,12 @@ async def save_plan(
     _check_plan(payload, categories, account, set(existing))
     in_force = {e.id: bp.amount_in_force(e.amounts, month) for e in await bp.load_envelopes(db, pid, account.id)}
 
-    # Memberships are rewritten whole; they hang off envelopes, so they go first.
+    # Memberships and sub-lines are rewritten whole; they hang off envelopes, so they go first.
     await db.execute(delete(BudgetEnvelopeCategory).where(
         BudgetEnvelopeCategory.profile_id == pid, BudgetEnvelopeCategory.account_id == account.id))
+    if existing:
+        await db.execute(delete(BudgetEnvelopeLine).where(
+            BudgetEnvelopeLine.profile_id == pid, BudgetEnvelopeLine.envelope_id.in_(set(existing))))
     removed = set(existing) - {e.id for e in payload.envelopes if e.id is not None}
     if removed:
         await db.execute(delete(BudgetEnvelopeAmount).where(
@@ -325,19 +358,28 @@ async def save_plan(
         if row is None:
             row = BudgetEnvelope(profile_id=pid, account_id=account.id)
             db.add(row)
-        row.name, row.kind, row.position = e.name.strip(), e.kind, position
+        row.name, row.kind, row.position, row.note = e.name.strip(), e.kind, position, _note(e.note)
         await db.flush()
-        amount, detail = _amounts(e)
+        amount, detail, lines = _amounts(e)
         for category_id in e.category_ids:
             db.add(BudgetEnvelopeCategory(
                 profile_id=pid, envelope_id=row.id, category_id=category_id, account_id=account.id,
                 amount_cents=detail.get(category_id)))
+        for line_position, (_, name, cents) in enumerate(lines):
+            db.add(BudgetEnvelopeLine(profile_id=pid, envelope_id=row.id, name=name, amount_cents=cents,
+                                      position=line_position))
         if in_force.get(row.id) != amount:
             await bp.set_amount(db, pid, row.id, month, amount)
+    plan_note = (await db.execute(select(BudgetPlanNote).where(
+        BudgetPlanNote.profile_id == pid, BudgetPlanNote.account_id == account.id))).scalar_one_or_none()
+    if plan_note is None:
+        plan_note = BudgetPlanNote(profile_id=pid, account_id=account.id)
+        db.add(plan_note)
+    plan_note.note = _note(payload.note)
     await db.commit()
 
     envelopes = await bp.load_envelopes(db, pid, account.id)
-    return await _plan_out(db, pid, account, month, envelopes, exists=bool(envelopes))
+    return await _plan_out(db, pid, account, month, envelopes, exists=bool(envelopes), note=plan_note.note)
 
 
 @router.put("/envelopes/{envelope_id}/amount", status_code=204)
@@ -357,9 +399,12 @@ async def set_envelope_amount(
         BudgetEnvelopeCategory.envelope_id == envelope.id, BudgetEnvelopeCategory.profile_id == pid,
         BudgetEnvelopeCategory.amount_cents.isnot(None),
     ).limit(1))).scalar_one_or_none()
+    detailed = detailed or (await db.execute(select(BudgetEnvelopeLine.id).where(
+        BudgetEnvelopeLine.envelope_id == envelope.id, BudgetEnvelopeLine.profile_id == pid,
+    ).limit(1))).scalar_one_or_none()
     if detailed is not None:
         raise HTTPException(status_code=409, detail=(
-            f"Le montant de « {envelope.name} » est la somme de ses catégories : "
+            f"Le montant de « {envelope.name} » est la somme de ses lignes : "
             "modifiez-les dans « Modifier le plan »."))
     await bp.set_amount(db, pid, envelope.id, bp.current_month(), payload.amount_cents)
     await db.commit()

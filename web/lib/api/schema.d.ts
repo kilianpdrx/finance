@@ -1240,6 +1240,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/investments/binance/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Binance Status
+         * @description Drives the Paramètres tab and the sync button. Never the key or the secret.
+         */
+        get: operations["binance_status_api_investments_binance_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/binance/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Binance Test
+         * @description The key works and can only read.
+         */
+        post: operations["binance_test_api_investments_binance_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/binance/sync-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Binance Sync Preview
+         * @description What a sync would change, read from Binance. Writes nothing.
+         */
+        post: operations["binance_sync_preview_api_investments_binance_sync_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/investments/binance/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Binance Sync Now
+         * @description Read Binance again and apply it — the browser's preview is never what is
+         *     written. Same path as the launch sync.
+         */
+        post: operations["binance_sync_now_api_investments_binance_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/investments/accounts": {
         parameters: {
             query?: never;
@@ -2176,6 +2257,77 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** BinanceLine */
+        BinanceLine: {
+            /** Asset */
+            asset: string;
+            /** Name */
+            name: string;
+            /** Is Cash */
+            is_cash: boolean;
+            /** Quantity */
+            quantity: number;
+            /** Previous Quantity */
+            previous_quantity?: number | null;
+            /** Price Cents */
+            price_cents?: number | null;
+            /** Value Cents */
+            value_cents?: number | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "new" | "updated" | "unchanged" | "removed";
+            /** Review Cost */
+            review_cost: boolean;
+        };
+        /** BinanceSyncPreview */
+        BinanceSyncPreview: {
+            /** Account Id */
+            account_id: number;
+            /** Lines */
+            lines: components["schemas"]["BinanceLine"][];
+            /** Total Cents */
+            total_cents: number;
+            /** Small Count */
+            small_count: number;
+            /** Small Cents */
+            small_cents: number;
+            /** Unpriced */
+            unpriced: string[];
+            /** Unread Wallets */
+            unread_wallets: components["schemas"]["BinanceWallet"][];
+        };
+        /** BinanceSyncResult */
+        BinanceSyncResult: {
+            /** Account Id */
+            account_id: number;
+            /** Lines */
+            lines: components["schemas"]["BinanceLine"][];
+            /** Total Cents */
+            total_cents: number;
+            /** Small Count */
+            small_count: number;
+            /** Small Cents */
+            small_cents: number;
+            /** Unpriced */
+            unpriced: string[];
+            /** Unread Wallets */
+            unread_wallets: components["schemas"]["BinanceWallet"][];
+            /** Created */
+            created: number;
+            /** Updated */
+            updated: number;
+            /** Removed */
+            removed: number;
+        };
+        /** BinanceWallet */
+        BinanceWallet: {
+            /** Name */
+            name: string;
+            /** Value Cents */
+            value_cents: number;
+        };
         /** Body_confirm_api_upload_confirm_post */
         Body_confirm_api_upload_confirm_post: {
             /** File */
@@ -2267,6 +2419,8 @@ export interface components {
         BudgetPlanIn: {
             /** Envelopes */
             envelopes: components["schemas"]["EnvelopeIn"][];
+            /** Note */
+            note?: string | null;
         };
         /** BudgetPlanOut */
         BudgetPlanOut: {
@@ -2278,6 +2432,8 @@ export interface components {
             month: string;
             /** Exists */
             exists: boolean;
+            /** Note */
+            note: string | null;
             /** Envelopes */
             envelopes: components["schemas"]["EnvelopeOut"][];
             /** Outside Spent Cents */
@@ -2668,6 +2824,35 @@ export interface components {
             category_amounts?: {
                 [key: string]: number;
             } | null;
+            /** Lines */
+            lines?: components["schemas"]["EnvelopeLineIn"][] | null;
+            /** Note */
+            note?: string | null;
+        };
+        /**
+         * EnvelopeLineIn
+         * @description A sub-line that is not a category (« Épargne », « Actions »).
+         */
+        EnvelopeLineIn: {
+            /** Name */
+            name: string;
+            /**
+             * Amount Cents
+             * @default 0
+             */
+            amount_cents: number;
+        };
+        /**
+         * EnvelopeLineOut
+         * @description A sub-line: a planned amount, nothing realised (it has no category).
+         */
+        EnvelopeLineOut: {
+            /** Id */
+            id: number | null;
+            /** Name */
+            name: string;
+            /** Amount Cents */
+            amount_cents: number;
         };
         /** EnvelopeOut */
         EnvelopeOut: {
@@ -2688,6 +2873,10 @@ export interface components {
             detailed: boolean;
             /** Categories */
             categories: components["schemas"]["EnvelopeCategoryOut"][];
+            /** Lines */
+            lines: components["schemas"]["EnvelopeLineOut"][];
+            /** Note */
+            note: string | null;
             /** Planned Cents */
             planned_cents: number;
             /** Planned */
@@ -2861,7 +3050,7 @@ export interface components {
             /** Quantity */
             quantity: number;
             /** Cost Basis Cents */
-            cost_basis_cents: number;
+            cost_basis_cents?: number | null;
             /**
              * Currency
              * @default USD
@@ -5925,6 +6114,8 @@ export interface operations {
             query?: {
                 period?: string;
                 asset_type?: string;
+                /** @description « binance » pour une position synchronisée depuis Binance */
+                source?: string | null;
             };
             header?: never;
             path: {
@@ -6196,6 +6387,130 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HoldingsImportConfirmResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    binance_status_api_investments_binance_status_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    binance_test_api_investments_binance_test_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    binance_sync_preview_api_investments_binance_sync_preview_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BinanceSyncPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    binance_sync_now_api_investments_binance_sync_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BinanceSyncResult"];
                 };
             };
             /** @description Validation Error */

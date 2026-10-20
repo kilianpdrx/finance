@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 import database
 from models import Base
 
-HEAD = "017_envelope_category_amount"
+HEAD = "019_budget_lines_notes"
 
 
 @pytest.fixture
@@ -222,3 +222,97 @@ def test_category_amount_is_added_to_an_existing_plan(temp_db):
     assert tuple(link) == (9, 3, 7, 1, None)
     assert amount == 40000
     assert unique == {"uq_envelope_category_per_account"}
+
+
+def test_holdings_get_a_sync_source_and_accept_an_unknown_cost(temp_db):
+    """An install on 017 has `holdings.cost_basis_cents NOT NULL` and no
+    `sync_source`: upgrading rebuilds the table, keeps every position and its
+    cost, keeps the one-ticker-per-account constraint, and then accepts a
+    position whose cost is unknown."""
+    eng = create_engine(f"sqlite:///{temp_db}")
+    Base.metadata.create_all(eng)
+    with eng.begin() as c:
+        # Rebuild the pre-018 shape, with one position in it.
+        c.execute(text("DROP TABLE holdings"))
+        c.execute(text(
+            "CREATE TABLE holdings (id INTEGER NOT NULL, profile_id INTEGER, account_id INTEGER NOT NULL,"
+            " ticker VARCHAR NOT NULL, name VARCHAR NOT NULL, quantity FLOAT NOT NULL,"
+            " cost_basis_cents INTEGER NOT NULL, currency VARCHAR, asset_type VARCHAR, added_date DATE,"
+            " notes VARCHAR, created_at DATETIME, isin VARCHAR, ref_price_cents INTEGER, ref_price_date DATE,"
+            " price_locked BOOLEAN, PRIMARY KEY (id),"
+            " CONSTRAINT uq_holding_account_ticker UNIQUE (account_id, ticker),"
+            " FOREIGN KEY(profile_id) REFERENCES profiles (id), FOREIGN KEY(account_id) REFERENCES accounts (id))"
+        ))
+        c.execute(text("INSERT INTO profiles (id, name, color, is_default) VALUES (1, 'P', '#000', 1)"))
+        c.execute(text("INSERT INTO accounts (id, profile_id, name, bank_name, account_type, currency, color, is_active)"
+                       " VALUES (1, 1, 'A', 'B', 'investissement', 'EUR', '#000', 1)"))
+        c.execute(text("INSERT INTO holdings (id, profile_id, account_id, ticker, name, quantity, cost_basis_cents,"
+                       " currency, asset_type, price_locked) VALUES (4, 1, 1, 'CW8.PA', 'MSCI World', 3, 150000,"
+                       " 'EUR', 'etf', 0)"))
+    eng.dispose()
+    database._sync_schema_blocking()  # stamps head (no alembic_version yet)
+    eng = create_engine(f"sqlite:///{temp_db}")
+    with eng.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num='017_envelope_category_amount'"))
+    eng.dispose()
+
+    database._sync_schema_blocking()  # upgrade path: runs 018
+    database._sync_schema_blocking()  # and again: nothing left to do
+
+    assert _version(temp_db) == HEAD
+    eng = create_engine(f"sqlite:///{temp_db}")
+    try:
+        cols = {c["name"]: c for c in inspect(eng).get_columns("holdings")}
+        unique = {u["name"] for u in inspect(eng).get_unique_constraints("holdings")}
+        with eng.begin() as c:
+            row = c.execute(text("SELECT id, ticker, quantity, cost_basis_cents, sync_source FROM holdings")).one()
+            c.execute(text("INSERT INTO holdings (profile_id, account_id, ticker, name, quantity, cost_basis_cents,"
+                           " currency, asset_type, sync_source) VALUES (1, 1, 'BTC', 'Bitcoin', 0.1, NULL, 'EUR',"
+                           " 'crypto', 'binance')"))
+    finally:
+        eng.dispose()
+    assert cols["cost_basis_cents"]["nullable"] and "sync_source" in cols
+    assert tuple(row) == (4, "CW8.PA", 3, 150000, None)
+    assert unique == {"uq_holding_account_ticker"}
+
+
+def test_sub_lines_and_notes_are_added_to_an_existing_plan(temp_db):
+    """An install on 018 has plans without sub-lines or notes: upgrading adds
+    them, empty, and leaves every envelope as it was."""
+    eng = create_engine(f"sqlite:///{temp_db}")
+    Base.metadata.create_all(eng)
+    with eng.begin() as c:
+        c.execute(text("DROP TABLE budget_envelope_lines"))
+        c.execute(text("DROP TABLE budget_plans"))
+        c.execute(text("ALTER TABLE budget_envelopes DROP COLUMN note"))
+        c.execute(text("INSERT INTO profiles (id, name, color, is_default) VALUES (1, 'P', '#000', 1)"))
+        c.execute(text("INSERT INTO accounts (id, profile_id, name, bank_name, account_type, currency, color, is_active)"
+                       " VALUES (1, 1, 'A', 'B', 'courant', 'EUR', '#000', 1)"))
+        c.execute(text("INSERT INTO budget_envelopes (id, profile_id, account_id, name, kind, position)"
+                       " VALUES (3, 1, 1, 'Investissements', 'goal', 0)"))
+        c.execute(text("INSERT INTO budget_envelope_amounts (id, profile_id, envelope_id, effective_from, amount_cents)"
+                       " VALUES (4, 1, 3, '2026-10', 80000)"))
+    eng.dispose()
+    database._sync_schema_blocking()  # stamps head (no alembic_version yet)
+    eng = create_engine(f"sqlite:///{temp_db}")
+    with eng.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num='018_holding_binance'"))
+    eng.dispose()
+
+    database._sync_schema_blocking()  # upgrade path: runs 019
+    database._sync_schema_blocking()  # and again: nothing left to do
+
+    assert _version(temp_db) == HEAD
+    eng = create_engine(f"sqlite:///{temp_db}")
+    try:
+        tables = set(inspect(eng).get_table_names())
+        cols = {c["name"] for c in inspect(eng).get_columns("budget_envelopes")}
+        unique = {u["name"] for u in inspect(eng).get_unique_constraints("budget_plans")}
+        with eng.connect() as c:
+            envelope = c.execute(text("SELECT id, name, kind, note FROM budget_envelopes")).one()
+            amount = c.execute(text("SELECT amount_cents FROM budget_envelope_amounts")).scalar()
+    finally:
+        eng.dispose()
+    assert {"budget_envelope_lines", "budget_plans"} <= tables and "note" in cols
+    assert unique == {"uq_budget_plan_account"}
+    assert tuple(envelope) == (3, "Investissements", "goal", None) and amount == 80000

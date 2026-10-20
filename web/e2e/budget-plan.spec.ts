@@ -213,6 +213,61 @@ test.describe("Plan de budget", () => {
     }
   });
 
+  test("des sous-lignes qui ne sont pas des catégories, et des notes", async ({ page, api }) => {
+    const { profile, account } = await household(api, "Sous-lignes E2E");
+    try {
+      await api.savePlan(account.id, [...PLAN, { name: "Investissements", kind: "goal", amount_cents: 0 }]);
+      await useProfile(page, profile.id);
+      await page.goto("/budget?vue=plan");
+      await expectAppReady(page);
+      await page.getByRole("button", { name: "Modifier le plan" }).click();
+      const editor = page.getByRole("dialog", { name: "Plan de budget · Compte courant" });
+
+      // « Investissements » split into « Épargne » and « Actions »: the envelope is their sum.
+      const invest = editor.getByRole("region", { name: "Investissements" });
+      await invest.getByRole("button", { name: "Sous-ligne", exact: true }).click();
+      await invest.getByLabel("Nom de la sous-ligne").fill("Épargne");
+      await invest.getByLabel("Montant de Épargne").fill("500");
+      await invest.getByRole("button", { name: "Sous-ligne", exact: true }).click();
+      await invest.getByLabel("Nom de la sous-ligne").nth(1).fill("Actions");
+      await invest.getByLabel("Montant de Actions").fill("300");
+      await expect(invest.getByRole("button", { name: /800\s€.*détaillé/ })).toBeVisible();
+
+      // The sheet shows the same sub-lines, editable in its amounts column.
+      await editor.getByRole("tab", { name: "Détail par catégorie" }).click();
+      const group = editor.getByRole("table", { name: "Détail par catégorie" }).getByRole("rowgroup", { name: "Investissements" });
+      await expect(group.getByLabel("Montant de Actions")).toHaveValue("300");
+      await editor.getByRole("tab", { name: "Enveloppes" }).click();
+
+      // A note on the envelope, and one on the plan.
+      await invest.getByRole("button", { name: "Note", exact: true }).click();
+      await invest.getByLabel("Note de Investissements").fill("Actions : virement ETF le 5");
+      await editor.getByLabel("Notes du plan").fill("Objectif : épargner 20 %\nRevoir en janvier");
+      await editor.getByRole("button", { name: "Enregistrer" }).click();
+      await expect(page.getByText("Plan enregistré")).toBeVisible();
+
+      // In the plan: the note above the envelopes, the sub-lines and the envelope note when unfolded.
+      await expect(page.getByText("Objectif : épargner 20 %")).toBeVisible();
+      const envelopes = page.getByRole("list", { name: "Enveloppes" });
+      const line = envelopes.getByRole("listitem").filter({ hasText: "Investissements" }).first();
+      await expect(line).toContainText(/800\s€/);
+      await expect(line).toContainText("Actions : virement ETF le 5");
+      await line.getByRole("button", { name: "Détail de Investissements" }).click();
+      const detail = page.getByRole("list", { name: "Catégories de Investissements" }).getByRole("listitem");
+      await expect(detail).toHaveCount(2);
+      await expect(detail.filter({ hasText: "Épargne" })).toContainText(/500\s€/);
+      await expect(detail.filter({ hasText: "Actions" })).toContainText("prévu, non suivi par catégorie");
+
+      // Reopened, the editor has everything back.
+      await page.getByRole("button", { name: "Modifier le plan" }).click();
+      await expect(editor.getByLabel("Notes du plan")).toHaveValue("Objectif : épargner 20 %\nRevoir en janvier");
+      await expect(invest.getByLabel("Note de Investissements")).toHaveValue("Actions : virement ETF le 5");
+      await expect(invest.getByLabel("Montant de Épargne")).toHaveValue("500");
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
   test("« planifiés » est un rappel : il ne change aucun montant du plan", async ({ page, api }) => {
     const { profile, account } = await household(api, "Planifié E2E");
     try {

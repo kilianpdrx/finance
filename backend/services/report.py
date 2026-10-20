@@ -328,9 +328,10 @@ def _xlsx_investments(wb, data, bold):
                 round((h.get("quantity") or 0), 4),
                 _eur(h.get("current_price_cents") or 0),
                 _eur(h.get("value_in_account_ccy_cents") or h.get("current_value_cents") or 0),
-                _eur(h.get("cost_basis_cents") or 0),
-                _eur(h.get("gain_cents") or 0),
-                round((h.get("gain_pct") or 0), 1),
+                # Unknown cost (a Binance coin with no PRU yet): blank, not a cost of 0.
+                _eur(h["cost_basis_cents"]) if h.get("cost_basis_cents") is not None else None,
+                _eur(h["gain_cents"]) if h.get("gain_cents") is not None else None,
+                round(h["gain_pct"], 1) if h.get("gain_pct") is not None else None,
             ])
     for col, w in (("A", 16), ("B", 12), ("C", 30), ("D", 12)):
         wsp.column_dimensions[col].width = w
@@ -605,9 +606,9 @@ def _pdf_investments(e, data, base_ccy, png_image, styled_table, st_h2, rc, REG,
                 h.get("ticker") or "", (h.get("name") or "")[:34], h.get("asset_type") or "",
                 f"{h.get('quantity') or 0:g}",
                 cents_to_display(h.get("value_in_account_ccy_cents") or h.get("current_value_cents") or 0, a.get("currency", base_ccy)),
-                cents_to_display(h.get("cost_basis_cents") or 0, a.get("currency", base_ccy)),
-                cents_to_display(h.get("gain_cents") or 0, a.get("currency", base_ccy)),
-                f"{h.get('gain_pct') or 0:.1f}%",
+                cents_to_display(h["cost_basis_cents"], a.get("currency", base_ccy)) if h.get("cost_basis_cents") is not None else "—",
+                cents_to_display(h["gain_cents"], a.get("currency", base_ccy)) if h.get("gain_cents") is not None else "—",
+                f"{h['gain_pct']:.1f}%" if h.get("gain_pct") is not None else "—",
             ])
         e.append(styled_table(rows, col_widths=[2.5 * cm, 8 * cm, 2.5 * cm, 2.5 * cm, 3.5 * cm, 3.5 * cm, 3.2 * cm, 2 * cm]))
 

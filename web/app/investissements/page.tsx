@@ -18,7 +18,8 @@ import { DividendCalendar } from "@/components/investments/dividend-calendar";
 import { DividendSectorDonut } from "@/components/investments/dividend-sector-donut";
 import { DividendPositionsTable } from "@/components/investments/dividend-positions-table";
 import { IbkrSyncDialog } from "@/components/investments/ibkr-sync-dialog";
-import { useInvestmentAccounts, useInvestmentTotalSeries, useRefreshPrices, useResolveTickers, useBaseCurrency, useIbkrStatus, type InvestmentAccount, type NetWorthPoint } from "@/lib/api/hooks";
+import { BinanceSyncDialog } from "@/components/investments/binance-sync-dialog";
+import { useInvestmentAccounts, useInvestmentTotalSeries, useRefreshPrices, useResolveTickers, useBaseCurrency, useIbkrStatus, useBinanceStatus, type InvestmentAccount, type NetWorthPoint } from "@/lib/api/hooks";
 import { monthChange, portfolioTotals, topPositions } from "@/lib/investments";
 import { LONG_TERM_GROUP } from "@/lib/asset-types";
 import { formatCents, formatMonthLabel } from "@/lib/format";
@@ -31,6 +32,8 @@ export default function InvestissementsPage() {
   const baseCurrency = useBaseCurrency();
   const { data: ibkrStatus } = useIbkrStatus();
   const [ibkrOpen, setIbkrOpen] = useState(false);
+  const { data: binanceStatus } = useBinanceStatus();
+  const [binanceOpen, setBinanceOpen] = useState(false);
   const [tab, setTab] = useState("synthese");
   // The account opened from the Synthèse table: its row starts unfolded.
   const [openAccountId, setOpenAccountId] = useState<number | null>(null);
@@ -262,6 +265,12 @@ export default function InvestissementsPage() {
               Synchroniser IBKR
             </Button>
           )}
+          {binanceStatus?.configured && (
+            <Button variant="outline" size="sm" onClick={() => setBinanceOpen(true)} title="Mettre à jour les positions depuis Binance">
+              <DownloadCloud className="mr-1.5 size-3.5" />
+              Synchroniser Binance
+            </Button>
+          )}
           {liveAccounts.length > 0 && (
             <>
               <Button variant="outline" size="sm" onClick={handleResolve} disabled={resolveTickers.isPending} title="Corriger les tickers introuvables via OpenFIGI">
@@ -278,6 +287,7 @@ export default function InvestissementsPage() {
         {ibkrStatus?.account_id != null && (
           <IbkrSyncDialog open={ibkrOpen} onOpenChange={setIbkrOpen} accountId={ibkrStatus.account_id} />
         )}
+        <BinanceSyncDialog open={binanceOpen} onOpenChange={setBinanceOpen} />
         {liveAccounts.length === 0 ? (
           <Card><EmptyState icon={TrendingUp} title="Aucun compte live" description="Importez un CSV de positions (PEA, IBKR) pour suivre des cours en direct." /></Card>
         ) : (

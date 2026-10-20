@@ -37,7 +37,7 @@ interface Props {
   accountId: number;
   accountName: string;
   accountColor: string;
-  holdings: { ticker: string; quantity: number; cost_basis_cents: number; current_value_cents: number | null }[];
+  holdings: { ticker: string; quantity: number; cost_basis_cents: number | null; current_value_cents: number | null }[];
 }
 
 export function BenchmarkChart({ accountId, accountColor, holdings }: Props) {

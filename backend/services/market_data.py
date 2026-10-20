@@ -10,6 +10,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Holding, PriceCache, DividendCache
+from services import binance
 
 _history_cache: TTLCache = TTLCache(maxsize=200, ttl=3600)
 
@@ -351,6 +352,53 @@ async def _fetch_crypto_prices(ids: list[str]) -> dict[str, tuple[float, str]]:
         return {}
 
 
+async def _fetch_binance_prices(coins: list[str]) -> dict[str, float]:
+    """Euro price of each coin synced from Binance (services/binance.py)."""
+    if not coins:
+        return {}
+    if _backoff.blocked("binance"):
+        logger.info("Skipping binance call — backing off after repeated failures")
+        return {}
+    try:
+        prices = await binance.eur_prices(coins)
+    except binance.BinanceError as e:
+        logger.warning("Binance prices failed: %s", e)
+        _backoff.record_failure("binance")
+        return {}
+    _backoff.record_success("binance")
+    return prices
+
+
+def price_key(h: Holding) -> str:
+    """The price-cache row a holding reads: a Binance coin's own key (never the
+    bare code — Yahoo's "BTC" is an ETF), a CoinGecko id in lower case, a Yahoo
+    symbol in upper case."""
+    if h.sync_source == binance.BINANCE:
+        return binance.price_key_for(h.ticker)
+    return h.ticker.lower() if h.asset_type == "crypto" else h.ticker.upper()
+
+
+async def history_for(h: Holding, period: str = "1y") -> list[dict]:
+    """A holding's closes ([{date, close}] in its own currency), from the
+    provider that prices it."""
+    if h.sync_source == binance.BINANCE:
+        return await binance_history(h.ticker, period)
+    return await fetch_historical_prices(h.ticker, period)
+
+
+async def binance_history(coin: str, period: str = "1y") -> list[dict]:
+    if _backoff.blocked("binance"):
+        return []
+    try:
+        series = await binance.eur_history(coin, period)
+    except binance.BinanceError as e:
+        logger.warning("Binance history failed for %s: %s", coin, e)
+        _backoff.record_failure("binance")
+        return []
+    _backoff.record_success("binance")
+    return series
+
+
 async def fetch_isin_for_ticker(ticker: str) -> Optional[str]:
     """Look up a ticker's ISIN via yfinance (e.g. to backfill IBKR positions)."""
 
@@ -567,16 +615,20 @@ async def refresh_all_prices(db: AsyncSession, force: bool = False) -> int:
 
     stock_tickers = []
     crypto_ids = []
+    binance_coins = []
     for h in holdings:
         if h.price_locked:
             continue  # excluded from auto-refresh — keeps its manual/ref price
-        if h.asset_type == "crypto":
+        if h.sync_source == binance.BINANCE:
+            binance_coins.append(h.ticker.upper())
+        elif h.asset_type == "crypto":
             crypto_ids.append(h.ticker.lower())
         else:
             stock_tickers.append(h.ticker.upper())
 
     stock_tickers = list(set(stock_tickers))
     crypto_ids = list(set(crypto_ids))
+    binance_coins = list(set(binance_coins))
 
     # Skip tickers whose cached price is still fresh. The scheduler fires every
     # 15 min and the user can also refresh by hand; without this every trigger
@@ -592,16 +644,19 @@ async def refresh_all_prices(db: AsyncSession, force: bool = False) -> int:
                 continue
             if last >= cutoff:
                 fresh.add(tkr)
-        skipped = len([t for t in stock_tickers if t in fresh]) + len([c for c in crypto_ids if c in fresh])
+        skipped = (len([t for t in stock_tickers if t in fresh]) + len([c for c in crypto_ids if c in fresh])
+                   + len([c for c in binance_coins if binance.price_key_for(c) in fresh]))
         stock_tickers = [t for t in stock_tickers if t not in fresh]
         crypto_ids = [c for c in crypto_ids if c not in fresh]
+        binance_coins = [c for c in binance_coins if binance.price_key_for(c) not in fresh]
         if skipped:
             logger.info("Price refresh: %d ticker(s) still fresh, skipped", skipped)
-        if not stock_tickers and not crypto_ids:
+        if not stock_tickers and not crypto_ids and not binance_coins:
             return 0
 
     stock_prices = await _fetch_stock_prices(stock_tickers)
     crypto_prices = await _fetch_crypto_prices(crypto_ids)
+    binance_prices = await _fetch_binance_prices(binance_coins)
 
     now = datetime.utcnow()
     count = 0
@@ -621,6 +676,9 @@ async def refresh_all_prices(db: AsyncSession, force: bool = False) -> int:
             "VALUES (:ticker, :price_cents, :currency, :fetched_at, 'live')"
         ), {"ticker": coin_id, "price_cents": price_cents, "currency": currency, "fetched_at": now})
         count += 1
+
+    await binance.store_prices(db, binance_prices)
+    count += len(binance_prices)
 
     # Guard: a holding with a broker reference keeps the broker price whenever the
     # live quote is missing, in the wrong currency, or deviates so far from the
@@ -718,7 +776,8 @@ async def refresh_all_prices(db: AsyncSession, force: bool = False) -> int:
         logger.info("Cached dividend data for %d ticker(s), %d history entries.", div_count, hist_count)
 
     await db.commit()
-    logger.info("Refreshed %d prices (%d stocks, %d crypto)", count, len(stock_prices), len(crypto_prices))
+    logger.info("Refreshed %d prices (%d stocks, %d crypto, %d Binance)",
+                count, len(stock_prices), len(crypto_prices), len(binance_prices))
     return count
 
 
@@ -789,12 +848,12 @@ async def warm_history_cache(db: AsyncSession, period: str = "2y") -> int:
     # `price_locked != True` in SQL would also discard rows where the column is
     # NULL (the default is ORM-side), silently skipping a real holding — so the
     # lock is tested in Python, like everywhere else.
-    tickers = sorted({
-        h.ticker for h in (await db.execute(select(Holding))).scalars().all()
-        if h.ticker and not h.price_locked
-    })
-    if not tickers:
+    unique: dict[tuple, Holding] = {}
+    for h in (await db.execute(select(Holding))).scalars().all():
+        if h.ticker and not h.price_locked:
+            unique.setdefault((h.sync_source, h.ticker), h)
+    if not unique:
         return 0
-    await asyncio.gather(*(fetch_historical_prices(t, period) for t in tickers))
-    logger.info("Warmed price history for %d ticker(s)", len(tickers))
-    return len(tickers)
+    await asyncio.gather(*(history_for(h, period) for h in unique.values()))
+    logger.info("Warmed price history for %d ticker(s)", len(unique))
+    return len(unique)

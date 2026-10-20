@@ -35,7 +35,7 @@ installé. Le détail est dans le `README.md` fourni.
 | **Analyses** | Dépenses par catégorie, tendances mensuelles avec moyenne mobile, flux de trésorerie |
 | **Budget** | Budget annuel par catégorie (un compte, ou tous convertis dans une seule devise), dépenses planifiées, comparaison prévu / réalisé ; plan mensuel par enveloppes (par compte) ou détaillé catégorie par catégorie, provision pour imprévus, évolution sur plusieurs mois |
 | **Comptes** | Courant, épargne, crédit, immobilier ; soldes manuels, patrimoine dans le temps, clôture (l'historique reste) ou suppression définitive |
-| **Investissements** | Portefeuille (actions, ETF, crypto), cours et dividendes automatiques, import de positions, synchro IBKR |
+| **Investissements** | Portefeuille (actions, ETF, crypto), cours et dividendes automatiques, import de positions, synchro IBKR et Binance (clé en lecture seule) |
 | **Emprunts** | Amortissement, capital restant, intérêts, remboursements anticipés |
 | **Objectifs** | Objectifs d'épargne avec contributions manuelles ou compte lié |
 
@@ -83,7 +83,7 @@ TypeScript, Next.js 15, React 19, TanStack Query, Tailwind, Recharts · Docker.
 ```bash
 ./start.sh                                  # API + interface en mode dev
 ./dev-data.sh                               # copie les données de l'application installée (voir INSTALL.md)
-cd backend && python -m pytest              # 375 tests
+cd backend && python -m pytest              # 399 tests
 cd web && npx tsc --noEmit && npx vitest run
 cd web && npm run test:e2e                  # Playwright : démarre sa propre pile
 ```
@@ -103,7 +103,8 @@ depuis votre propre ordinateur.
 - Les autres sites ouverts dans votre navigateur restent dehors : l'interface et l'API
   refusent une écriture venue d'un autre site, et ne répondent qu'aux noms `localhost` et
   `127.0.0.1` (ce qui bloque le « DNS rebinding »). Voir `backend/request_guard.py`.
-- Le jeton IBKR n'est jamais renvoyé au navigateur ni écrit dans le journal.
+- Le jeton IBKR et les clés Binance ne sont jamais renvoyés au navigateur ni écrits dans le journal. Une clé
+  Binance qui peut trader, transférer ou retirer est refusée : seule une clé en lecture seule est acceptée.
 
 Quiconque peut atteindre un port publié a un accès complet en lecture et en écriture à tous
 les profils. Ne retirez donc pas le préfixe `127.0.0.1:`, ne publiez pas le port 8000, et ne

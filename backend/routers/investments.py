@@ -10,10 +10,13 @@ from models import Account, AccountType, AccountBalanceSnapshot, Holding, PriceC
 from schemas import (
     HoldingCreate, HoldingUpdate, HoldingsImportPreviewResponse, ParsedHoldingPreview,
     HoldingsImportConfirmRequest, HoldingsImportConfirmResponse,
+    BinanceSyncPreview, BinanceSyncResult,
 )
+from services import binance
 from services.market_data import (
     refresh_all_prices, get_cached_dividend, fetch_historical_prices, resolve_yahoo_symbol,
     store_isin_ticker, reverse_lookup_isin, fetch_isin_for_ticker, _fetch_stock_prices,
+    price_key, history_for, binance_history,
 )
 from services.holdings_csv_parser import (
     detect_holdings_format, parse_ibkr_holdings, parse_bourso_holdings,
@@ -73,6 +76,16 @@ def _cash_value_cents(h: Holding) -> int:
     return round((h.quantity or 0) * CASH_UNIT_PRICE_CENTS)
 
 
+def _gain(value_cents: int, cost_cents: Optional[int]) -> tuple[Optional[int], Optional[float]]:
+    """(gain, gain %) of a position. None when its cost is unknown (a coin
+    synced from Binance before the user typed a PRU): a cost of 0 would show
+    the whole value as gain."""
+    if cost_cents is None:
+        return None, None
+    pct = round((value_cents - cost_cents) / abs(cost_cents) * 100, 2) if cost_cents != 0 else None
+    return value_cents - cost_cents, pct
+
+
 async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], account_currency: str = "EUR") -> list[dict]:
     """Bulk enrich holdings with ISIN mappings, cached prices, and cached dividends in 3 queries."""
     if not holdings:
@@ -80,7 +93,7 @@ async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], accou
 
     tickers = [h.ticker for h in holdings]
     tickers_upper = [t.upper() for t in tickers]
-    lookup_tickers = [h.ticker.lower() if h.asset_type == "crypto" else h.ticker.upper() for h in holdings]
+    lookup_tickers = [price_key(h) for h in holdings]
 
     # 1. Bulk ISIN reverse lookups
     isin_rows = (await db.execute(
@@ -124,6 +137,7 @@ async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], accou
             "added_date": str(h.added_date) if h.added_date else None,
             "notes": h.notes,
             "price_locked": bool(h.price_locked),
+            "sync_source": h.sync_source,
             "current_price_cents": None,
             "current_value_cents": None,
             "gain_cents": None,
@@ -166,8 +180,7 @@ async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], accou
             out_list.append(out)
             continue
 
-        lookup_ticker = h.ticker.lower() if h.asset_type == "crypto" else h.ticker.upper()
-        cached = price_map.get(lookup_ticker)
+        cached = price_map.get(price_key(h))
 
         if not cached:
             if h.ref_price_cents:
@@ -177,9 +190,7 @@ async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], accou
                 out["price_currency"] = h.currency
                 value = round(h.quantity * price_cents)
                 out["current_value_cents"] = value
-                out["gain_cents"] = value - h.cost_basis_cents
-                if h.cost_basis_cents != 0:
-                    out["gain_pct"] = round((value - h.cost_basis_cents) / abs(h.cost_basis_cents) * 100, 2)
+                out["gain_cents"], out["gain_pct"] = _gain(value, h.cost_basis_cents)
                 if h.currency == account_currency:
                     out["value_in_account_ccy_cents"] = value
                 else:
@@ -210,9 +221,7 @@ async def enrich_holdings_batch(db: AsyncSession, holdings: list[Holding], accou
 
         value = round(h.quantity * price_cents)
         out["current_value_cents"] = value
-        out["gain_cents"] = value - h.cost_basis_cents
-        if h.cost_basis_cents != 0:
-            out["gain_pct"] = round((value - h.cost_basis_cents) / abs(h.cost_basis_cents) * 100, 2)
+        out["gain_cents"], out["gain_pct"] = _gain(value, h.cost_basis_cents)
 
         if h.currency == account_currency:
             out["value_in_account_ccy_cents"] = value
@@ -347,6 +356,8 @@ async def update_holding(holding_id: int, body: HoldingUpdate, db: AsyncSession 
 
     old_ticker = h.ticker
     updates = body.model_dump(exclude_unset=True)
+    if h.sync_source == binance.BINANCE and "ticker" in updates and (updates["ticker"] or "").upper() != h.ticker.upper():
+        raise HTTPException(400, "Le code d'une position Binance vient de Binance : il ne se modifie pas.")
     for field, val in updates.items():
         setattr(h, field, val)
 
@@ -461,13 +472,18 @@ async def holding_history(
     ticker: str,
     period: str = Query("1y"),
     asset_type: str = Query("stock"),
+    source: Optional[str] = Query(None, description="« binance » pour une position synchronisée depuis Binance"),
 ):
     # This endpoint takes an arbitrary ticker from the client, so it needs its own
     # guard: `CASH.*` is not a symbol any provider knows, and asking would spend a
     # request to earn a 404.
     if ticker.upper().startswith("CASH."):
         return {"ticker": ticker, "period": period, "data": []}
-    data = await fetch_historical_prices(ticker, period)
+    # A Binance coin's code is not a Yahoo symbol ("BTC" there is an ETF).
+    if source == binance.BINANCE:
+        data = await binance_history(ticker, period)
+    else:
+        data = await fetch_historical_prices(ticker, period)
     return {"ticker": ticker, "period": period, "data": data}
 
 
@@ -540,7 +556,7 @@ async def account_performance(
     # Per-holding date→close (scaled to the account currency at today's FX rate so
     # mixed-currency accounts weight each position correctly).
     # Fetched concurrently — one round-trip wall-clock instead of one per holding.
-    raws = await asyncio.gather(*(fetch_historical_prices(h.ticker, period) for h in holdings))
+    raws = await asyncio.gather(*(history_for(h, period) for h in holdings))
     histories: list[tuple[float, dict[str, float]]] = []  # (quantity, {date: close})
     for h, raw in zip(holdings, raws):
         if not raw:
@@ -876,6 +892,62 @@ async def ibkr_sync_now(db: AsyncSession = Depends(get_db), pid: int = Depends(c
     )
 
 
+# ── Binance (read-only key) ──────────────────────────────────────────────────
+
+_BINANCE_STATUS = {"config": 400, "rate_limit": 429}
+
+
+def _binance_http(e: binance.BinanceError) -> HTTPException:
+    return HTTPException(_BINANCE_STATUS.get(e.kind, 502), str(e))
+
+
+def _binance_preview(plan: binance.Plan) -> dict:
+    return {
+        "account_id": plan.account_id,
+        "lines": [{k: v for k, v in vars(ln).items() if k != "holding_id"} for ln in plan.lines],
+        "total_cents": plan.total_cents,
+        "small_count": plan.small_count,
+        "small_cents": plan.small_cents,
+        "unpriced": plan.unpriced,
+        "unread_wallets": [{"name": n, "value_cents": v} for n, v in plan.unread_wallets],
+    }
+
+
+@router.get("/binance/status")
+async def binance_status(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    """Drives the Paramètres tab and the sync button. Never the key or the secret."""
+    return await binance.status(db, pid)
+
+
+@router.post("/binance/test")
+async def binance_test(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    """The key works and can only read."""
+    try:
+        return await binance.test_connection(db, pid)
+    except binance.BinanceError as e:
+        raise _binance_http(e)
+
+
+@router.post("/binance/sync-preview", response_model=BinanceSyncPreview)
+async def binance_sync_preview(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    """What a sync would change, read from Binance. Writes nothing."""
+    try:
+        return _binance_preview(await binance.build_plan(db, pid))
+    except binance.BinanceError as e:
+        raise _binance_http(e)
+
+
+@router.post("/binance/sync", response_model=BinanceSyncResult)
+async def binance_sync_now(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
+    """Read Binance again and apply it — the browser's preview is never what is
+    written. Same path as the launch sync."""
+    try:
+        plan, counts = await binance.sync(db, pid)
+    except binance.BinanceError as e:
+        raise _binance_http(e)
+    return {**_binance_preview(plan), **counts}
+
+
 @router.get("/accounts")
 async def investment_accounts(db: AsyncSession = Depends(get_db), pid: int = Depends(current_profile_id)):
     result = await db.execute(
@@ -925,20 +997,36 @@ async def investment_accounts(db: AsyncSession = Depends(get_db), pid: int = Dep
 
         holdings_value_cents = 0
         holdings_cost_basis_cents = 0
+        # The gain is stated over the positions whose cost is known: one of
+        # unknown cost (a coin synced from Binance, no PRU yet) has no gain to add,
+        # and counting its value against no cost would show all of it as profit.
+        known_value_cents = 0
+        holdings_without_cost = 0
+        priced_with_cost = 0        # positions other than cash whose cost is known
         allocation_by_type: dict[str, int] = {}
         for eh in enriched_holdings:
             v = eh.get("value_in_account_ccy_cents") or 0
             holdings_value_cents += v
+            atype = eh.get("asset_type", "other")
+            allocation_by_type[atype] = allocation_by_type.get(atype, 0) + v
             cost_in_acc = eh["cost_basis_cents"]
+            if cost_in_acc is None:
+                holdings_without_cost += 1
+                continue
             if eh["currency"] != acc_ccy:
                 rate = await get_rate(db, eh["currency"], acc_ccy, date.today())
                 cost_in_acc = round(cost_in_acc * rate) if rate else cost_in_acc
             holdings_cost_basis_cents += cost_in_acc
-            atype = eh.get("asset_type", "other")
-            allocation_by_type[atype] = allocation_by_type.get(atype, 0) + v
+            known_value_cents += v
+            if atype != CASH_ASSET_TYPE:
+                priced_with_cost += 1
 
-        holdings_gain_cents = holdings_value_cents - holdings_cost_basis_cents if has_holdings else None
-        holdings_gain_pct = round(holdings_gain_cents / abs(holdings_cost_basis_cents) * 100, 2) if has_holdings and holdings_cost_basis_cents != 0 else None
+        # Every position but the cash of unknown cost (coins just synced from
+        # Binance): there is no gain to state — not a gain of 0, which is all the
+        # cash would say. An account of cash alone keeps its 0, as before.
+        measurable = has_holdings and (priced_with_cost > 0 or holdings_without_cost == 0)
+        holdings_gain_cents = known_value_cents - holdings_cost_basis_cents if measurable else None
+        holdings_gain_pct = round(holdings_gain_cents / abs(holdings_cost_basis_cents) * 100, 2) if measurable and holdings_cost_basis_cents != 0 else None
 
         # ── Dividend KPIs ────────────────────────────────────────────
         est_annual_div_cents = 0
@@ -1022,6 +1110,7 @@ async def investment_accounts(db: AsyncSession = Depends(get_db), pid: int = Dep
             "holdings_cost_basis_cents": holdings_cost_basis_cents if has_holdings else None,
             "holdings_gain_cents": holdings_gain_cents,
             "holdings_gain_pct": holdings_gain_pct,
+            "holdings_without_cost": holdings_without_cost if has_holdings else 0,
             "allocation_by_type": allocation_by_type if has_holdings else None,
             "est_annual_div_cents": est_annual_div_cents if has_holdings else None,
             "avg_dividend_yield": avg_yield,
@@ -1062,7 +1151,7 @@ async def _holdings_monthly_values(db: AsyncSession, account_id: int, acc_ccy: s
                 if cash_cents else [])
     # Fetch every holding's history CONCURRENTLY. Sequentially this was one blocking
     # network round-trip per holding on the dashboard's critical path (~4s for 17).
-    raws = await asyncio.gather(*(fetch_historical_prices(h.ticker, "2y") for h in eligible))
+    raws = await asyncio.gather(*(history_for(h, "2y") for h in eligible))
 
     # Per-holding {date: close} scaled to the account currency.
     histories: list[tuple[float, dict[str, float]]] = []
@@ -1113,16 +1202,14 @@ async def investment_total_series(db: AsyncSession = Depends(get_db), pid: int =
             .order_by(AccountBalanceSnapshot.date.asc())
         )
         snaps = snap_result.scalars().all()
-        series = []
-        for s in snaps:
-            month = str(s.date)[:7]
-            series.append({"month": month, "amount_cents": s.amount_cents})
-            all_months.add(month)
-        # Holdings accounts have no snapshots — reconstruct their monthly value.
+        # An account with positions is valued by them, as everywhere else (its
+        # current value, the dashboard): a statement typed before its first
+        # position — a crypto account before the Binance sync — would otherwise
+        # freeze its line at that statement.
+        series = await _holdings_monthly_values(db, acc.id, acc.currency or "EUR")
         if not series:
-            series = await _holdings_monthly_values(db, acc.id, acc.currency or "EUR")
-            for entry in series:
-                all_months.add(entry["month"])
+            series = [{"month": str(s.date)[:7], "amount_cents": s.amount_cents} for s in snaps]
+        all_months.update(entry["month"] for entry in series)
         account_series[acc.id] = series
 
     if not all_months:

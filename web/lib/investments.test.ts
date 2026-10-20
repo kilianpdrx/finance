@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { accountGain, monthChange, portfolioTotals, sharePct, topPositions } from './investments';
+import { accountGain, costFromUnitText, monthChange, portfolioTotals, sharePct, topPositions, unitCostText } from './investments';
 import type { HoldingOut, InvestmentAccount } from '@/lib/api/hooks';
 
 function account(over: Partial<InvestmentAccount>): InvestmentAccount {
@@ -9,7 +9,8 @@ function account(over: Partial<InvestmentAccount>): InvestmentAccount {
     pct_from_start: null, pct_from_last_month: null, change_from_start_cents: null, change_from_last_month_cents: null,
     perf_pct_from_start: null, perf_pct_from_last_month: null, perf_from_start_cents: null, perf_from_last_month_cents: null,
     monthly: [], has_holdings: false, holdings: [], holdings_value_cents: null, holdings_cost_basis_cents: null,
-    holdings_gain_cents: null, holdings_gain_pct: null, allocation_by_type: null, est_annual_div_cents: null, avg_dividend_yield: null,
+    holdings_gain_cents: null, holdings_gain_pct: null, holdings_without_cost: 0, allocation_by_type: null,
+    est_annual_div_cents: null, avg_dividend_yield: null,
     ...over,
   };
 }
@@ -104,5 +105,27 @@ describe('investments.ts', () => {
     expect(top.map((p) => p.ticker)).toEqual(['CW8.PA', 'AI.PA']);
     expect(top[0]).toMatchObject({ accountName: 'PEA', accountColor: '#111', valueCents: 700_000, gainPct: 12 });
     expect(topPositions([a, b]).map((p) => p.ticker)).toEqual(['CW8.PA', 'AI.PA', 'CASH.EUR']);   // nothing worth 0
+  });
+
+  it('takes no coin of unknown cost for capital', () => {
+    // 12 000 of positions bought 10 000, and 3 000 of a coin synced from Binance
+    // with no PRU yet: the gain is 2 000 over 10 000, not over 13 000.
+    const t = portfolioTotals([account({
+      has_holdings: true, current_value_cents: 1_500_000, holdings_cost_basis_cents: 1_000_000,
+      holdings_gain_cents: 200_000, holdings_gain_pct: 20, holdings_without_cost: 1,
+    })]);
+    expect(t).toMatchObject({ valueCents: 1_500_000, gainCents: 200_000, gainPct: 20 });
+  });
+
+  it('turns a PRU into a cost and back', () => {
+    expect(unitCostText(240_000, 0.05)).toBe('48000');
+    expect(unitCostText(100_000, 3)).toBe('333,33');
+    expect(unitCostText(1_100, 1_000_000)).toBe('0,000011');
+    expect(unitCostText(null, 2)).toBe('');
+    expect(costFromUnitText('48 000,00', 0.05)).toBe(240_000);
+    expect(costFromUnitText('0,000011', 1_000_000)).toBe(1_100);       // a coin worth less than a cent
+    expect(costFromUnitText('  ', 2)).toBeNull();                       // empty: unknown
+    expect(costFromUnitText('abc', 2)).toBeUndefined();
+    expect(costFromUnitText('-3', 2)).toBeUndefined();
   });
 });

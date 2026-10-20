@@ -9,9 +9,9 @@ from services.base_currency import ALLOWED_CURRENCIES, get_base_currency
 router = APIRouter()
 
 # Stored like any setting, but never sent back: the browser does not need them
-# (the IBKR tab asks /investments/ibkr/status whether one is configured), and
-# whatever the API returns, a hostile page reading it would get too.
-SECRET_KEYS = frozenset({"ibkr_flex_token"})
+# (the IBKR and Binance tabs ask their /status endpoint whether one is
+# configured), and whatever the API returns, a hostile page reading it would get too.
+SECRET_KEYS = frozenset({"ibkr_flex_token", "binance_api_key", "binance_api_secret"})
 
 
 @router.get("")

@@ -215,9 +215,26 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.warning("IBKR startup iteration failed: %s", e)
 
+        # Binance balances (only profiles with binance_auto_sync=true & investments enabled)
+        if has_investment_profiles:
+            async with AsyncSessionLocal() as db:
+                from services import binance
+                for prof in prof_rows:
+                    if prof.enabled_modules is not None and "investments" not in prof.enabled_modules:
+                        continue
+                    try:
+                        if (await binance.get_setting(db, prof.id, binance.AUTO_SYNC)) != "true":
+                            continue
+                        _, counts = await binance.sync(db, prof.id)
+                        logger.info("Binance startup sync (profile %d): %s", prof.id, binance.summary(counts))
+                    except binance.BinanceError as e:
+                        logger.warning("Binance startup sync (profile %d): %s", prof.id, e)
+                    except Exception as e:
+                        logger.warning("Binance startup sync failed (profile %d): %s", prof.id, e)
+
 
     # FINANCE_OFFLINE skips everything that reaches the network: the FX backfill,
-    # the price refresh and the IBKR sync at startup, plus the recurring jobs. The
+    # the price refresh and the IBKR / Binance syncs at startup, plus the recurring jobs. The
     # e2e suite runs against a real backend, and without this every run would be
     # slow, chatty and at the mercy of Yahoo being up.
     offline = os.environ.get("FINANCE_OFFLINE", "").lower() in ("1", "true", "yes")

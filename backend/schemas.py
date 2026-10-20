@@ -514,6 +514,12 @@ class BudgetFullResponse(BaseModel):
 EnvelopeKind = Literal["income", "expense", "goal", "unplanned"]
 
 
+class EnvelopeLineIn(BaseModel):
+    """A sub-line that is not a category (« Épargne », « Actions »)."""
+    name: str
+    amount_cents: int = 0
+
+
 class EnvelopeIn(BaseModel):
     id: Optional[int] = None          # None = a new envelope
     name: str
@@ -524,10 +530,14 @@ class EnvelopeIn(BaseModel):
     # With at least one, the envelope's amount is their sum and `amount_cents`
     # is not read (a category left out counts for 0).
     category_amounts: Optional[Dict[int, int]] = None
+    # Sub-lines, in their order. They join the sum exactly like category amounts.
+    lines: Optional[List[EnvelopeLineIn]] = None
+    note: Optional[str] = None
 
 
 class BudgetPlanIn(BaseModel):
     envelopes: List[EnvelopeIn]
+    note: Optional[str] = None        # about the account's plan as a whole
 
 
 class EnvelopeAmountIn(BaseModel):
@@ -552,6 +562,13 @@ class PlannedEntryOut(BaseModel):
     amount_cents: int
 
 
+class EnvelopeLineOut(BaseModel):
+    """A sub-line: a planned amount, nothing realised (it has no category)."""
+    id: Optional[int]
+    name: str
+    amount_cents: int
+
+
 class CategoryStatsOut(BaseModel):
     """What a category did on this account, to choose its amount knowingly."""
     category_id: int
@@ -566,8 +583,10 @@ class EnvelopeOut(BaseModel):
     kind: EnvelopeKind
     category_ids: List[int]
     amount_cents: int                 # in force for the month shown
-    detailed: bool                    # the amount is the sum of its categories' amounts
+    detailed: bool                    # the amount is the sum of its lines (categories and sub-lines)
     categories: List[EnvelopeCategoryOut]
+    lines: List[EnvelopeLineOut]      # sub-lines that are not categories
+    note: Optional[str]
     # « Planifier » entries of that month in its categories. A note: the month
     # is compared with `amount_cents` alone.
     planned_cents: int
@@ -587,6 +606,7 @@ class BudgetPlanOut(BaseModel):
     currency: str
     month: str
     exists: bool                      # false: no plan saved yet for this account
+    note: Optional[str]               # about the plan as a whole
     envelopes: List[EnvelopeOut]
     # What no envelope covers: unassigned categories and uncategorised rows.
     outside_spent_cents: int
@@ -689,7 +709,7 @@ class HoldingCreate(BaseModel):
     ticker: str
     name: str
     quantity: float
-    cost_basis_cents: int
+    cost_basis_cents: Optional[int] = None      # None = unknown: no gain is shown
     currency: str = "USD"
     asset_type: str = "stock"
     added_date: Optional[date] = None
@@ -715,12 +735,13 @@ class HoldingOut(BaseModel):
     ticker: str
     name: str
     quantity: float
-    cost_basis_cents: int
+    cost_basis_cents: Optional[int] = None
     currency: str
     asset_type: str
     added_date: Optional[date] = None
     notes: Optional[str] = None
     price_locked: bool = False
+    sync_source: Optional[str] = None
     current_price_cents: Optional[int] = None
     current_value_cents: Optional[int] = None
     gain_cents: Optional[int] = None
@@ -770,3 +791,38 @@ class HoldingsImportConfirmResponse(BaseModel):
     created: int
     updated: int
     skipped: int
+
+
+# ── Binance sync ─────────────────────────────────────────────────────────────
+
+class BinanceLine(BaseModel):
+    asset: str
+    name: str
+    is_cash: bool
+    quantity: float
+    previous_quantity: Optional[float] = None
+    price_cents: Optional[float] = None     # one unit, in euros — a fraction of a cent for small coins
+    value_cents: Optional[int] = None       # in euros
+    status: Literal["new", "updated", "unchanged", "removed"]
+    review_cost: bool                       # bought more since the PRU was typed
+
+
+class BinanceWallet(BaseModel):
+    name: str
+    value_cents: int
+
+
+class BinanceSyncPreview(BaseModel):
+    account_id: int
+    lines: List[BinanceLine]
+    total_cents: int
+    small_count: int        # coins worth less than 1 €, not made positions
+    small_cents: int
+    unpriced: List[str]     # coins Binance gives no euro price for
+    unread_wallets: List[BinanceWallet]
+
+
+class BinanceSyncResult(BinanceSyncPreview):
+    created: int
+    updated: int
+    removed: int

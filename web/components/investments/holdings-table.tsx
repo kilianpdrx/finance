@@ -5,7 +5,7 @@ import { X, ChevronDown, Pencil, AlertTriangle, Lock } from "lucide-react";
 import { useHoldingMutations, type HoldingOut } from "@/lib/api/hooks";
 import { HoldingPriceChart } from "./holding-price-chart";
 import { EditHoldingDialog } from "./edit-holding-dialog";
-import { formatCents } from "@/lib/format";
+import { formatCents, formatUnitPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { assetTypeLabel, isCashType } from "@/lib/asset-types";
 
@@ -60,6 +60,11 @@ export function HoldingsTable({ holdings }: { holdings: HoldingOut[]; currency: 
                   <td className="py-2 font-mono text-xs font-semibold">
                     <span className="inline-flex items-center gap-1.5">
                       {h.ticker.toUpperCase()}
+                      {h.sync_source === "binance" && (
+                        <span title="Synchronisée depuis Binance" className="rounded bg-muted px-1 py-px font-sans text-[9px] font-medium text-muted-foreground">
+                          Binance
+                        </span>
+                      )}
                       {!isCash && h.price_locked && (
                         <span title="Prix verrouillé — pas de mise à jour automatique" className="inline-flex">
                           <Lock className="size-3 text-muted-foreground" />
@@ -76,22 +81,26 @@ export function HoldingsTable({ holdings }: { holdings: HoldingOut[]; currency: 
                   <td className="py-2 text-xs text-muted-foreground">{assetTypeLabel(h.asset_type)}</td>
                   <td className="nums py-2 text-right">{h.quantity % 1 === 0 ? h.quantity : h.quantity.toFixed(4)}</td>
                   <td className="nums py-2 text-right text-muted-foreground">
-                    {h.current_price_cents != null ? formatCents(h.current_price_cents, h.price_currency ?? h.currency, { decimals: 2 }) : "—"}
+                    {h.current_price_cents != null ? formatUnitPrice(h.current_price_cents, h.price_currency ?? h.currency) : "—"}
                   </td>
                   <td className="nums blurable py-2 text-right font-medium">
                     {h.current_value_cents != null ? formatCents(h.current_value_cents, h.price_currency ?? h.currency, { decimals: 2 }) : "—"}
                   </td>
-                  <td className="nums py-2 text-right text-muted-foreground">{formatCents(h.cost_basis_cents, h.currency, { decimals: 2 })}</td>
-                  <td className={cn("nums py-2 text-right font-medium", h.gain_cents != null && h.gain_cents >= 0 ? "text-positive" : "text-negative")}>
+                  <td className="nums py-2 text-right text-muted-foreground">
+                    {h.cost_basis_cents != null ? formatCents(h.cost_basis_cents, h.currency, { decimals: 2 }) : (
+                      <span title="Prix de revient inconnu : indiquez votre PRU (crayon) pour voir le gain">—</span>
+                    )}
+                  </td>
+                  <td className={cn("nums py-2 text-right font-medium", h.gain_cents == null ? "text-muted-foreground" : h.gain_cents >= 0 ? "text-positive" : "text-negative")}>
                     {h.gain_cents != null ? formatCents(h.gain_cents, h.price_currency ?? h.currency, { sign: true, decimals: 2 }) : "—"}
                   </td>
-                  <td className={cn("nums py-2 text-right text-xs font-semibold", h.gain_pct != null && h.gain_pct >= 0 ? "text-positive" : "text-negative")}>
+                  <td className={cn("nums py-2 text-right text-xs font-semibold", h.gain_pct == null ? "text-muted-foreground" : h.gain_pct >= 0 ? "text-positive" : "text-negative")}>
                     {h.gain_pct != null ? `${h.gain_pct >= 0 ? "+" : ""}${h.gain_pct.toFixed(2)}%` : "—"}
                   </td>
                   <td className="nums py-2 text-right text-xs text-muted-foreground">{alloc != null ? `${alloc}%` : "—"}</td>
                   <td className="py-2 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1.5">
-                      <button onClick={() => setEditing(h)} className="text-muted-foreground transition-colors hover:text-foreground" title="Modifier le ticker / ISIN">
+                      <button onClick={() => setEditing(h)} className="text-muted-foreground transition-colors hover:text-foreground" title="Modifier la position">
                         <Pencil className="size-3.5" />
                       </button>
                       <button onClick={() => remove.mutate(h.id)} className="text-muted-foreground transition-colors hover:text-negative" title="Supprimer">
@@ -103,7 +112,7 @@ export function HoldingsTable({ holdings }: { holdings: HoldingOut[]; currency: 
                 {isExpanded && (
                   <tr>
                     <td colSpan={12} className="border-b border-border/60 px-4 pb-3">
-                      <HoldingPriceChart ticker={h.ticker} currency={h.price_currency ?? h.currency} />
+                      <HoldingPriceChart ticker={h.ticker} currency={h.price_currency ?? h.currency} source={h.sync_source} />
                     </td>
                   </tr>
                 )}

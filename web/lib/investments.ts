@@ -41,9 +41,14 @@ export function portfolioTotals(accounts: InvestmentAccount[]): PortfolioTotals 
     dividends += acc.est_annual_div_cents ?? 0;
     yieldNum += (acc.avg_dividend_yield ?? 0) * v;
     const g = accountGain(acc).cents;
-    // Value minus gain is what went in: the purchase cost of the positions, or
-    // the first statement plus what was contributed since.
-    if (g != null) { gain += g; capital += v - g; }
+    // What went in. For an account priced by its positions: what the positions
+    // of KNOWN cost cost — value minus gain would count a coin whose cost is
+    // unknown (synced from Binance, no PRU yet) as capital. For a statement
+    // account: the first statement plus what was contributed since.
+    if (g != null) {
+      gain += g;
+      capital += acc.has_holdings && acc.holdings_cost_basis_cents != null ? acc.holdings_cost_basis_cents : v - g;
+    }
   }
   return {
     valueCents: value,
@@ -124,4 +129,23 @@ export function topPositions(accounts: InvestmentAccount[], limit = 8): Position
     .filter((p) => p.valueCents > 0)
     .sort((a, b) => b.valueCents - a.valueCents)
     .slice(0, limit);
+}
+
+/** A position's PRU (prix de revient unitaire) as typed in a field: "" when
+ *  the cost is unknown. Euros, with a comma; more decimals for a coin worth
+ *  less than one. */
+export function unitCostText(costCents: number | null, quantity: number): string {
+  if (costCents == null || !quantity) return "";
+  const unit = costCents / 100 / quantity;
+  return unit.toLocaleString("fr-FR", { maximumFractionDigits: Math.abs(unit) >= 1 ? 2 : 8, useGrouping: false });
+}
+
+/** The total cost of `quantity` at the PRU typed in `text`: null when the
+ *  field is empty (cost unknown), undefined when it is not a number. */
+export function costFromUnitText(text: string, quantity: number): number | null | undefined {
+  const cleaned = text.replace(/\s/g, "").replace(",", ".");
+  if (cleaned === "") return null;
+  const unit = Number(cleaned);
+  if (!Number.isFinite(unit) || unit < 0) return undefined;
+  return Math.round(unit * 100 * quantity);
 }

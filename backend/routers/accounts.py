@@ -7,7 +7,7 @@ from dependencies import current_profile_id
 from models import (
     Account, AccountBalanceSnapshot, AccountType, Transaction, LoanDetails, LoanExtraPayment, Holding, ImportBatch,
     CategoryRule, Category, BudgetEntry, PlannedExpense, Goal, Setting,
-    BudgetEnvelope, BudgetEnvelopeAmount, BudgetEnvelopeCategory,
+    BudgetEnvelope, BudgetEnvelopeAmount, BudgetEnvelopeCategory, BudgetEnvelopeLine, BudgetPlanNote,
 )
 from schemas import (
     AccountCreate, AccountUpdate, AccountOut,
@@ -180,10 +180,11 @@ async def _purge_account(db: AsyncSession, pid: int, account: Account) -> None:
     await db.execute(update(Transaction).where(Transaction.transfer_pair_id.in_(own_txns)).values(transfer_pair_id=None))
     await db.execute(update(Goal).where(Goal.linked_account_id == aid).values(linked_account_id=None))
 
-    # The account's budget plan: amounts and memberships hang off its envelopes.
-    await db.execute(delete(BudgetEnvelopeAmount).where(
-        BudgetEnvelopeAmount.envelope_id.in_(select(BudgetEnvelope.id).where(BudgetEnvelope.account_id == aid))))
-    for model in (BudgetEnvelopeCategory, BudgetEnvelope):
+    # The account's budget plan: amounts, sub-lines and memberships hang off its envelopes.
+    own_envelopes = select(BudgetEnvelope.id).where(BudgetEnvelope.account_id == aid)
+    for model in (BudgetEnvelopeAmount, BudgetEnvelopeLine):
+        await db.execute(delete(model).where(model.envelope_id.in_(own_envelopes)))
+    for model in (BudgetEnvelopeCategory, BudgetEnvelope, BudgetPlanNote):
         await db.execute(delete(model).where(model.account_id == aid))
 
     for model in (LoanExtraPayment, LoanDetails, Holding, AccountBalanceSnapshot, PlannedExpense, BudgetEntry):

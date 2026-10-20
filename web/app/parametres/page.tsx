@@ -6,6 +6,7 @@ import { RulesTab } from "@/components/settings/rules-tab";
 import { ProfilesTab } from "@/components/settings/profiles-tab";
 import { GeneralTab } from "@/components/settings/general-tab";
 import { IbkrTab } from "@/components/settings/ibkr-tab";
+import { BinanceTab } from "@/components/settings/binance-tab";
 import { BackupTab } from "@/components/settings/backup-tab";
 import { useAccounts, useActiveProfile } from "@/lib/api/hooks";
 import { DEFAULT_MODULES } from "@/lib/nav";
@@ -24,6 +25,7 @@ export default function ParametresPage() {
         <TabsTrigger value="rules">Règles</TabsTrigger>
         <TabsTrigger value="profiles">Profils bancaires</TabsTrigger>
         {hasInvestments && <TabsTrigger value="ibkr">IBKR</TabsTrigger>}
+        {hasInvestments && <TabsTrigger value="binance">Binance</TabsTrigger>}
         <TabsTrigger value="backup">Sauvegarde & Données</TabsTrigger>
       </TabsList>
       <TabsContent value="general"><GeneralTab /></TabsContent>
@@ -31,6 +33,7 @@ export default function ParametresPage() {
       <TabsContent value="rules"><RulesTab accounts={accounts} /></TabsContent>
       <TabsContent value="profiles"><ProfilesTab /></TabsContent>
       {hasInvestments && <TabsContent value="ibkr"><IbkrTab /></TabsContent>}
+      {hasInvestments && <TabsContent value="binance"><BinanceTab /></TabsContent>}
       <TabsContent value="backup"><BackupTab /></TabsContent>
     </Tabs>
   );

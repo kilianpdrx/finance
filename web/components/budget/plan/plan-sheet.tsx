@@ -1,12 +1,13 @@
 "use client";
 
 import { useRef, type KeyboardEvent } from "react";
+import { Plus, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Category } from "@/lib/api/hooks";
 import {
-  AMOUNT_LABEL, centsToAmount, clearDetail, draftAmountCents, fillWithTypical, fitsKind, isDetailed, moveCategory,
-  setCategoryAmount, type CategoryStats, type DraftEnvelope,
+  AMOUNT_LABEL, addLine, centsToAmount, clearDetail, draftAmountCents, fillWithTypical, fitsKind, isDetailed, moveCategory,
+  removeLine, setCategoryAmount, setLine, type CategoryStats, type DraftEnvelope,
 } from "@/lib/budget-plan";
 import { formatCents } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -18,8 +19,9 @@ const NONE = "__none__";
  *
  *  An envelope is ONE figure until one of its categories gets an amount; from
  *  then on it is the sum of its lines, as a total row would be in a spreadsheet
- *  (a blank line counts for nothing). The same working copy as the envelopes
- *  view: both edit one plan, saved in one go. */
+ *  (a blank line counts for nothing). Sub-lines that are not categories
+ *  (« Épargne », « Actions ») are lines too, typed in the same column. The same
+ *  working copy as the envelopes view: both edit one plan, saved in one go. */
 export function PlanSheet({
   drafts,
   onChange,
@@ -105,12 +107,12 @@ export function PlanSheet({
               <td colSpan={3} className="px-3 py-2 text-right text-xs">
                 {d.kind === "unplanned" ? (
                   <span className="text-muted-foreground">pour les dépenses que vous marquez « imprévu »</span>
-                ) : rows.length === 0 ? (
-                  <span className="text-muted-foreground">aucune catégorie</span>
                 ) : detailed ? (
                   <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => patch(d.key, clearDetail)}>
                     Revenir à un seul montant
                   </button>
+                ) : rows.length === 0 ? (
+                  <span className="text-muted-foreground">aucune catégorie</span>
                 ) : (
                   <button type="button" className="text-brand hover:underline"
                     onClick={() => patch(d.key, (x) => fillWithTypical(x, (id) => stats.get(id)?.typical_cents))}>
@@ -153,6 +155,37 @@ export function PlanSheet({
                 </tr>
               );
             })}
+            {d.lines.map((line) => (
+              <tr key={line.key} className="hover:bg-muted/30">
+                <td colSpan={2} className="border-b border-border/60 px-3 py-1">
+                  <div className="flex items-center gap-2">
+                    <span className="size-2 shrink-0 rounded-full border border-muted-foreground" aria-hidden />
+                    <Input aria-label="Nom de la sous-ligne" value={line.name} placeholder="Nom de la sous-ligne (ex. Actions)"
+                      onChange={(e) => patch(d.key, (x) => setLine(x, line.key, { name: e.target.value }))} className="h-8" />
+                  </div>
+                </td>
+                <td colSpan={3} className="border-b border-border/60 px-3 py-1.5 text-right text-xs text-muted-foreground">sous-ligne · sans catégorie</td>
+                <td className="border-b border-border/60 px-3 py-1 text-right">
+                  <div className="flex items-center justify-end gap-1">
+                    <Input data-sheet-cell aria-label={`Montant de ${line.name.trim() || "la sous-ligne"}`} inputMode="decimal" value={line.amount} placeholder="0"
+                      onChange={(e) => patch(d.key, (x) => setLine(x, line.key, { amount: e.target.value }))} onKeyDown={onKey}
+                      className="nums h-8 w-28 text-right" />
+                    <button type="button" aria-label="Supprimer la sous-ligne" className="rounded p-1 text-muted-foreground hover:text-negative"
+                      onClick={() => patch(d.key, (x) => removeLine(x, line.key))}><X className="size-3.5" /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {d.kind !== "unplanned" && (
+              <tr>
+                <td colSpan={6} className="border-b border-border/60 px-3 py-1">
+                  <button type="button" onClick={() => patch(d.key, (x) => addLine(x))}
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                    <Plus className="size-3" /> Sous-ligne
+                  </button>
+                </td>
+              </tr>
+            )}
           </tbody>
         );
       })}

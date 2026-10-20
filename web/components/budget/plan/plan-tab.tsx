@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { ChevronRight, PiggyBank, Settings2, X } from "lucide-react";
+import { ChevronRight, PiggyBank, Settings2, StickyNote, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,6 +82,14 @@ export function PlanTab({ accountId, accountName }: { accountId: number; account
         <p className="text-xs text-negative">Ce plan prévoit de dépenser plus qu&apos;il ne rentre.</p>
       )}
 
+      {plan.note && (
+        <button type="button" onClick={() => setEditing("envelopes")} title="Modifier dans le plan"
+          className="flex w-full items-start gap-2.5 rounded-xl border border-border bg-muted/30 px-4 py-3 text-left text-sm hover:border-brand">
+          <StickyNote className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <span className="whitespace-pre-wrap">{plan.note}</span>
+        </button>
+      )}
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="capitalize">{formatMonthLabel(plan.month, { withYear: true })}</CardTitle>
@@ -91,7 +99,7 @@ export function PlanTab({ accountId, accountName }: { accountId: number; account
           <ul aria-label="Enveloppes" className="divide-y divide-border">
             {plan.envelopes.map((e) => {
               const open = e.id != null && unfolded.has(e.id);
-              const foldable = e.id != null && e.categories.length > 0;
+              const foldable = e.id != null && (e.categories.length > 0 || e.lines.length > 0 || !!e.note);
               return (
                 <li key={e.id}>
                   <div className={cn(ROW, "px-5 py-3")}>
@@ -110,6 +118,11 @@ export function PlanTab({ accountId, accountName }: { accountId: number; account
                             : `${e.category_ids.length} catégorie${e.category_ids.length > 1 ? "s" : ""}`}
                           {e.kind !== "unplanned" && e.typical_cents != null && <> · mois type <span className="nums blurable">{formatCents(e.typical_cents, currency)}</span></>}
                         </p>
+                        {e.note && !open && (
+                          <p className="flex items-center gap-1 truncate text-xs text-muted-foreground" title={e.note}>
+                            <StickyNote className="size-3 shrink-0" /><span className="truncate">{e.note}</span>
+                          </p>
+                        )}
                       </div>
                     </div>
                     <AmountCell envelope={e} currency={currency} month={plan.month} byId={byId} onOpenDetail={() => setEditing("sheet")} />
@@ -162,11 +175,18 @@ export function PlanTab({ accountId, accountName }: { accountId: number; account
 
 /** An envelope, category by category: what each one did this month, against
  *  its own amount when the envelope is planned line by line, against its
- *  typical month otherwise. */
+ *  typical month otherwise. Then its sub-lines — planned only: no category says
+ *  what went into them — and its note in full. */
 function CategoryLines({ envelope, byId, pace, currency }: { envelope: Envelope; byId: Map<number, Category>; pace: number; currency: string }) {
   const lines = [...envelope.categories].sort((a, b) => (byId.get(a.category_id)?.name ?? "").localeCompare(byId.get(b.category_id)?.name ?? ""));
   return (
-    <ul aria-label={`Catégories de ${envelope.name}`} className="space-y-2 border-t border-border/60 bg-muted/30 px-5 py-3">
+    <div className="space-y-2 border-t border-border/60 bg-muted/30 px-5 py-3">
+    {envelope.note && (
+      <p className="flex items-start gap-1.5 pl-5 text-xs text-muted-foreground">
+        <StickyNote className="mt-0.5 size-3 shrink-0" /><span className="whitespace-pre-wrap">{envelope.note}</span>
+      </p>
+    )}
+    <ul aria-label={`Catégories de ${envelope.name}`} className="space-y-2">
       {lines.map((line) => {
         const category = byId.get(line.category_id);
         return (
@@ -192,7 +212,18 @@ function CategoryLines({ envelope, byId, pace, currency }: { envelope: Envelope;
           </li>
         );
       })}
+      {envelope.lines.map((line) => (
+        <li key={line.id ?? line.name} className={cn(ROW, "text-sm")}>
+          <p className="flex min-w-0 items-center gap-2 pl-5">
+            <span className="size-2 shrink-0 rounded-full border border-muted-foreground" aria-hidden />
+            <span className="truncate">{line.name}</span>
+          </p>
+          <p className="nums blurable px-1 text-left text-sm md:text-right">{formatCents(line.amount_cents, currency)}</p>
+          <p className="text-xs text-muted-foreground">prévu, non suivi par catégorie</p>
+        </li>
+      ))}
     </ul>
+    </div>
   );
 }
 
@@ -219,7 +250,7 @@ function AmountCell({ envelope, currency, month, byId, onOpenDetail }: {
   return (
     <div className="text-left md:text-right">
       {envelope.detailed ? (
-        <button type="button" title="La somme des montants par catégorie — modifier le détail" onClick={onOpenDetail}
+        <button type="button" title="La somme de ses lignes — modifier le détail" onClick={onOpenDetail}
           className="nums blurable rounded px-1 text-sm font-semibold hover:bg-muted">
           {formatCents(envelope.amount_cents, currency)}
         </button>

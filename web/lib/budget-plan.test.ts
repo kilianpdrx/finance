@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  amountToCents, barFill, centsToAmount, clearDetail, draftAmountCents, draftsFromPlan, draftsToPayload, eligibleCategories,
-  fillWithTypical, fitsKind, isDetailed, isMinimum, monthPace, moveCategory, planTotals, setCategoryAmount, standing,
+  addLine, amountToCents, barFill, centsToAmount, clearDetail, draftAmountCents, draftsFromPlan, draftsToPayload, eligibleCategories,
+  fillWithTypical, fitsKind, isDetailed, isMinimum, monthPace, moveCategory, planTotals, removeLine, setCategoryAmount, setLine, standing,
   type DraftEnvelope,
 } from './budget-plan';
 
@@ -61,9 +61,9 @@ describe('budget-plan.ts', () => {
 
   describe('the editor', () => {
     const drafts: DraftEnvelope[] = [
-      { key: 'e1', id: 1, name: 'Courses', kind: 'expense', amount: '400', categoryIds: [10, 11], categoryAmounts: {} },
-      { key: 'n2', id: null, name: ' Sorties ', kind: 'expense', amount: '152,50', categoryIds: [], categoryAmounts: {} },
-      { key: 'e3', id: 3, name: 'Imprévus', kind: 'unplanned', amount: '', categoryIds: [99], categoryAmounts: {} },
+      { key: 'e1', id: 1, name: 'Courses', kind: 'expense', amount: '400', categoryIds: [10, 11], categoryAmounts: {}, lines: [], note: '' },
+      { key: 'n2', id: null, name: ' Sorties ', kind: 'expense', amount: '152,50', categoryIds: [], categoryAmounts: {}, lines: [], note: '' },
+      { key: 'e3', id: 3, name: 'Imprévus', kind: 'unplanned', amount: '', categoryIds: [99], categoryAmounts: {}, lines: [], note: '' },
     ];
 
     it('moves a category to one envelope, out of wherever it was', () => {
@@ -76,9 +76,9 @@ describe('budget-plan.ts', () => {
 
     it('turns the working copy into what the API saves', () => {
       expect(draftsToPayload(drafts)).toEqual([
-        { id: 1, name: 'Courses', kind: 'expense', amount_cents: 400_00, category_ids: [10, 11] },
-        { id: null, name: 'Sorties', kind: 'expense', amount_cents: 152_50, category_ids: [] },
-        { id: 3, name: 'Imprévus', kind: 'unplanned', amount_cents: 0, category_ids: [] },   // the provision holds no category
+        { id: 1, name: 'Courses', kind: 'expense', amount_cents: 400_00, category_ids: [10, 11], note: null },
+        { id: null, name: 'Sorties', kind: 'expense', amount_cents: 152_50, category_ids: [], note: null },
+        { id: 3, name: 'Imprévus', kind: 'unplanned', amount_cents: 0, category_ids: [], note: null },   // the provision holds no category
       ]);
     });
 
@@ -98,7 +98,7 @@ describe('budget-plan.ts', () => {
     });
 
     describe('the detail, category by category', () => {
-      const daily: DraftEnvelope = { key: 'e1', id: 1, name: 'Quotidien', kind: 'expense', amount: '400', categoryIds: [10, 11, 12], categoryAmounts: {} };
+      const daily: DraftEnvelope = { key: 'e1', id: 1, name: 'Quotidien', kind: 'expense', amount: '400', categoryIds: [10, 11, 12], categoryAmounts: {}, lines: [], note: '' };
       const lined: DraftEnvelope = { ...daily, categoryAmounts: { 10: '260', 11: '', 12: '0' } };
 
       it('an envelope is the sum of its lines as soon as it has one', () => {
@@ -111,7 +111,7 @@ describe('budget-plan.ts', () => {
       });
 
       it('types an amount on the line of whichever envelope holds the category', () => {
-        const other: DraftEnvelope = { key: 'e2', id: 2, name: 'Logement', kind: 'expense', amount: '800', categoryIds: [20], categoryAmounts: {} };
+        const other: DraftEnvelope = { key: 'e2', id: 2, name: 'Logement', kind: 'expense', amount: '800', categoryIds: [20], categoryAmounts: {}, lines: [], note: '' };
         const next = setCategoryAmount([daily, other], 11, '95,50');
         expect(next.map((d) => d.categoryAmounts)).toEqual([{ 11: '95,50' }, {}]);
         expect(draftAmountCents(next[0])).toBe(95_50);
@@ -120,13 +120,14 @@ describe('budget-plan.ts', () => {
 
       it('saves the lines, and only the lines someone typed', () => {
         expect(draftsToPayload([lined, daily])).toEqual([
-          { id: 1, name: 'Quotidien', kind: 'expense', amount_cents: 260_00, category_ids: [10, 11, 12], category_amounts: { 10: 260_00, 12: 0 } },
-          { id: 1, name: 'Quotidien', kind: 'expense', amount_cents: 400_00, category_ids: [10, 11, 12] },
+          { id: 1, name: 'Quotidien', kind: 'expense', amount_cents: 260_00, category_ids: [10, 11, 12], note: null,
+            category_amounts: { 10: 260_00, 12: 0 }, lines: [] },
+          { id: 1, name: 'Quotidien', kind: 'expense', amount_cents: 400_00, category_ids: [10, 11, 12], note: null },
         ]);
       });
 
       it('a line follows its category only into an envelope planned line by line', () => {
-        const plain: DraftEnvelope = { key: 'e2', id: 2, name: 'Loisirs', kind: 'expense', amount: '150', categoryIds: [20], categoryAmounts: {} };
+        const plain: DraftEnvelope = { key: 'e2', id: 2, name: 'Loisirs', kind: 'expense', amount: '150', categoryIds: [20], categoryAmounts: {}, lines: [], note: '' };
         const detailed: DraftEnvelope = { ...plain, key: 'e3', id: 3, categoryAmounts: { 20: '90' } };
 
         const intoPlain = moveCategory([lined, plain], 10, 'e2');
@@ -148,6 +149,47 @@ describe('budget-plan.ts', () => {
 
         const back = clearDetail(filled);
         expect([back.categoryAmounts, back.amount, isDetailed(back)]).toEqual([{}, '305', false]);   // keeps what the lines added up to
+      });
+    });
+
+    describe('sub-lines that are not categories', () => {
+      const invest: DraftEnvelope = { key: 'e5', id: 5, name: 'Investissements', kind: 'goal', amount: '999', categoryIds: [30], categoryAmounts: {}, lines: [], note: '' };
+
+      it('make the envelope their sum, with or without category lines', () => {
+        const split = addLine(addLine(invest, 'Épargne'), 'Actions');
+        const [savings, shares] = split.lines;
+        const typed = setLine(setLine(split, savings.key, { amount: '500' }), shares.key, { amount: '300' });
+        expect([isDetailed(typed), draftAmountCents(typed)]).toEqual([true, 800_00]);       // "999" is no longer read
+        expect([isDetailed(addLine(invest)), draftAmountCents(addLine(invest))]).toEqual([true, 0]);   // a new, empty one
+        expect(draftAmountCents({ ...typed, categoryAmounts: { 30: '100' } })).toBe(900_00);  // both kinds add up
+        expect(draftAmountCents(removeLine(typed, savings.key))).toBe(300_00);
+        expect(invest.lines).toEqual([]);                                                     // the original is untouched
+      });
+
+      it('are saved in their order, and go with « Revenir à un seul montant »', () => {
+        const typed = { ...invest, note: 'ETF le 5', lines: [{ key: 'a', name: ' Épargne ', amount: '500' }, { key: 'b', name: 'Actions', amount: '' }] };
+        expect(draftsToPayload([typed])).toEqual([{
+          id: 5, name: 'Investissements', kind: 'goal', amount_cents: 500_00, category_ids: [30], note: 'ETF le 5',
+          category_amounts: {}, lines: [{ name: 'Épargne', amount_cents: 500_00 }, { name: 'Actions', amount_cents: 0 }],
+        }]);
+        const back = clearDetail(typed);
+        expect([back.lines, back.amount, isDetailed(back)]).toEqual([[], '500', false]);
+      });
+
+      it('let a category line follow its category into an envelope they detail', () => {
+        const courses: DraftEnvelope = { key: 'e6', id: 6, name: 'Courses', kind: 'goal', amount: '', categoryIds: [31], categoryAmounts: { 31: '40' }, lines: [], note: '' };
+        const withLines = { ...invest, lines: [{ key: 'a', name: 'Épargne', amount: '500' }] };
+        const moved = moveCategory([courses, withLines], 31, 'e5');
+        expect([moved[1].categoryAmounts, draftAmountCents(moved[1])]).toEqual([{ 31: '40' }, 540_00]);
+      });
+
+      it('come back from the plan with its notes', () => {
+        const [out] = draftsFromPlan({ envelopes: [
+          { id: 5, name: 'Investissements', kind: 'goal', amount_cents: 800_00, category_ids: [30], categories: [], note: 'ETF le 5',
+            lines: [{ id: 41, name: 'Épargne', amount_cents: 500_00 }, { id: 42, name: 'Actions', amount_cents: 300_00 }] },
+        ] as never });
+        expect(out.lines).toEqual([{ key: 'l41', name: 'Épargne', amount: '500' }, { key: 'l42', name: 'Actions', amount: '300' }]);
+        expect([out.note, draftAmountCents(out)]).toEqual(['ETF le 5', 800_00]);
       });
     });
 

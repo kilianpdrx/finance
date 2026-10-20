@@ -13,6 +13,7 @@ export type EvolutionRow = components["schemas"]["EvolutionRow"];
 export type UnplannedSuggestion = components["schemas"]["UnplannedSuggestion"];
 export type EnvelopeCategory = components["schemas"]["EnvelopeCategoryOut"];
 export type CategoryStats = components["schemas"]["CategoryStatsOut"];
+export type EnvelopeLine = components["schemas"]["EnvelopeLineOut"];
 
 export const KIND_LABEL: Record<EnvelopeKind, string> = {
   income: "Revenus",
@@ -96,6 +97,13 @@ export function planTotals(envelopes: Pick<Envelope, "kind" | "amount_cents">[])
 
 // ── The editor's working copy ────────────────────────────────────────────────
 
+/** A sub-line as typed: a name and an amount, no category behind it. */
+export interface DraftLine {
+  key: string;
+  name: string;
+  amount: string;
+}
+
 export interface DraftEnvelope {
   key: string;                 // stable while editing (an id, or a local key for a new one)
   id: number | null;
@@ -106,6 +114,10 @@ export interface DraftEnvelope {
   /** The detail, as typed: what is planned for a category alone. A category
    *  without an entry (or with an empty one) has no line of its own. */
   categoryAmounts: Record<number, string>;
+  /** Sub-lines that are not categories (« Épargne », « Actions »). Each one is
+   *  a line: the envelope is then the sum of its lines. */
+  lines: DraftLine[];
+  note: string;
 }
 
 /** "412,50" → 41250. Empty or unreadable is 0: an amount is never negative. */
@@ -123,19 +135,20 @@ function hasLine(text: string | undefined): boolean {
   return text != null && text.trim() !== "";
 }
 
-type Lines = Pick<DraftEnvelope, "kind" | "amount" | "categoryIds" | "categoryAmounts">;
+type Lines = Pick<DraftEnvelope, "kind" | "amount" | "categoryIds" | "categoryAmounts" | "lines">;
 
-/** Planned category by category: at least one of its categories has a line. */
+/** Planned line by line: a category with a line, or a sub-line. */
 export function isDetailed(d: Omit<Lines, "amount">): boolean {
-  return d.kind !== "unplanned" && d.categoryIds.some((id) => hasLine(d.categoryAmounts[id]));
+  return d.kind !== "unplanned" && (d.lines.length > 0 || d.categoryIds.some((id) => hasLine(d.categoryAmounts[id])));
 }
 
-/** What the envelope plans per month. With a detail it IS the sum of its lines
- *  (a blank one counts for nothing) — the one figure is then not read, so the
- *  two can never disagree. */
+/** What the envelope plans per month. With a detail it IS the sum of its lines,
+ *  categories and sub-lines alike (a blank one counts for nothing) — the one
+ *  figure is then not read, so the two can never disagree. */
 export function draftAmountCents(d: Lines): number {
   if (!isDetailed(d)) return amountToCents(d.amount);
-  return d.categoryIds.reduce((sum, id) => sum + amountToCents(d.categoryAmounts[id] ?? ""), 0);
+  return d.categoryIds.reduce((sum, id) => sum + amountToCents(d.categoryAmounts[id] ?? ""), 0)
+    + d.lines.reduce((sum, line) => sum + amountToCents(line.amount), 0);
 }
 
 export function draftsFromPlan(plan: Pick<BudgetPlan, "envelopes">): DraftEnvelope[] {
@@ -149,6 +162,8 @@ export function draftsFromPlan(plan: Pick<BudgetPlan, "envelopes">): DraftEnvelo
     categoryAmounts: Object.fromEntries(
       (e.categories ?? []).flatMap((c) => (c.amount_cents != null ? [[c.category_id, centsToAmount(c.amount_cents)]] : [])),
     ),
+    lines: (e.lines ?? []).map((line, j) => ({ key: `l${line.id ?? `${i}-${j}`}`, name: line.name, amount: centsToAmount(line.amount_cents) })),
+    note: e.note ?? "",
   }));
 }
 
@@ -181,9 +196,10 @@ export function fillWithTypical(d: DraftEnvelope, typicalOf: (categoryId: number
   };
 }
 
-/** Back to one figure: the lines go, and what they added up to stays. */
+/** Back to one figure: the lines go — category lines and sub-lines — and what
+ *  they added up to stays. */
 export function clearDetail(d: DraftEnvelope): DraftEnvelope {
-  return { ...d, amount: centsToAmount(draftAmountCents(d)), categoryAmounts: {} };
+  return { ...d, amount: centsToAmount(draftAmountCents(d)), categoryAmounts: {}, lines: [] };
 }
 
 export function draftsToPayload(drafts: DraftEnvelope[]): EnvelopeIn[] {
@@ -194,6 +210,7 @@ export function draftsToPayload(drafts: DraftEnvelope[]): EnvelopeIn[] {
       kind: d.kind,
       amount_cents: draftAmountCents(d),
       category_ids: d.kind === "unplanned" ? [] : d.categoryIds,
+      note: d.note.trim() ? d.note : null,
     };
     if (!isDetailed(d)) return base;
     return {
@@ -201,8 +218,23 @@ export function draftsToPayload(drafts: DraftEnvelope[]): EnvelopeIn[] {
       category_amounts: Object.fromEntries(
         d.categoryIds.filter((id) => hasLine(d.categoryAmounts[id])).map((id) => [id, amountToCents(d.categoryAmounts[id])]),
       ),
+      lines: d.lines.map((line) => ({ name: line.name.trim(), amount_cents: amountToCents(line.amount) })),
     };
   });
+}
+
+let lineKeys = 0;
+/** A new, empty sub-line at the end of an envelope. */
+export function addLine(d: DraftEnvelope, name = ""): DraftEnvelope {
+  return { ...d, lines: [...d.lines, { key: `nl${lineKeys++}`, name, amount: "" }] };
+}
+
+export function setLine(d: DraftEnvelope, key: string, change: Partial<Omit<DraftLine, "key">>): DraftEnvelope {
+  return { ...d, lines: d.lines.map((line) => (line.key === key ? { ...line, ...change } : line)) };
+}
+
+export function removeLine(d: DraftEnvelope, key: string): DraftEnvelope {
+  return { ...d, lines: d.lines.filter((line) => line.key !== key) };
 }
 
 /** The categories an envelope of this account may hold: unarchived leaves,

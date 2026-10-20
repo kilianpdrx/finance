@@ -87,6 +87,7 @@ async def test_performance_chart_never_quotes_cash(client, seed_data, monkeypatc
     """The whole point of pinning the price: a `CASH.*` symbol does not exist, so
     any provider call is both wasted and a guaranteed 404."""
     import routers.investments as inv
+    import services.market_data as md
 
     asked: list[str] = []
 
@@ -94,7 +95,8 @@ async def test_performance_chart_never_quotes_cash(client, seed_data, monkeypatc
         asked.append(ticker)
         return []
 
-    monkeypatch.setattr(inv, "fetch_historical_prices", fake_history)
+    # History goes through market_data.history_for, whatever the caller.
+    monkeypatch.setattr(md, "fetch_historical_prices", fake_history)
 
     profile, acc = seed_data["profile"], seed_data["account_inv"]
     await _add_cash(client, acc.id, profile.id, 750.0)
@@ -146,6 +148,7 @@ async def test_monthly_values_carry_the_cash_constant(db_session, seed_data, mon
     """Without this the net-worth-over-time chart understates the account by
     exactly its cash balance."""
     import routers.investments as inv
+    import services.market_data as md
 
     profile, acc = seed_data["profile"], seed_data["account_inv"]
     acc_ccy = acc.currency or "EUR"
@@ -164,7 +167,8 @@ async def test_monthly_values_carry_the_cash_constant(db_session, seed_data, mon
         return [{"date": "2026-07-31", "close": 100.0},
                 {"date": "2026-08-18", "close": 150.0}]
 
-    monkeypatch.setattr(inv, "fetch_historical_prices", fake_history)
+    # History goes through market_data.history_for, whatever the caller.
+    monkeypatch.setattr(md, "fetch_historical_prices", fake_history)
     series = await inv._holdings_monthly_values(db_session, acc.id, acc_ccy)
 
     by_month = {s["month"]: s["amount_cents"] for s in series}
@@ -177,6 +181,7 @@ async def test_cash_only_account_still_charts(db_session, seed_data):
     """No price history exists to build months from, but the account is not worth
     nothing — it starts at the current month."""
     import routers.investments as inv
+    import services.market_data as md
 
     profile, acc = seed_data["profile"], seed_data["account_inv"]
     h = Holding(profile_id=profile.id, account_id=acc.id, ticker="x", name="",

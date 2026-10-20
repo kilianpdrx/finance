@@ -285,7 +285,36 @@ class BudgetEnvelope(Base):
     name = Column(String, nullable=False)
     kind = Column(String, nullable=False)
     position = Column(Integer, default=0)
+    note = Column(String, nullable=True)        # free text, written in the editor
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BudgetEnvelopeLine(Base):
+    """A sub-line of an envelope that is NOT a category — « Épargne » and
+    « Actions » in « Investissements ». A planned amount only: nothing tells
+    which transactions are its own, so the envelope's realised stays one figure.
+    With at least one (or one category amount), the envelope's amount is the sum
+    of its lines. Not versioned, like category amounts: today's breakdown."""
+    __tablename__ = "budget_envelope_lines"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    envelope_id = Column(Integer, ForeignKey("budget_envelopes.id"), nullable=False)
+    name = Column(String, nullable=False)
+    amount_cents = Column(Integer, nullable=False, default=0)
+    position = Column(Integer, default=0)
+
+
+class BudgetPlanNote(Base):
+    """What the user wrote about an account's plan as a whole. One per account."""
+    __tablename__ = "budget_plans"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    note = Column(String, nullable=True)
+
+    __table_args__ = (UniqueConstraint("account_id", name="uq_budget_plan_account"),)
 
 
 class BudgetEnvelopeCategory(Base):
@@ -383,7 +412,10 @@ class Holding(Base):
     ticker = Column(String, nullable=False)
     name = Column(String, nullable=False)
     quantity = Column(Float, nullable=False)
-    cost_basis_cents = Column(Integer, nullable=False)
+    # What the position cost in total. NULL = unknown: a position synced from
+    # Binance arrives without one (its API gives no purchase price), and a cost
+    # of 0 would show the whole value as gain.
+    cost_basis_cents = Column(Integer, nullable=True)
     currency = Column(String, default="USD")
     asset_type = Column(String, default="stock")
     added_date = Column(Date, nullable=True)
@@ -397,6 +429,9 @@ class Holding(Base):
     # When true, the holding is excluded from the yfinance/CoinGecko auto-refresh
     # and keeps its manual / broker-reference price (ref_price_cents).
     price_locked = Column(Boolean, default=False)
+    # "binance" = kept up to date by the Binance sync and priced from Binance
+    # (services/binance.py); NULL = imported or typed by hand.
+    sync_source = Column(String, nullable=True)
 
     account = relationship("Account")
 

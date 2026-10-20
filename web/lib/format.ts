@@ -35,6 +35,18 @@ export function formatCents(cents: number, currency = "EUR", opts: MoneyOpts = {
   return cents < 0 ? `−${base}` : base;
 }
 
+/** A unit price, which for a coin can be a fraction of a cent: two decimals
+ *  from 0,01 upward (up to four below 1), three significant digits under a
+ *  cent (0,000011 €). */
+export function formatUnitPrice(cents: number, currency = "EUR"): string {
+  const units = Math.abs(cents) / 100;
+  if (units === 0 || units >= 1) return formatCents(cents, currency, { decimals: 2 });
+  const formatted = units >= 0.01
+    ? units.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+    : units.toLocaleString("fr-FR", { maximumSignificantDigits: 3 });
+  return `${cents < 0 ? "−" : ""}${formatted} ${currencySymbol(currency)}`;   // same no-break space as formatCents
+}
+
 /** Compact form for axis labels / chips, e.g. 12,3k €. */
 export function formatCentsCompact(cents: number, currency = "EUR"): string {
   const abs = Math.abs(cents) / 100;

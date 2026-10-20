@@ -54,12 +54,16 @@ export interface HoldingOut {
   isin: string | null;
   name: string;
   quantity: number;
-  cost_basis_cents: number;
+  /** Null = unknown (a coin synced from Binance before a PRU is typed): no gain. */
+  cost_basis_cents: number | null;
   currency: string;
   asset_type: string;
   added_date: string | null;
   notes: string | null;
   price_locked: boolean;
+  /** "binance" = kept up to date by the Binance sync and priced from Binance. */
+  sync_source: string | null;
+  /** One unit, in cents — a fraction of a cent for a coin worth less. */
   current_price_cents: number | null;
   current_value_cents: number | null;
   gain_cents: number | null;
@@ -103,8 +107,11 @@ export interface InvestmentAccount {
   holdings: HoldingOut[];
   holdings_value_cents: number | null;
   holdings_cost_basis_cents: number | null;
+  /** Gain over the positions whose cost is known. */
   holdings_gain_cents: number | null;
   holdings_gain_pct: number | null;
+  /** Positions left out of the gain because their cost is unknown. */
+  holdings_without_cost: number;
   allocation_by_type: Record<string, number> | null;
   est_annual_div_cents: number | null;
   avg_dividend_yield: number | null;
@@ -580,8 +587,8 @@ export function useBudgetPlanMutations() {
   const onSuccess = () => invalidate("budget-plan");
   return {
     save: useMutation({
-      mutationFn: ({ accountId, envelopes }: { accountId: number; envelopes: EnvelopeIn[] }) =>
-        unwrap(api.PUT("/api/budget-plan", { params: { query: { account_id: accountId } }, body: { envelopes } })) as Promise<BudgetPlan>,
+      mutationFn: ({ accountId, envelopes, note }: { accountId: number; envelopes: EnvelopeIn[]; note?: string }) =>
+        unwrap(api.PUT("/api/budget-plan", { params: { query: { account_id: accountId } }, body: { envelopes, note } })) as Promise<BudgetPlan>,
       onSuccess,
     }),
     // From the current month on; past months keep the amount planned then.
@@ -678,7 +685,7 @@ export function useHoldingMutations() {
   const onSuccess = () => invalidate("investments");
   return {
     create: useMutation({
-      mutationFn: async ({ accountId, body }: { accountId: number; body: { ticker: string; name: string; quantity: number; cost_basis_cents: number; currency?: string; asset_type?: string; added_date?: string | null; notes?: string | null } }) => {
+      mutationFn: async ({ accountId, body }: { accountId: number; body: { ticker: string; name: string; quantity: number; cost_basis_cents: number | null; currency?: string; asset_type?: string; added_date?: string | null; notes?: string | null } }) => {
         const res = await fetch(`/api/investments/accounts/${accountId}/holdings`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -690,15 +697,8 @@ export function useHoldingMutations() {
       onSuccess,
     }),
     update: useMutation({
-      mutationFn: async ({ holdingId, body }: { holdingId: number; body: Record<string, unknown> }) => {
-        const res = await fetch(`/api/investments/holdings/${holdingId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) throw new Error("Failed to update holding");
-        return res.json();
-      },
+      mutationFn: ({ holdingId, body }: { holdingId: number; body: Record<string, unknown> }) =>
+        mutateJson(`/api/investments/holdings/${holdingId}`, "PUT", body),
       onSuccess,
     }),
     remove: useMutation({
@@ -782,13 +782,15 @@ export interface HistoryResponse {
   data: HistoryPoint[];
 }
 
-export function useHoldingHistory(ticker: string | null, period: string = "1y") {
+/** `source`: the holding's `sync_source` — a Binance coin's code is not a Yahoo symbol. */
+export function useHoldingHistory(ticker: string | null, period: string = "1y", source: string | null = null) {
   return useQuery({
-    queryKey: ["holding-history", ticker, period],
+    queryKey: ["holding-history", ticker, period, source],
     enabled: !!ticker,
     staleTime: 3600_000,
     queryFn: async () => {
-      const res = await fetch(`/api/investments/history/${encodeURIComponent(ticker!)}?period=${period}`);
+      const qs = new URLSearchParams({ period, ...(source ? { source } : {}) });
+      const res = await fetch(`/api/investments/history/${encodeURIComponent(ticker!)}?${qs}`);
       if (!res.ok) throw new Error("Failed to fetch history");
       return res.json() as Promise<HistoryResponse>;
     },
@@ -996,6 +998,56 @@ export function useSettingMutation() {
       return res.json();
     },
     onSuccess: () => invalidate("settings", "analytics", "budget-full", "investments"),
+  });
+}
+
+// ── Binance (read-only key) ─────────────────────────────────────────────────
+export interface BinanceStatus {
+  configured: boolean;
+  has_key: boolean;
+  has_secret: boolean;
+  account_id: number | null;
+  auto_sync: boolean;
+  last_sync: string | null;
+  last_status: string | null;
+}
+export type BinanceLine = components["schemas"]["BinanceLine"];
+export type BinanceSyncPreview = components["schemas"]["BinanceSyncPreview"];
+export type BinanceSyncResult = components["schemas"]["BinanceSyncResult"];
+
+export function useBinanceStatus() {
+  return useQuery({
+    queryKey: ["investments", "binance-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/investments/binance/status");
+      if (!res.ok) throw new Error("Failed to fetch Binance status");
+      return res.json() as Promise<BinanceStatus>;
+    },
+  });
+}
+
+/** The key works and can only read. */
+export function useBinanceTest() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: () => mutateJson("/api/investments/binance/test", "POST") as Promise<{ read_only: boolean }>,
+    onSettled: () => invalidate("investments"),
+  });
+}
+
+/** What a sync would change. Writes nothing. */
+export function useBinanceSyncPreview() {
+  return useMutation({
+    mutationFn: () => mutateJson("/api/investments/binance/sync-preview", "POST") as Promise<BinanceSyncPreview>,
+  });
+}
+
+/** Reads Binance again and applies it (never the preview the browser holds). */
+export function useBinanceSync() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: () => mutateJson("/api/investments/binance/sync", "POST") as Promise<BinanceSyncResult>,
+    onSettled: () => invalidate("investments", "analytics"),
   });
 }
 

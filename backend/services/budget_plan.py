@@ -26,8 +26,8 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import (
-    BudgetEntry, BudgetEnvelope, BudgetEnvelopeAmount, BudgetEnvelopeCategory, Category, PlannedExpense,
-    Transaction,
+    BudgetEntry, BudgetEnvelope, BudgetEnvelopeAmount, BudgetEnvelopeCategory, BudgetEnvelopeLine, BudgetPlanNote,
+    Category, PlannedExpense, Transaction,
 )
 from services.label_groups import label_key
 
@@ -189,11 +189,16 @@ class Envelope:
     # Not versioned — it is today's breakdown; the envelope's amount (their sum,
     # versioned like any other) is what past months are compared with.
     category_amounts: dict = field(default_factory=dict)
+    # Sub-lines that are not categories, [(id, name, cents)] in their order: a
+    # planned amount only — nothing realised can be told apart for them.
+    lines: list = field(default_factory=list)
+    note: Optional[str] = None
 
     @property
     def detailed(self) -> bool:
-        """Planned category by category: its amount is the sum of theirs."""
-        return bool(self.category_amounts)
+        """Planned line by line — categories and sub-lines: its amount is the sum
+        of theirs."""
+        return bool(self.category_amounts) or bool(self.lines)
 
     def realised(self, sums: AccountSums, month: str) -> int:
         if self.kind == UNPLANNED:
@@ -238,7 +243,19 @@ async def load_envelopes(db: AsyncSession, pid: int, account_id: int) -> list[En
         BudgetEnvelopeAmount.profile_id == pid, BudgetEnvelopeAmount.envelope_id.in_(ids),
     ))).scalars():
         amounts[amount.envelope_id].append((amount.effective_from, amount.amount_cents))
-    return [Envelope(r.id, r.name, r.kind, sorted(categories[r.id]), sorted(amounts[r.id]), detail[r.id]) for r in rows]
+    lines = defaultdict(list)
+    for line in (await db.execute(select(BudgetEnvelopeLine).where(
+        BudgetEnvelopeLine.profile_id == pid, BudgetEnvelopeLine.envelope_id.in_(ids),
+    ).order_by(BudgetEnvelopeLine.position, BudgetEnvelopeLine.id))).scalars():
+        lines[line.envelope_id].append((line.id, line.name, line.amount_cents))
+    return [Envelope(r.id, r.name, r.kind, sorted(categories[r.id]), sorted(amounts[r.id]), detail[r.id],
+                     lines[r.id], r.note) for r in rows]
+
+
+async def load_plan_note(db: AsyncSession, pid: int, account_id: int) -> Optional[str]:
+    return (await db.execute(select(BudgetPlanNote.note).where(
+        BudgetPlanNote.profile_id == pid, BudgetPlanNote.account_id == account_id,
+    ))).scalar_one_or_none()
 
 
 async def set_amount(db: AsyncSession, pid: int, envelope_id: int, month: str, amount_cents: int) -> None:
@@ -254,10 +271,10 @@ async def set_amount(db: AsyncSession, pid: int, envelope_id: int, month: str, a
 
 
 async def resync_detailed_amounts(db: AsyncSession, pid: int, envelope_ids: set[int]) -> None:
-    """A detailed envelope's amount IS the sum of its categories' amounts. When
-    one of them leaves outside the editor (its category is deleted), plan the
-    new sum from the current month on — otherwise the envelope would keep
-    promising money for a line that no longer exists."""
+    """A detailed envelope's amount IS the sum of its lines — category amounts
+    and sub-lines. When a category line leaves outside the editor (its category
+    is deleted), plan the new sum from the current month on — otherwise the
+    envelope would keep promising money for a line that no longer exists."""
     if not envelope_ids:
         return
     month = current_month()
@@ -265,6 +282,9 @@ async def resync_detailed_amounts(db: AsyncSession, pid: int, envelope_ids: set[
         left = (await db.execute(select(BudgetEnvelopeCategory.amount_cents).where(
             BudgetEnvelopeCategory.profile_id == pid, BudgetEnvelopeCategory.envelope_id == envelope_id,
             BudgetEnvelopeCategory.amount_cents.isnot(None),
+        ))).scalars().all()
+        left += (await db.execute(select(BudgetEnvelopeLine.amount_cents).where(
+            BudgetEnvelopeLine.profile_id == pid, BudgetEnvelopeLine.envelope_id == envelope_id,
         ))).scalars().all()
         if not left:
             continue        # no detail left: the envelope keeps its amount, as one figure

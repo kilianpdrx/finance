@@ -5,6 +5,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tool
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHoldingHistory } from "@/lib/api/hooks";
 import { cn } from "@/lib/utils";
+import { formatUnitPrice } from "@/lib/format";
 
 const PERIODS = [
   { value: "1mo", label: "1M" },
@@ -15,9 +16,9 @@ const PERIODS = [
   { value: "5y", label: "5A" },
 ];
 
-export function HoldingPriceChart({ ticker, currency }: { ticker: string; currency: string }) {
+export function HoldingPriceChart({ ticker, currency, source = null }: { ticker: string; currency: string; source?: string | null }) {
   const [period, setPeriod] = useState("1y");
-  const { data, isLoading } = useHoldingHistory(ticker, period);
+  const { data, isLoading } = useHoldingHistory(ticker, period, source);
 
   const points = data?.data ?? [];
 
@@ -69,7 +70,10 @@ export function HoldingPriceChart({ ticker, currency }: { ticker: string; curren
             />
             <YAxis
               domain={["auto", "auto"]}
-              tickFormatter={(v) => `${v.toLocaleString("fr-FR", { maximumFractionDigits: 0 })}`}
+              // A coin can be worth a fraction of a cent: below 100, significant digits.
+              tickFormatter={(v: number) => Math.abs(v) >= 100
+                ? v.toLocaleString("fr-FR", { maximumFractionDigits: 0 })
+                : v.toLocaleString("fr-FR", { maximumSignificantDigits: 3 })}
               tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
               axisLine={false}
               tickLine={false}
@@ -84,7 +88,7 @@ export function HoldingPriceChart({ ticker, currency }: { ticker: string; curren
                 fontSize: 12,
               }}
               labelFormatter={(d) => new Date(d + "T00:00:00").toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })}
-              formatter={(value: number) => [`${value.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`, "Prix"]}
+              formatter={(value: number) => [formatUnitPrice(value * 100, currency), "Prix"]}
             />
             <Area
               dataKey="close"

@@ -6,6 +6,7 @@ import {
   parseAmountToCents,
   formatPercent,
   formatMonthLabel,
+  formatUnitPrice,
   deriveCurrency,
 } from './format';
 
@@ -43,6 +44,16 @@ describe('format.ts', () => {
     it('includes sign when requested', () => {
       expect(formatCents(123456, 'EUR', { sign: true })).toBe('+1 235 €');
       expect(formatCents(-123456, 'EUR', { sign: true })).toBe('−1 235 €');
+    });
+  });
+
+  describe('formatUnitPrice', () => {
+    it('keeps what a coin worth less than a cent is worth', () => {
+      expect(formatUnitPrice(7_368_479, 'EUR')).toMatch(/^73\s684,79\s€$/);
+      expect(formatUnitPrice(19.9, 'EUR')).toMatch(/^0,199\s€$/);
+      expect(formatUnitPrice(40, 'EUR')).toMatch(/^0,40\s€$/);
+      expect(formatUnitPrice(0.0011, 'EUR')).toMatch(/^0,000011\s€$/);
+      expect(formatUnitPrice(0, 'EUR')).toMatch(/^0,00\s€$/);
     });
   });
 

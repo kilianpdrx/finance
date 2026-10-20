@@ -2,17 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, StickyNote, Trash2, X } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchBudgetProposal, previewBudgetPlan, useBudgetCategoryStats, useBudgetPlanMutations, useCategories, type Category } from "@/lib/api/hooks";
 import {
-  AMOUNT_LABEL, centsToAmount, draftAmountCents, draftsFromPlan, draftsToPayload, eligibleCategories, fitsKind, isDetailed,
-  moveCategory, planTotals, type BudgetPlan, type DraftEnvelope, type EnvelopeKind,
+  AMOUNT_LABEL, KIND_LABEL, addLine, centsToAmount, draftAmountCents, draftsFromPlan, draftsToPayload, eligibleCategories, fitsKind,
+  isDetailed, moveCategory, planTotals, removeLine, setLine, type BudgetPlan, type DraftEnvelope, type EnvelopeKind,
 } from "@/lib/budget-plan";
 import { currencySymbol, formatCents } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -38,8 +39,9 @@ const KIND_CHOICES: { value: EnvelopeKind; label: string; hint: string }[] = [
  *  knowingly rather than guessed.
  *
  *  Two views of one working copy: « Enveloppes » to shape them (names, kinds,
- *  which categories), « Détail par catégorie » to plan line by line, as in a
- *  sheet. An envelope with lines is their sum. */
+ *  which categories, sub-lines, a note), « Détail par catégorie » to plan line
+ *  by line, as in a sheet. An envelope with lines — categories or sub-lines —
+ *  is their sum. The plan's own note sits beside both. */
 export function PlanEditor({
   open,
   onOpenChange,
@@ -67,6 +69,9 @@ export function PlanEditor({
   const [drafts, setDrafts] = useState<DraftEnvelope[] | null>(null);
   const [stats, setStats] = useState<Record<string, Stats>>({});
   const [proposed, setProposed] = useState(false);
+  const [planNote, setPlanNote] = useState("");
+  // Envelopes whose note field was opened (one with a note shows it anyway).
+  const [notesOpen, setNotesOpen] = useState<Set<string>>(new Set());
   const nextKey = useRef(0);
 
   // Start from the saved plan, or from the proposal when there is none.
@@ -78,6 +83,8 @@ export function PlanEditor({
       const initial = draftsFromPlan(source);
       setDrafts(initial);
       setProposed(isProposal);
+      setPlanNote(source.note ?? "");
+      setNotesOpen(new Set());
       setStats(Object.fromEntries(initial.map((d, i) => [d.key, { typical: source.envelopes[i].typical_cents ?? null, average: source.envelopes[i].average_cents ?? null }])));
     };
     setDrafts(null);
@@ -118,7 +125,9 @@ export function PlanEditor({
     patch(d.key, { kind, categoryIds: d.categoryIds.filter((id) => { const c = byId.get(id); return c ? fitsKind(c, kind) : false; }) });
   const move = (categoryId: number, toKey: string | null) => setDrafts((ds) => moveCategory(ds ?? [], categoryId, toKey));
   const add = (kind: EnvelopeKind) =>
-    setDrafts((ds) => [...(ds ?? []), { key: `n${nextKey.current++}`, id: null, name: kind === "unplanned" ? "Imprévus" : "", kind, amount: "", categoryIds: [], categoryAmounts: {} }]);
+    setDrafts((ds) => [...(ds ?? []), { key: `n${nextKey.current++}`, id: null, name: kind === "unplanned" ? "Imprévus" : "", kind, amount: "", categoryIds: [], categoryAmounts: {}, lines: [], note: "" }]);
+  const change = (key: string, update: (d: DraftEnvelope) => DraftEnvelope) =>
+    setDrafts((ds) => (ds ?? []).map((d) => (d.key === key ? update(d) : d)));
   const remove = (key: string) => setDrafts((ds) => (ds ?? []).filter((d) => d.key !== key));
   const shift = (index: number, by: -1 | 1) =>
     setDrafts((ds) => {
@@ -136,7 +145,7 @@ export function PlanEditor({
   const submit = async () => {
     if (!drafts) return;
     try {
-      await save.mutateAsync({ accountId, envelopes: draftsToPayload(drafts) });
+      await save.mutateAsync({ accountId, envelopes: draftsToPayload(drafts), note: planNote });
       toast.success("Plan enregistré");
       onOpenChange(false);
     } catch (e) {
@@ -174,8 +183,9 @@ export function PlanEditor({
           would throw the whole plan away. Annuler, Enregistrer, the ✕ and a click
           outside do. A list opened inside still closes on Escape — it is the top
           layer and takes the key itself. */}
+      {/* One size for both views: switching between them never resizes the window. */}
       <DialogContent onEscapeKeyDown={(e) => e.preventDefault()}
-        className={cn("flex max-h-[90vh] flex-col", view === "sheet" ? "max-w-5xl" : "max-w-3xl")}>
+        className="flex h-[92vh] w-[96vw] max-w-[80rem] flex-col">
         <DialogHeader className="shrink-0 flex-row flex-wrap items-center gap-x-4 gap-y-2 pr-8">
           <DialogTitle>Plan de budget · {accountName}</DialogTitle>
           <div role="tablist" aria-label="Vue du plan" className="inline-flex rounded-lg border border-border bg-surface p-0.5 text-sm">
@@ -188,7 +198,10 @@ export function PlanEditor({
           </div>
         </DialogHeader>
 
-        <div className="flex-1 space-y-3 overflow-y-auto px-1">
+        {/* Wide: the plan, and beside it its note and its totals. Narrow: one
+            column that scrolls as a whole. */}
+        <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1fr)_18rem] lg:gap-5 lg:overflow-hidden">
+        <div className="space-y-3 px-1 lg:overflow-y-auto">
           {drafts === null ? (
             <Skeleton className="h-64 w-full" />
           ) : view === "sheet" ? (
@@ -223,7 +236,7 @@ export function PlanEditor({
                       )}
                       {isDetailed(d) ? (
                         // Planned line by line: the amount is their sum, edited in the sheet.
-                        <button type="button" onClick={() => setView("sheet")} title="La somme des montants par catégorie — ouvrir le détail"
+                        <button type="button" onClick={() => setView("sheet")} title="La somme de ses lignes — ouvrir le détail"
                           className="flex items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-sm hover:border-brand">
                           <span className="nums blurable font-semibold">{formatCents(draftAmountCents(d), currency)}</span>
                           <span className="text-xs text-muted-foreground">/ mois · détaillé</span>
@@ -280,6 +293,43 @@ export function PlanEditor({
                         {d.categoryIds.length === 0 && candidates.length === 0 && <span className="text-xs text-muted-foreground">Aucune catégorie disponible pour ce type.</span>}
                       </div>
                     )}
+
+                    {d.lines.length > 0 && (
+                      <ul aria-label={`Sous-lignes de ${d.name.trim() || "l'enveloppe"}`} className="space-y-1.5 border-l-2 border-border pl-3">
+                        {d.lines.map((line) => (
+                          <li key={line.key} className="flex items-center gap-2">
+                            <Input aria-label="Nom de la sous-ligne" value={line.name} placeholder="Nom de la sous-ligne (ex. Actions)"
+                              onChange={(e) => change(d.key, (x) => setLine(x, line.key, { name: e.target.value }))} className="h-8 min-w-0 flex-1" />
+                            <Input aria-label={`Montant de ${line.name.trim() || "la sous-ligne"}`} inputMode="decimal" value={line.amount} placeholder="0"
+                              onChange={(e) => change(d.key, (x) => setLine(x, line.key, { amount: e.target.value }))} className="nums h-8 w-28 text-right" />
+                            <span className="shrink-0 text-xs text-muted-foreground">{currencySymbol(currency)} / mois</span>
+                            <Button variant="ghost" size="icon" className="size-7 shrink-0 text-muted-foreground hover:text-negative" aria-label="Supprimer la sous-ligne"
+                              onClick={() => change(d.key, (x) => removeLine(x, line.key))}><X className="size-3.5" /></Button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {(d.note !== "" || notesOpen.has(d.key)) && (
+                      <Textarea aria-label={`Note de ${d.name.trim() || "l'enveloppe"}`} value={d.note} rows={2} autoFocus={d.note === ""}
+                        placeholder="Une note sur cette enveloppe…" onChange={(e) => patch(d.key, { note: e.target.value })} />
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                      {d.kind !== "unplanned" && (
+                        <button type="button" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+                          title="Une ligne prévue qui n'est pas une catégorie : l'enveloppe devient la somme de ses lignes"
+                          onClick={() => change(d.key, (x) => addLine(x))}>
+                          <Plus className="size-3" /> Sous-ligne
+                        </button>
+                      )}
+                      {d.note === "" && !notesOpen.has(d.key) && (
+                        <button type="button" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+                          onClick={() => setNotesOpen((s) => new Set(s).add(d.key))}>
+                          <StickyNote className="size-3" /> Note
+                        </button>
+                      )}
+                    </div>
                   </section>
                 );
               })}
@@ -300,6 +350,27 @@ export function PlanEditor({
               </section>
             </>
           )}
+        </div>
+
+        <aside aria-label="Notes et totaux du plan" className="mt-4 space-y-4 px-1 lg:mt-0 lg:overflow-y-auto lg:border-l lg:border-border lg:pl-5">
+          <div className="space-y-1.5">
+            <label htmlFor="plan-note" className="text-sm font-medium">Notes du plan</label>
+            <Textarea id="plan-note" value={planNote} rows={8} onChange={(e) => setPlanNote(e.target.value)}
+              placeholder="Vos objectifs, ce qui change ce mois-ci, ce qu'il faudra revoir…" className="min-h-[10rem]" />
+          </div>
+          <dl className="space-y-1 text-sm">
+            {([["income", totals.income], ["expense", totals.ceilings], ["goal", totals.goals], ["unplanned", totals.provision]] as const).map(([kind, cents]) => (
+              <div key={kind} className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">{KIND_LABEL[kind]}</dt>
+                <dd className="nums blurable">{formatCents(cents, currency)}</dd>
+              </div>
+            ))}
+            <div className="flex justify-between gap-3 border-t border-border pt-1 font-semibold">
+              <dt>Non affectés</dt>
+              <dd className={cn("nums blurable", totals.unassigned < 0 && "text-negative")}>{formatCents(totals.unassigned, currency, { sign: true })}</dd>
+            </div>
+          </dl>
+        </aside>
         </div>
 
         <DialogFooter className="shrink-0 items-center gap-3 sm:justify-between">

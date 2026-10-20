@@ -169,13 +169,15 @@ async def fetch_flex_statement(token: str, query_id: str) -> str:
         raise FlexError(f"IBKR injoignable ({type(e).__name__})", kind="transient") from None
 
 
-# A Flex token in a URL's query string: `…?t=123456…&q=…`.
-_TOKEN_IN_URL = re.compile(r"([?&]t=)[^&\s'\"]+")
+# A Flex token in a URL's query string: `…?t=123456…&q=…`; a Binance
+# signature: `…&signature=9f86…`.
+_TOKEN_IN_URL = re.compile(r"([?&](?:t|signature)=)[^&\s'\"]+")
 
 
 def redact_secrets(text: str) -> str:
-    """Mask any Flex token a URL carries — for log lines written before
-    `fetch_flex_statement` stopped letting them through."""
+    """Mask any Flex token or Binance signature a URL carries — for log lines
+    written before `fetch_flex_statement` stopped letting them through, and in
+    case one ever slips past `services.binance`."""
     return _TOKEN_IN_URL.sub(r"\1•••", text)
 
 

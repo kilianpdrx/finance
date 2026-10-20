@@ -44,7 +44,8 @@ export function AddHoldingDialog({
           quantity: isCash
             ? parseAmountToCents(form.quantity) / 100
             : parseFloat(form.quantity),
-          cost_basis_cents: isCash ? 0 : parseAmountToCents(form.costBasis),
+          // Empty: the cost is unknown, and no gain is claimed (not a cost of 0).
+          cost_basis_cents: isCash ? 0 : form.costBasis.trim() ? parseAmountToCents(form.costBasis) : null,
           currency: form.currency,
           asset_type: form.assetType,
         },
@@ -59,7 +60,7 @@ export function AddHoldingDialog({
 
   const valid = isCash
     ? Boolean(form.quantity) && parseAmountToCents(form.quantity) >= 0
-    : Boolean(form.ticker && form.name && form.quantity && form.costBasis);
+    : Boolean(form.ticker && form.name && form.quantity);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -87,7 +88,7 @@ export function AddHoldingDialog({
                 </div>
                 <div className="space-y-1">
                   <Label>Coût d&apos;acquisition total</Label>
-                  <Input inputMode="decimal" value={form.costBasis} onChange={(e) => setForm({ ...form, costBasis: e.target.value })} placeholder="1 500,00" />
+                  <Input inputMode="decimal" value={form.costBasis} onChange={(e) => setForm({ ...form, costBasis: e.target.value })} placeholder="Inconnu" />
                 </div>
               </div>
             </>

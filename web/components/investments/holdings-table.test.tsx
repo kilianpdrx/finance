@@ -11,6 +11,8 @@ vi.mock('@/lib/api/hooks', async (importOriginal) => ({
     update: { mutateAsync: vi.fn(), isPending: false },
     create: { mutateAsync: vi.fn(), isPending: false },
   }),
+  // The edit dialog asks which account IBKR feeds (for its PRU hint).
+  useIbkrStatus: () => ({ data: undefined }),
 }));
 
 // Expanding a row renders the price chart, which would fetch. Stub it so an
@@ -27,7 +29,7 @@ function holding(over: Partial<HoldingOut>): HoldingOut {
     current_price_cents: 17000, current_value_cents: 85000,
     gain_cents: 5000, gain_pct: 6.25, price_currency: 'EUR',
     price_fetched_at: null, value_in_account_ccy_cents: 85000,
-    price_status: 'ok',
+    price_status: 'ok', sync_source: null,
     ...over,
   } as HoldingOut;
 }
@@ -75,3 +77,23 @@ describe('HoldingsTable — cash positions', () => {
     expect(await screen.findByTestId('price-chart')).toHaveTextContent('AI.PA');
   });
 });
+
+describe('HoldingsTable — coins synced from Binance', () => {
+  // 1 000 000 SHIB at 0,000011 € — a unit price of a fraction of a cent — and no PRU yet.
+  const SHIB = holding({
+    id: 3, ticker: 'SHIB', name: 'SHIBA INU', asset_type: 'crypto', sync_source: 'binance',
+    quantity: 1_000_000, cost_basis_cents: null, current_price_cents: 0.0011,
+    current_value_cents: 1100, gain_cents: null, gain_pct: null, value_in_account_ccy_cents: 1100,
+  });
+
+  it('says where it comes from, shows its price, and claims no gain without a cost', () => {
+    render(<HoldingsTable holdings={[SHIB]} currency="EUR" />);
+    const row = screen.getByText('SHIB').closest('tr')!;
+    expect(row).toHaveTextContent('Binance');
+    expect(row.textContent).toMatch(/0,000011\s€/);
+    expect(row.textContent).toMatch(/11,00\s€/);
+    expect(screen.getByTitle(/Prix de revient inconnu/)).toHaveTextContent('—');
+    expect(row).not.toHaveTextContent('+');
+  });
+});
+

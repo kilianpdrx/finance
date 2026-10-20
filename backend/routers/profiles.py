@@ -13,7 +13,8 @@ router = APIRouter()
 # enforced). `loan_details` has no profile_id — it's purged separately by account.
 _SCOPED_TABLES = [
     # The budget plan first: its rows point at envelopes, categories and accounts.
-    "budget_envelope_amounts", "budget_envelope_categories", "budget_envelopes",
+    "budget_envelope_amounts", "budget_envelope_categories", "budget_envelope_lines", "budget_envelopes",
+    "budget_plans",
     "transactions", "import_batches", "holdings", "account_balance_snapshots",
     "budget_entries", "planned_expenses", "category_rules", "categories",
     "goal_contributions", "goals", "loan_extra_payments", "bank_profiles",

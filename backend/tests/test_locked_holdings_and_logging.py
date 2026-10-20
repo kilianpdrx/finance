@@ -47,6 +47,7 @@ async def test_account_performance_never_quotes_a_locked_holding(
     is pure cost: the symbol may not exist any more (404 on every chart load) and
     the empty result is discarded regardless."""
     import routers.investments as inv
+    import services.market_data as md
 
     asked: list[str] = []
 
@@ -54,7 +55,8 @@ async def test_account_performance_never_quotes_a_locked_holding(
         asked.append(ticker)
         return [{"date": "2026-08-17", "close": 100.0}, {"date": "2026-08-18", "close": 110.0}]
 
-    monkeypatch.setattr(inv, "fetch_historical_prices", fake_history)
+    # History goes through market_data.history_for, whatever the caller.
+    monkeypatch.setattr(md, "fetch_historical_prices", fake_history)
 
     acc, profile = locked_and_live["account"], locked_and_live["profile"]
     res = await client.get(

@@ -138,6 +138,11 @@ export function InvestmentRow({ acc, defaultExpanded = false }: {
                       {acc.holdings_gain_cents != null && (
                         <PctBadge value={acc.holdings_gain_pct} amountCents={acc.holdings_gain_cents} currency={acc.currency} />
                       )}
+                      {acc.holdings_without_cost > 0 && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Gain hors {acc.holdings_without_cost} position{acc.holdings_without_cost > 1 ? "s" : ""} sans prix de revient
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
