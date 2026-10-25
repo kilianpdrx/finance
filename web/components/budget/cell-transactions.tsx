@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CategorySelect } from "@/components/transactions/category-select";
+import { CategorySourceBadge } from "@/components/transactions/category-source-badge";
 import { api, unwrap } from "@/lib/api/client";
 import { useAllAccounts, useCategories, useTransactionMutations, type Transaction } from "@/lib/api/hooks";
 import { cellTransactions, periodRange, type CellAmounts, type CellSelection } from "@/lib/budget";
@@ -163,8 +164,12 @@ export function CellTransactions({
                     <span className="min-w-0 flex-1">
                       {/* Cut to one line in the list; whole once the row is open. */}
                       <span data-label className={`block text-sm ${open ? "break-words" : "truncate"}`}>{t.description}</span>
-                      <span className="block truncate text-[11px] text-muted-foreground">
-                        {showCategory && catName(t.category_id) ? `${catName(t.category_id)} · ` : ""}{t.account_name}
+                      {/* Who chose the category: a rule (« auto ») or the user (« manuel »). */}
+                      <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <CategorySourceBadge source={t.category_source} />
+                        <span className="truncate">
+                          {showCategory && catName(t.category_id) ? `${catName(t.category_id)} · ` : ""}{t.account_name}
+                        </span>
                       </span>
                     </span>
                     <span className={`nums blurable shrink-0 text-sm font-semibold ${t.is_debit ? "text-negative" : "text-positive"}`}>

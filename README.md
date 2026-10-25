@@ -36,6 +36,7 @@ installé. Le détail est dans le `README.md` fourni.
 | **Budget** | Budget annuel par catégorie (un compte, ou tous convertis dans une seule devise), dépenses planifiées, comparaison prévu / réalisé ; plan mensuel par enveloppes (par compte) ou détaillé catégorie par catégorie, provision pour imprévus, évolution sur plusieurs mois |
 | **Comptes** | Courant, épargne, crédit, immobilier ; soldes manuels, patrimoine dans le temps, clôture (l'historique reste) ou suppression définitive |
 | **Investissements** | Portefeuille (actions, ETF, crypto), cours et dividendes automatiques, import de positions, synchro IBKR et Binance (clé en lecture seule) |
+| **Salaire & impôts** | Fiches de paie lues depuis leurs PDF (France, Zurich), vérifiées à côté du PDF avant d'être enregistrées : lignes par blocs avec sous-totaux contrôlés, ordre et types retenus par employeur, chaque fiche comparée à la précédente ; salaire retenu jusqu'à la fin du contrat ; évolution du brut au net, versements retrouvés à la banque, tableau personnalisable. Module à activer dans Paramètres → Général |
 | **Emprunts** | Amortissement, capital restant, intérêts, remboursements anticipés |
 | **Objectifs** | Objectifs d'épargne avec contributions manuelles ou compte lié |
 
@@ -83,7 +84,7 @@ TypeScript, Next.js 15, React 19, TanStack Query, Tailwind, Recharts · Docker.
 ```bash
 ./start.sh                                  # API + interface en mode dev
 ./dev-data.sh                               # copie les données de l'application installée (voir INSTALL.md)
-cd backend && python -m pytest              # 399 tests
+cd backend && python -m pytest              # 419 tests
 cd web && npx tsc --noEmit && npx vitest run
 cd web && npm run test:e2e                  # Playwright : démarre sa propre pile
 ```

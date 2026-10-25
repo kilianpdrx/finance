@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { accountGain, costFromUnitText, monthChange, portfolioTotals, sharePct, topPositions, unitCostText } from './investments';
+import {
+  accountGain, benchmarkKinds, costFromUnitText, defaultBenchmarks, monthChange, portfolioTotals, sharePct, topPositions, unitCostText,
+} from './investments';
 import type { HoldingOut, InvestmentAccount } from '@/lib/api/hooks';
 
 function account(over: Partial<InvestmentAccount>): InvestmentAccount {
@@ -127,5 +129,15 @@ describe('investments.ts', () => {
     expect(costFromUnitText('  ', 2)).toBeNull();                       // empty: unknown
     expect(costFromUnitText('abc', 2)).toBeUndefined();
     expect(costFromUnitText('-3', 2)).toBeUndefined();
+  });
+
+  it('compares a crypto account with Bitcoin and Ethereum, the others with stock indices', () => {
+    const binance = [{ asset_type: 'crypto' }, { asset_type: 'crypto' }, { asset_type: 'cash' }];
+    expect(benchmarkKinds(binance)).toEqual(['crypto']);                       // its euros do not make it a stock account
+    expect(benchmarkKinds([{ asset_type: 'etf' }, { asset_type: 'cash' }])).toEqual(['index']);
+    expect(benchmarkKinds([{ asset_type: 'etf' }, { asset_type: 'crypto' }])).toEqual(['index', 'crypto']);
+    expect(benchmarkKinds([{ asset_type: 'cash' }])).toEqual(['index']);
+    expect(defaultBenchmarks(['crypto'])).toEqual(['btc', 'eth']);
+    expect(defaultBenchmarks(['index', 'crypto'])).toEqual(['sp500', 'msci_world']);
   });
 });

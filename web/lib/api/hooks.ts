@@ -802,6 +802,8 @@ export interface BenchmarkInfo {
   key: string;
   ticker: string;
   name: string;
+  /** "index": a stock index (Yahoo); "crypto": Bitcoin or Ethereum (Binance). */
+  kind: "index" | "crypto";
 }
 export interface BenchmarkPoint {
   date: string;
@@ -1236,5 +1238,127 @@ export function useLoanPaymentMutations(accountId: number) {
   return {
     add: useMutation({ mutationFn: (body: { date: string; amount_cents: number; note?: string | null }) => mutateJson(`/api/loans/${accountId}/payments`, "POST", body), onSuccess: invalidate }),
     remove: useMutation({ mutationFn: (pid: number) => mutateJson(`/api/loans/${accountId}/payments/${pid}`, "DELETE"), onSuccess: invalidate }),
+  };
+}
+
+// ── Salaire & impôts ────────────────────────────────────────────────────────
+export interface PayrollParam {
+  key: string;
+  label: string;
+  type: "select" | "int" | "text" | "bool";
+  default: string | number | boolean | null;
+  help: string | null;
+  options: { value: string; label: string }[];
+  min: number | null;
+  max: number | null;
+  show_if: { key: string; value: unknown } | null;
+}
+export interface PayrollPack {
+  id: string;
+  label: string;
+  country: string;
+  currency: string;
+  widgets: string[];
+  params: PayrollParam[];
+}
+export type PayrollSituation = components["schemas"]["PayrollSituationOut"];
+export type PayrollSituationIn = components["schemas"]["PayrollSituationIn"];
+export type Employer = components["schemas"]["EmployerOut"];
+export type EmployerIn = components["schemas"]["EmployerIn"];
+export type Payslip = components["schemas"]["PayslipOut"];
+export type PayslipIn = components["schemas"]["PayslipIn"];
+export type PayslipLineIn = components["schemas"]["PayslipLineIn"];
+export type PayslipRead = components["schemas"]["PayslipReadOut"];
+export type PayslipLabelRule = components["schemas"]["PayslipLabelRuleOut"];
+
+const payrollGet = <T,>(path: string) => async () => {
+  const res = await fetch(`/api/payroll/${path}`);
+  if (!res.ok) throw new Error("Données de salaire indisponibles");
+  return res.json() as Promise<T>;
+};
+
+export function usePayrollPacks() {
+  return useQuery({ queryKey: ["payroll", "packs"], staleTime: Infinity, queryFn: payrollGet<PayrollPack[]>("packs") });
+}
+export function usePayrollSituations() {
+  return useQuery({ queryKey: ["payroll", "situations"], queryFn: payrollGet<PayrollSituation[]>("situations") });
+}
+export function usePayrollEmployers() {
+  return useQuery({ queryKey: ["payroll", "employers"], queryFn: payrollGet<Employer[]>("employers") });
+}
+export function usePayslips() {
+  return useQuery({ queryKey: ["payroll", "payslips"], queryFn: payrollGet<Payslip[]>("payslips") });
+}
+export function usePayrollLabelRules() {
+  return useQuery({ queryKey: ["payroll", "label-rules"], queryFn: payrollGet<PayslipLabelRule[]>("label-rules") });
+}
+
+/** Read payslip PDFs into proposals. Saves nothing — not even the files. */
+export async function readPayslips(files: File[], pack: string, employerId?: number | null): Promise<PayslipRead[]> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  const qs = new URLSearchParams({ pack, ...(employerId != null ? { employer_id: String(employerId) } : {}) });
+  const res = await fetch(`/api/payroll/read?${qs}`, { method: "POST", body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail ?? "Lecture impossible");
+  }
+  return res.json();
+}
+
+/** A saved payslip's PDF in a new tab. Fetched, so the profile header goes
+ *  along: a plain link would ask for the default profile's document. */
+export async function openPayslipDocument(documentId: number): Promise<void> {
+  const tab = window.open("", "_blank");
+  try {
+    const res = await fetch(`/api/payroll/documents/${documentId}`);
+    if (!res.ok) throw new Error("PDF introuvable");
+    const url = URL.createObjectURL(await res.blob());
+    if (tab) tab.location.href = url;
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (e) {
+    tab?.close();
+    throw e;
+  }
+}
+
+export function usePayrollMutations() {
+  const invalidate = useInvalidate();
+  const onSettled = () => invalidate("payroll");
+  return {
+    saveSituation: useMutation({
+      mutationFn: (body: PayrollSituationIn) => mutateJson("/api/payroll/situations", "POST", body) as Promise<PayrollSituation>,
+      onSettled,
+    }),
+    deleteSituation: useMutation({ mutationFn: (id: number) => mutateJson(`/api/payroll/situations/${id}`, "DELETE"), onSettled }),
+    createEmployer: useMutation({
+      mutationFn: (body: EmployerIn) => mutateJson("/api/payroll/employers", "POST", body) as Promise<Employer>,
+      onSettled,
+    }),
+    updateEmployer: useMutation({
+      mutationFn: ({ id, body }: { id: number; body: EmployerIn }) => mutateJson(`/api/payroll/employers/${id}`, "PUT", body) as Promise<Employer>,
+      onSettled,
+    }),
+    deleteEmployer: useMutation({ mutationFn: (id: number) => mutateJson(`/api/payroll/employers/${id}`, "DELETE"), onSettled }),
+    /** A checked payslip, with its PDF when it was read from one. */
+    savePayslip: useMutation({
+      mutationFn: async ({ body, file }: { body: PayslipIn; file?: File | null }) => {
+        const form = new FormData();
+        form.append("data", JSON.stringify(body));
+        if (file) form.append("file", file);
+        const res = await fetch("/api/payroll/payslips", { method: "POST", body: form });
+        if (!res.ok) {
+          const err = await res.json().catch(() => null);
+          throw new Error(err?.detail ?? "Enregistrement impossible");
+        }
+        return res.json() as Promise<Payslip>;
+      },
+      onSettled,
+    }),
+    updatePayslip: useMutation({
+      mutationFn: ({ id, body }: { id: number; body: PayslipIn }) => mutateJson(`/api/payroll/payslips/${id}`, "PUT", body) as Promise<Payslip>,
+      onSettled,
+    }),
+    deletePayslip: useMutation({ mutationFn: (id: number) => mutateJson(`/api/payroll/payslips/${id}`, "DELETE"), onSettled }),
   };
 }

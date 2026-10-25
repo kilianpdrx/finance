@@ -8,13 +8,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useSettings, useSettingMutation, useActiveProfile, useProfileMutations, useAppVersion } from "@/lib/api/hooks";
 import { CURRENCIES, DEFAULT_CURRENCY } from "@/lib/format";
 import { DEFAULT_MODULES } from "@/lib/nav";
-import { TrendingUp, Wallet, Check, Target, BadgeMinus, Info, ShieldAlert, type LucideIcon } from "lucide-react";
+import { TrendingUp, Wallet, Check, Target, BadgeMinus, Info, ShieldAlert, type LucideIcon, ReceiptText } from "lucide-react";
 
 const TOGGLEABLE_MODULES: { key: string; icon: LucideIcon; title: string; description: string }[] = [
   { key: "budgeting", icon: Wallet, title: "Budget & Prévisions", description: "Budgets mensuels par catégorie et suivi des dépenses récurrentes." },
   { key: "investments", icon: TrendingUp, title: "Investissements & Bourse", description: "Portefeuille d'actions, ETF, dividendes, synchro IBKR et cours en direct." },
   { key: "goals", icon: Target, title: "Objectifs d'épargne", description: "Objectifs avec contributions manuelles ou compte lié, et suivi de progression." },
   { key: "loans", icon: BadgeMinus, title: "Emprunts & Dettes", description: "Prêts amortis : capital restant, échéancier, intérêts et paiements anticipés." },
+  { key: "payroll", icon: ReceiptText, title: "Salaire & impôts", description: "Fiches de paie lues depuis leurs PDF, évolution du salaire et versements retrouvés à la banque. Tout reste sur cet ordinateur." },
 ];
 
 

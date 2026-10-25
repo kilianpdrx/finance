@@ -1,7 +1,7 @@
 from __future__ import annotations
 import datetime as _dt
 from datetime import date, datetime
-from typing import Dict, Literal, Optional, List
+from typing import Any, Dict, Literal, Optional, List
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -826,3 +826,128 @@ class BinanceSyncResult(BinanceSyncPreview):
     created: int
     updated: int
     removed: int
+
+
+# ── Salaire & impôts ─────────────────────────────────────────────────────────
+
+PayslipKind = Literal["gross", "social", "pension", "tax", "deduction", "addition", "retained", "released", "info"]
+
+
+class PayrollSituationIn(BaseModel):
+    from_year: int = Field(ge=1990, le=2100)
+    pack: str
+    params: Dict[str, Any] = {}
+
+
+class PayrollSituationOut(BaseModel):
+    id: int
+    from_year: int
+    pack: str
+    params: Dict[str, Any]
+    summary: str                       # « Zurich · impôt à la source · A0N »
+
+
+class EmployerIn(BaseModel):
+    name: str
+    currency: str
+    account_id: Optional[int] = None
+    label_hint: Optional[str] = None
+
+
+class EmployerOut(BaseModel):
+    id: int
+    name: str
+    currency: str
+    account_id: Optional[int]
+    label_hint: Optional[str]
+    payslip_count: int
+
+
+class PayslipLineIn(BaseModel):
+    label: str
+    kind: PayslipKind
+    amount_cents: int = Field(ge=0)
+    base_cents: Optional[int] = Field(default=None, ge=0)
+    rate_bp: Optional[int] = Field(default=None, ge=0)
+    employer_cents: Optional[int] = Field(default=None, ge=0)
+
+
+class PayslipLineOut(PayslipLineIn):
+    id: int
+    # The type the situation's vocabulary gives this label, when it gives one:
+    # a line saved otherwise (classified before the vocabulary knew it) can be pointed out.
+    vocab_kind: Optional[PayslipKind] = None
+
+
+class PayslipFigures(BaseModel):
+    gross_cents: int = Field(ge=0)
+    employee_contributions_cents: int = Field(ge=0)
+    employer_contributions_cents: Optional[int] = Field(default=None, ge=0)
+    taxable_cents: Optional[int] = Field(default=None, ge=0)
+    withholding_cents: int = Field(ge=0)
+    withholding_rate_bp: Optional[int] = Field(default=None, ge=0)
+    net_paid_cents: int = Field(ge=0)
+
+
+class PayslipIn(PayslipFigures):
+    employer_id: int
+    period: str                        # "YYYY-MM"
+    pay_date: Optional[date] = None
+    note: Optional[str] = None
+    lines: List[PayslipLineIn] = []
+    replace: bool = False              # overwrite the employer's payslip of that month
+
+
+class DepositOut(BaseModel):
+    status: Literal["paid", "gap", "missing", "no_account", "other_currency"]
+    transaction_id: Optional[int]
+    date: Optional[date]
+    amount_cents: Optional[int]
+    description: Optional[str]
+    difference_cents: int
+
+
+class PayslipOut(PayslipFigures):
+    id: int
+    employer_id: int
+    period: str
+    pay_date: Optional[date]
+    currency: str
+    source: str
+    document_id: Optional[int]
+    note: Optional[str]
+    lines: List[PayslipLineOut]
+    deposit: DepositOut
+
+
+class ProposalLineOut(BaseModel):
+    label: str
+    key: str
+    kind: Optional[PayslipKind]        # None: « à classer »
+    amount_cents: int
+    base_cents: Optional[int]
+    rate_bp: Optional[int]
+    employer_cents: Optional[int]
+    negative: bool                     # printed with a minus: a hint, not a kind
+
+
+class PayslipReadOut(BaseModel):
+    """What a PDF gave — a proposal for the review, nothing saved."""
+    filename: str
+    sha256: str
+    error: Optional[str]               # not a readable PDF, too large, protected…
+    duplicate_payslip_id: Optional[int]  # this very file is already a payslip
+    pack: str
+    period: Optional[str]
+    pay_date: Optional[date]
+    lines: List[ProposalLineOut]
+    totals: Dict[str, int]
+    figures: Optional[Dict[str, Any]]
+    checks: Dict[str, Any]
+
+
+class PayslipLabelRuleOut(BaseModel):
+    employer_id: int
+    label_key: str
+    kind: PayslipKind
+

@@ -20,6 +20,7 @@ import { AccountTile } from "@/components/accounts/account-select";
 import { ACCOUNT_TYPE_LABELS } from "@/components/accounts/account-dialog";
 import { TransactionDialog } from "@/components/transactions/transaction-dialog";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
+import { CategorySourceBadge } from "@/components/transactions/category-source-badge";
 import { RuleDialog } from "@/components/settings/rule-dialog";
 import { SameLabelBar } from "@/components/transactions/same-label-bar";
 import { UncategorizedPanel } from "@/components/transactions/uncategorized-panel";
@@ -412,12 +413,7 @@ export default function TransactionsPage() {
                         as opposed to a category chosen by hand. The slot is kept
                         on every row so the selectors stay aligned. */}
                     <span className="flex w-12 shrink-0 justify-start">
-                      {t.category_source === "rule" && (
-                        <span className="inline-flex items-center gap-0.5 rounded bg-brand/10 px-1 text-[11px] font-medium text-brand"
-                          title="Classée automatiquement par une règle">
-                          <Wand2 className="size-3" /> auto
-                        </span>
-                      )}
+                      <CategorySourceBadge source={t.category_source} showManual={false} />
                     </span>
                     </div>
                   </TableCell>

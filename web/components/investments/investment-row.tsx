@@ -16,6 +16,7 @@ import { ImportHoldingsDialog } from "./import-holdings-dialog";
 import { BenchmarkChart } from "./benchmark-chart";
 import { useSnapshotMutations, type InvestmentAccount } from "@/lib/api/hooks";
 import { formatCents, currencySymbol, parseAmountToCents } from "@/lib/format";
+import { benchmarkKinds } from "@/lib/investments";
 import { cn } from "@/lib/utils";
 
 type Tab = "positions" | "snapshots";
@@ -158,11 +159,14 @@ export function InvestmentRow({ acc, defaultExpanded = false }: {
               <HoldingsTable holdings={acc.holdings ?? []} currency={acc.currency} />
               {(acc.holdings?.length ?? 0) > 0 && (
                 <div className="rounded-xl border border-border bg-card p-4">
-                  <p className="mb-3 text-sm font-semibold">Performance vs indices</p>
+                  <p className="mb-3 text-sm font-semibold">
+                    {benchmarkKinds(acc.holdings ?? []).includes("index") ? "Performance vs indices" : "Performance vs Bitcoin et Ethereum"}
+                  </p>
                   <BenchmarkChart
                     accountId={acc.id}
                     accountName={acc.name}
                     accountColor={acc.color}
+                    kinds={benchmarkKinds(acc.holdings ?? [])}
                     holdings={(acc.holdings ?? []).map((h) => ({
                       ticker: h.ticker,
                       quantity: h.quantity,

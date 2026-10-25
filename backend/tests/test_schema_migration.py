@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 import database
 from models import Base
 
-HEAD = "019_budget_lines_notes"
+HEAD = "020_payroll"
 
 
 @pytest.fixture
@@ -316,3 +316,34 @@ def test_sub_lines_and_notes_are_added_to_an_existing_plan(temp_db):
     assert {"budget_envelope_lines", "budget_plans"} <= tables and "note" in cols
     assert unique == {"uq_budget_plan_account"}
     assert tuple(envelope) == (3, "Investissements", "goal", None) and amount == 80000
+
+
+def test_payroll_tables_are_added_to_an_existing_database(temp_db):
+    """An install on 019 has no payroll tables: upgrading adds them, empty, with
+    their one-payslip-per-employer-and-month and one-file-per-profile rules."""
+    eng = create_engine(f"sqlite:///{temp_db}")
+    Base.metadata.create_all(eng)
+    with eng.begin() as c:
+        for table in ("payslip_label_rules", "payslip_lines", "payslips", "documents", "employers", "payroll_situations"):
+            c.execute(text(f"DROP TABLE {table}"))
+    eng.dispose()
+    database._sync_schema_blocking()  # stamps head (no alembic_version yet)
+    eng = create_engine(f"sqlite:///{temp_db}")
+    with eng.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num='019_budget_lines_notes'"))
+    eng.dispose()
+
+    database._sync_schema_blocking()  # upgrade path: runs 020
+    database._sync_schema_blocking()  # and again: nothing left to do
+
+    assert _version(temp_db) == HEAD
+    eng = create_engine(f"sqlite:///{temp_db}")
+    try:
+        tables = set(inspect(eng).get_table_names())
+        unique = {u["name"] for t in ("payslips", "documents", "payslip_label_rules", "payroll_situations")
+                  for u in inspect(eng).get_unique_constraints(t)}
+    finally:
+        eng.dispose()
+    assert {"payroll_situations", "employers", "documents", "payslips", "payslip_lines", "payslip_label_rules"} <= tables
+    assert unique == {"uq_payslip_employer_period", "uq_document_profile_hash", "uq_payslip_rule_employer_label",
+                      "uq_payroll_situation_year"}

@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, Float, String, Boolean, Date, DateTime,
-    ForeignKey, Enum, JSON, UniqueConstraint, Index
+    ForeignKey, Enum, JSON, UniqueConstraint, Index, LargeBinary
 )
 from sqlalchemy.orm import relationship
 from database import Base
@@ -500,3 +500,109 @@ class IsinTicker(Base):
     currency = Column(String, nullable=True)
     source = Column(String, default="seed")  # "seed" | "resolved"
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ── Salaire & impôts (services/payroll) ──────────────────────────────────────
+
+class PayrollSituation(Base):
+    """How a profile is paid and taxed from `from_year` on: a "pack" (`fr`,
+    `ch_zh`) and its settings (`params`, checked against the pack). The one in
+    force for a year is the latest whose `from_year` is not after it — a move
+    between countries is two rows."""
+    __tablename__ = "payroll_situations"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    from_year = Column(Integer, nullable=False)
+    pack = Column(String, nullable=False)
+    params = Column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (UniqueConstraint("profile_id", "from_year", name="uq_payroll_situation_year"),)
+
+
+class Employer(Base):
+    """Who pays a salary, and where it arrives (`account_id`): the deposit each
+    payslip is matched with is looked for there, never stored."""
+    __tablename__ = "employers"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    name = Column(String, nullable=False)
+    currency = Column(String, nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    label_hint = Column(String, nullable=True)     # a word of the deposit's label, to tell two salaries apart
+
+
+class Document(Base):
+    """A file the user gave the app — a payslip PDF. Kept IN the database, so a
+    backup carries it. Never logged, never sent anywhere."""
+    __tablename__ = "documents"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    kind = Column(String, nullable=False)          # "payslip"
+    filename = Column(String, nullable=False)
+    sha256 = Column(String, nullable=False)
+    size = Column(Integer, nullable=False)
+    content = Column(LargeBinary, nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("profile_id", "sha256", name="uq_document_profile_hash"),)
+
+
+class Payslip(Base):
+    """One month of one employer, with the figures AS PRINTED on the payslip.
+    Amounts are unsigned cents; what each line does lives in its `kind`."""
+    __tablename__ = "payslips"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    employer_id = Column(Integer, ForeignKey("employers.id"), nullable=False)
+    period = Column(String, nullable=False)        # "YYYY-MM"
+    pay_date = Column(Date, nullable=True)
+    currency = Column(String, nullable=False)
+    gross_cents = Column(Integer, nullable=False, default=0)
+    employee_contributions_cents = Column(Integer, nullable=False, default=0)
+    employer_contributions_cents = Column(Integer, nullable=True)   # when the payslip shows them
+    taxable_cents = Column(Integer, nullable=True)                  # net imposable / salary subject to withholding
+    withholding_cents = Column(Integer, nullable=False, default=0)
+    withholding_rate_bp = Column(Integer, nullable=True)            # 10,56 % = 1056
+    net_paid_cents = Column(Integer, nullable=False, default=0)
+    source = Column(String, nullable=False, default="manual")      # "pdf" | "manual"
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("employer_id", "period", name="uq_payslip_employer_period"),)
+
+
+class PayslipLine(Base):
+    """A line of a payslip. `kind`: gross, social, pension, tax, deduction,
+    addition, retained, released, info (services/payroll/vocab.py)."""
+    __tablename__ = "payslip_lines"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    payslip_id = Column(Integer, ForeignKey("payslips.id"), nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+    label = Column(String, nullable=False)
+    kind = Column(String, nullable=False)
+    base_cents = Column(Integer, nullable=True)
+    rate_bp = Column(Integer, nullable=True)
+    amount_cents = Column(Integer, nullable=False, default=0)
+    employer_cents = Column(Integer, nullable=True)
+
+
+class PayslipLabelRule(Base):
+    """A line the user classified once, for that employer: the same label on
+    the next payslips gets the same kind."""
+    __tablename__ = "payslip_label_rules"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    employer_id = Column(Integer, ForeignKey("employers.id"), nullable=False)
+    label_key = Column(String, nullable=False)     # normalize_label(label)
+    kind = Column(String, nullable=False)
+
+    __table_args__ = (UniqueConstraint("employer_id", "label_key", name="uq_payslip_rule_employer_label"),)
+

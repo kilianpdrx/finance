@@ -12,6 +12,9 @@ router = APIRouter()
 # Ordered so child rows are removed before the accounts they reference (FKs are
 # enforced). `loan_details` has no profile_id — it's purged separately by account.
 _SCOPED_TABLES = [
+    # Salaire & impôts: lines and rules point at payslips and employers, payslips
+    # at documents, employers at accounts.
+    "payslip_lines", "payslip_label_rules", "payslips", "documents", "employers", "payroll_situations",
     # The budget plan first: its rows point at envelopes, categories and accounts.
     "budget_envelope_amounts", "budget_envelope_categories", "budget_envelope_lines", "budget_envelopes",
     "budget_plans",

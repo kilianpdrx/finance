@@ -497,3 +497,18 @@ async def test_an_account_with_positions_follows_them_not_an_older_statement(
     monkeypatch.setattr(md, "fetch_historical_prices", history)
     series = (await client.get("/api/investments/total-series", headers=h)).json()
     assert [(p["month"], p["PEA Test"]) for p in series] == [("2026-07", 20_000), ("2026-08", 30_000)]
+
+
+async def test_bitcoin_and_ethereum_are_references_from_binance(client: AsyncClient, h, fake, monkeypatch):
+    """A crypto account is compared with Bitcoin and Ethereum, not stock
+    indices — and those references come from Binance, never from Yahoo."""
+    listed = {b["key"]: b["kind"] for b in (await client.get("/api/investments/benchmarks", headers=h)).json()}
+    assert listed["btc"] == listed["eth"] == "crypto" and listed["sp500"] == "index"
+
+    async def yahoo(ticker, period="1y"):
+        raise AssertionError(f"Yahoo asked for {ticker}")
+
+    monkeypatch.setattr(md, "fetch_historical_prices", yahoo)
+    res = (await client.get("/api/investments/benchmark/btc?period=1mo", headers=h)).json()
+    assert res["name"] == "Bitcoin"
+    assert [p["pct"] for p in res["data"]] == [0, 10.0, 16.0, 20.0]     # 50 000 → 55 000 → 58 000 → 60 000

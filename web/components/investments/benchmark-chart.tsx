@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBenchmarks, useBenchmarkHistory, usePortfolioPerformance } from "@/lib/api/hooks";
+import { defaultBenchmarks, type BenchmarkKind } from "@/lib/investments";
 import { cn } from "@/lib/utils";
 
 const PORTFOLIO_KEY = "__portfolio__";
@@ -31,6 +32,8 @@ const BENCH_COLORS: Record<string, string> = {
   cac40: "#f59e0b",
   stoxx600: "#8b5cf6",
   nasdaq: "#10b981",
+  btc: "#f7931a",
+  eth: "#627eea",
 };
 
 interface Props {
@@ -38,12 +41,15 @@ interface Props {
   accountName: string;
   accountColor: string;
   holdings: { ticker: string; quantity: number; cost_basis_cents: number | null; current_value_cents: number | null }[];
+  /** The references this account is compared with (`benchmarkKinds`). */
+  kinds?: BenchmarkKind[];
 }
 
-export function BenchmarkChart({ accountId, accountColor, holdings }: Props) {
+export function BenchmarkChart({ accountId, accountColor, holdings, kinds = ["index"] }: Props) {
   const [period, setPeriod] = useState("1y");
-  const [selectedBenchmarks, setSelectedBenchmarks] = useState<string[]>(["sp500", "msci_world"]);
-  const { data: benchmarkList = [] } = useBenchmarks();
+  const [selectedBenchmarks, setSelectedBenchmarks] = useState<string[]>(() => defaultBenchmarks(kinds));
+  const { data: allBenchmarks = [] } = useBenchmarks();
+  const benchmarkList = allBenchmarks.filter((b) => kinds.includes(b.kind));
 
   const bench1 = useBenchmarkHistory(selectedBenchmarks[0] ?? null, period);
   const bench2 = useBenchmarkHistory(selectedBenchmarks[1] ?? null, period);
@@ -120,7 +126,7 @@ export function BenchmarkChart({ accountId, accountColor, holdings }: Props) {
         <Skeleton className="h-[260px] w-full rounded-lg" />
       ) : chartData.length === 0 ? (
         <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">
-          Sélectionnez un ou plusieurs indices
+          {kinds.includes("index") ? "Sélectionnez un ou plusieurs indices" : "Sélectionnez Bitcoin ou Ethereum"}
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={260}>

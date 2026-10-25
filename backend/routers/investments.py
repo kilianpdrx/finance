@@ -489,12 +489,18 @@ async def holding_history(
 
 # ── Benchmark comparison ─────────────────────────────────────────────────────
 
+# `kind` says which accounts a reference fits: stock indices for a broker
+# account, Bitcoin and Ethereum for a crypto account (the interface offers one
+# kind or the other). Crypto references come from Binance — in euros, every
+# day of the week, like the positions of a Binance account.
 BENCHMARKS = {
-    "sp500": {"ticker": "^GSPC", "name": "S&P 500"},
-    "msci_world": {"ticker": "URTH", "name": "MSCI World"},
-    "cac40": {"ticker": "^FCHI", "name": "CAC 40"},
-    "stoxx600": {"ticker": "^STOXX", "name": "STOXX Europe 600"},
-    "nasdaq": {"ticker": "^IXIC", "name": "NASDAQ"},
+    "sp500": {"ticker": "^GSPC", "name": "S&P 500", "kind": "index"},
+    "msci_world": {"ticker": "URTH", "name": "MSCI World", "kind": "index"},
+    "cac40": {"ticker": "^FCHI", "name": "CAC 40", "kind": "index"},
+    "stoxx600": {"ticker": "^STOXX", "name": "STOXX Europe 600", "kind": "index"},
+    "nasdaq": {"ticker": "^IXIC", "name": "NASDAQ", "kind": "index"},
+    "btc": {"ticker": "BTC", "name": "Bitcoin", "kind": "crypto"},
+    "eth": {"ticker": "ETH", "name": "Ethereum", "kind": "crypto"},
 }
 
 
@@ -521,7 +527,10 @@ async def benchmark_history(
     info = BENCHMARKS.get(key)
     if not info:
         raise HTTPException(404, f"Indice de référence inconnu : {key}")
-    data = await fetch_historical_prices(info["ticker"], period)
+    if info["kind"] == "crypto":
+        data = await binance_history(info["ticker"], period)
+    else:
+        data = await fetch_historical_prices(info["ticker"], period)
     return {"key": key, "name": info["name"], "data": _normalize_pct(data)}
 
 

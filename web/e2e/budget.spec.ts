@@ -117,8 +117,11 @@ test.describe("Budget", () => {
       await groceries.first().click();
       await expect(panel.getByText("2 transactions")).toBeVisible();
 
-      // Hover: the label is cut in the list, the whole of it floats next to the row.
+      // Each row says who chose its category: imported, the rules did.
       const row = panel.getByRole("button", { name: /FRANPRIX 5107/ });
+      await expect(row.getByTitle("Classée automatiquement par une règle")).toBeVisible();
+
+      // Hover: the label is cut in the list, the whole of it floats next to the row.
       await row.hover();
       await expect(page.getByRole("tooltip")).toHaveText(LONG_LABEL);
 
@@ -134,6 +137,12 @@ test.describe("Budget", () => {
       await expect(panel.getByText(/23,40/).first()).toBeVisible();
       await expect(page.getByRole("row", { name: /Alimentation/ }).locator("td", { hasText: "23,4" }).first()).toBeVisible();
       await expect(page.getByRole("row", { name: /Restaurants/ }).locator("td", { hasText: "18,1" }).first()).toBeVisible();
+
+      // In its new cell, the same transaction is now « manuel »: the user chose.
+      await page.getByRole("row", { name: /Restaurants/ }).locator("td", { hasText: "18,1" }).first().click();
+      const moved = panel.getByRole("button", { name: /FRANPRIX 5107/ });
+      await expect(moved.getByTitle("Catégorie choisie à la main")).toBeVisible();
+      await expect(moved.getByTitle("Classée automatiquement par une règle")).toHaveCount(0);
     } finally {
       await api.deleteProfile(profile.id);
     }

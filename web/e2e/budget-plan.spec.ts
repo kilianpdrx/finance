@@ -245,6 +245,7 @@ test.describe("Plan de budget", () => {
       await editor.getByLabel("Notes du plan").fill("Objectif : épargner 20 %\nRevoir en janvier");
       await editor.getByRole("button", { name: "Enregistrer" }).click();
       await expect(page.getByText("Plan enregistré")).toBeVisible();
+      await expect(editor).toBeHidden();          // its fields hold the same notes while it closes
 
       // In the plan: the note above the envelopes, the sub-lines and the envelope note when unfolded.
       await expect(page.getByText("Objectif : épargner 20 %")).toBeVisible();

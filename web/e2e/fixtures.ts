@@ -41,6 +41,12 @@ export class Api {
     return res.json();
   }
 
+  /** Switch modules on for a profile (the sidebar shows their pages). */
+  async enableModules(profileId: number, modules: string[]) {
+    const res = await this.request.put(`${BACKEND}/api/profiles/${profileId}`, { data: { enabled_modules: modules } });
+    expect(res.ok(), await res.text()).toBeTruthy();
+  }
+
   async deleteProfile(id: number) {
     await this.request.delete(`${BACKEND}/api/profiles/${id}`);
   }

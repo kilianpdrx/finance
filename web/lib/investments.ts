@@ -1,4 +1,5 @@
 import type { InvestmentAccount } from "@/lib/api/hooks";
+import { isCashType } from "@/lib/asset-types";
 
 /** Figures of the Investissements → Synthèse tab, derived from what the page
  *  already loads. Amounts are integer cents in the account's currency. */
@@ -148,4 +149,21 @@ export function costFromUnitText(text: string, quantity: number): number | null 
   const unit = Number(cleaned);
   if (!Number.isFinite(unit) || unit < 0) return undefined;
   return Math.round(unit * 100 * quantity);
+}
+
+export type BenchmarkKind = "index" | "crypto";
+
+/** What an account is compared with: Bitcoin and Ethereum for an account of
+ *  crypto (its cash aside) — a Binance account against the S&P 500 says
+ *  nothing — stock indices for one without any crypto, both when it mixes. */
+export function benchmarkKinds(holdings: { asset_type: string }[]): BenchmarkKind[] {
+  const invested = holdings.filter((h) => !isCashType(h.asset_type));
+  const crypto = invested.filter((h) => h.asset_type === "crypto").length;
+  if (crypto === 0) return ["index"];
+  return crypto === invested.length ? ["crypto"] : ["index", "crypto"];
+}
+
+/** The references drawn when the chart opens. */
+export function defaultBenchmarks(kinds: BenchmarkKind[]): string[] {
+  return kinds[0] === "crypto" ? ["btc", "eth"] : ["sp500", "msci_world"];
 }

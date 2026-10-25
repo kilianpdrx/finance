@@ -9,6 +9,7 @@ import {
   Settings,
   Target,
   BadgeMinus,
+  ReceiptText,
   type LucideIcon,
 } from "lucide-react";
 
@@ -27,6 +28,7 @@ export const ROUTE_MODULE: Record<string, string> = {
   "/budget": "budgeting",
   "/objectifs": "goals",
   "/emprunts": "loans",
+  "/salaire": "payroll",
 };
 
 /** Sidebar order per project convention. */
@@ -39,6 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/objectifs", label: "Objectifs", icon: Target },
   { href: "/emprunts", label: "Emprunts", icon: BadgeMinus },
   { href: "/investissements", label: "Investissements", icon: TrendingUp },
+  { href: "/salaire", label: "Salaire & impôts", icon: ReceiptText },
   { href: "/importer", label: "Importer", icon: Upload },
   { href: "/parametres", label: "Paramètres", icon: Settings },
 ];
