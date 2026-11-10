@@ -15,6 +15,7 @@ import { formatCents, formatMonthLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { EnvelopeBar } from "./envelope-bar";
 import { PlanEditor, type PlanEditorView } from "./plan-editor";
+import { CellTransactions } from "@/components/budget/cell-transactions";
 import { UnplannedSuggestions } from "./unplanned-suggestions";
 
 const ROW = "grid grid-cols-1 items-center gap-x-5 gap-y-2 md:grid-cols-[minmax(0,1.3fr)_13rem_minmax(0,1.6fr)]";
@@ -29,6 +30,8 @@ export function PlanTab({ accountId, accountName }: { accountId: number; account
   // The editor, and the view it opens on (null: closed).
   const [editing, setEditing] = useState<PlanEditorView | null>(null);
   const [unfolded, setUnfolded] = useState<Set<number>>(new Set());
+  // The envelope whose transactions of the month are listed under the plan.
+  const [picked, setPicked] = useState<number | null>(null);
 
   if (isLoading || !plan) return <Skeleton className="h-80 w-full rounded-2xl" />;
 
@@ -55,6 +58,7 @@ export function PlanTab({ accountId, accountName }: { accountId: number; account
   }
 
   const pace = monthPace(plan.month, new Date());
+  const pickedEnvelope = plan.envelopes.find((e) => e.id != null && e.id === picked) ?? null;
   const totals = planTotals(plan.envelopes);
   const byId = new Map(categories.map((c) => [c.id, c]));
   const names = (ids: number[]) => ids.map((id) => byId.get(id)?.name).filter(Boolean).join(", ");
@@ -92,7 +96,12 @@ export function PlanTab({ accountId, accountName }: { accountId: number; account
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="capitalize">{formatMonthLabel(plan.month, { withYear: true })}</CardTitle>
+          <div>
+            <CardTitle className="capitalize">{formatMonthLabel(plan.month, { withYear: true })}</CardTitle>
+            {plan.start_month && (
+              <p className="mt-1 text-xs text-muted-foreground">En vigueur depuis {formatMonthLabel(plan.start_month, { withYear: true })}</p>
+            )}
+          </div>
           <Button variant="outline" size="sm" onClick={() => setEditing("envelopes")}><Settings2 className="size-4" /> Modifier le plan</Button>
         </CardHeader>
         <CardContent className="px-0 pb-2">
@@ -102,7 +111,7 @@ export function PlanTab({ accountId, accountName }: { accountId: number; account
               const foldable = e.id != null && (e.categories.length > 0 || e.lines.length > 0 || !!e.note);
               return (
                 <li key={e.id}>
-                  <div className={cn(ROW, "px-5 py-3")}>
+                  <div className={cn(ROW, "px-5 py-3", e.id != null && e.id === picked && "bg-muted/50")}>
                     <div className="flex min-w-0 items-start gap-1.5">
                       {foldable ? (
                         <button type="button" aria-expanded={open} aria-label={`Détail de ${e.name}`} onClick={() => toggle(e.id!)}
@@ -111,7 +120,11 @@ export function PlanTab({ accountId, accountName }: { accountId: number; account
                         </button>
                       ) : <span className="w-4 shrink-0" />}
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{e.name}</p>
+                        <button type="button" disabled={e.id == null} onClick={() => setPicked(picked === e.id ? null : e.id ?? null)}
+                          aria-pressed={e.id === picked} title="Voir ses transactions du mois"
+                          className="block max-w-full truncate text-left text-sm font-medium hover:text-brand hover:underline disabled:hover:no-underline">
+                          {e.name}
+                        </button>
                         <p className="truncate text-xs text-muted-foreground" title={names(e.category_ids)}>
                           {e.kind === "unplanned"
                             ? "les dépenses marquées « imprévu »"
@@ -166,6 +179,19 @@ export function PlanTab({ accountId, accountName }: { accountId: number; account
           </ul>
         </CardContent>
       </Card>
+
+      {pickedEnvelope && (
+        <CellTransactions
+          selection={{
+            key: `env:${pickedEnvelope.id}:${plan.month}`, rowKey: `env:${pickedEnvelope.id}`, label: pickedEnvelope.name,
+            period: plan.month, categoryIds: pickedEnvelope.category_ids,
+            // As the plan counts them: a marked expense belongs to the provision, not its envelope.
+            unplanned: pickedEnvelope.kind === "unplanned" ? "only" : "exclude",
+          }}
+          amounts={{ value_cents: pickedEnvelope.realised_cents, actual_cents: pickedEnvelope.realised_cents }}
+          accountId={accountId} accountIds={null} currency={currency} onClose={() => setPicked(null)}
+        />
+      )}
 
       <UnplannedSuggestions accountId={accountId} currency={currency} />
       {editor}

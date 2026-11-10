@@ -1,8 +1,9 @@
 import calendar
+import re
 from typing import List, Literal, Optional
 from datetime import date, timedelta
 from collections import defaultdict
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
@@ -12,7 +13,7 @@ from schemas import (
     AnalyticsSummary, CashFlowMonth, CategoryBreakdown, CurrencyBalance,
     RecurringTransaction, RecurringMember, BudgetTableRow, BudgetTableCell,
     BudgetSectionRow, BudgetFullResponse,
-    cents_to_display,
+    cents_to_display, AnalyticsCurrency, PlannedCellEntry,
 )
 from ownership import require_account, require_category
 from services.base_currency import get_base_currency
@@ -57,16 +58,44 @@ async def _load_account_currencies(db: AsyncSession, parsed_ids: Optional[List[i
     return {r[0]: r[1] or "EUR" for r in rows}
 
 
+async def scope_currency(db: AsyncSession, pid: int, parsed_ids: Optional[List[int]], forced: Optional[str] = None) -> str:
+    """The currency analytics speak in — the budget table's rule: the selected
+    accounts' own currency when they all share one (nothing converted), else the
+    base currency. `forced` serves the per-account rows of a selection, which
+    must stay in the selection's currency to sit side by side."""
+    if forced is not None:
+        if not re.fullmatch(r"[A-Z]{3}", forced):
+            raise HTTPException(status_code=400, detail="Devise inconnue : trois lettres majuscules attendues (EUR, CHF…).")
+        return forced
+    if parsed_ids:
+        currencies = set((await _load_account_currencies(db, parsed_ids, pid)).values())
+        if len(currencies) == 1:
+            return currencies.pop()
+    return await get_base_currency(db, pid)
+
+
+@router.get("/currency", response_model=AnalyticsCurrency)
+async def analytics_currency(
+    account_ids: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    pid: int = Depends(current_profile_id),
+):
+    """The currency the analytics of these accounts are given in (`scope_currency`):
+    the interface labels with it and passes it to the per-account rows."""
+    return AnalyticsCurrency(currency=await scope_currency(db, pid, _parse_account_ids(account_ids)))
+
+
 @router.get("/summary", response_model=AnalyticsSummary)
 async def summary(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
+    currency: Optional[str] = None,     # forced target currency (per-account rows)
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
     parsed_ids = _parse_account_ids(account_ids)
-    base_ccy = await get_base_currency(db, pid)
+    base_ccy = await scope_currency(db, pid, parsed_ids, currency)
     acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
     rates = RateCache()  # memoize rate lookups for this request
 
@@ -215,7 +244,8 @@ async def summary(
         net_worth_excl_loans_display=cents_to_display(net_worth_excl_loans, base_ccy),
         total_loans_display=cents_to_display(total_loans, base_ccy),
         last_transaction_date=last_transaction_date,
-        base_currency=base_ccy,
+        base_currency=await get_base_currency(db, pid),
+        currency=base_ccy,
         net_worth_by_currency=net_worth_by_currency,
         fx_incomplete=fx_incomplete,
     )
@@ -226,12 +256,13 @@ async def by_category(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
+    currency: Optional[str] = None,     # forced target currency (per-account rows)
     income: bool = False,
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
     parsed_ids = _parse_account_ids(account_ids)
-    base_ccy = await get_base_currency(db, pid)
+    base_ccy = await scope_currency(db, pid, parsed_ids, currency)
     acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
     rates = RateCache()  # memoize rate lookups for this request
 
@@ -291,6 +322,7 @@ async def spending_trends(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
+    currency: Optional[str] = None,     # forced target currency (per-account rows)
     income: bool = False,
     granularity: Literal["month", "day"] = "month",
     db: AsyncSession = Depends(get_db),
@@ -304,7 +336,7 @@ async def spending_trends(
     today's rate), and with `day` every day of the requested range is returned,
     empty ones included, so the bars are evenly spaced."""
     parsed_ids = _parse_account_ids(account_ids)
-    base_ccy = await get_base_currency(db, pid)
+    base_ccy = await scope_currency(db, pid, parsed_ids, currency)
     acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
     rates = RateCache()  # memoize rate lookups for this request
 
@@ -384,11 +416,12 @@ async def cash_flow(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
+    currency: Optional[str] = None,     # forced target currency (per-account rows)
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
     parsed_ids = _parse_account_ids(account_ids)
-    base_ccy = await get_base_currency(db, pid)
+    base_ccy = await scope_currency(db, pid, parsed_ids, currency)
     acc_ccys = await _load_account_currencies(db, parsed_ids, pid)
     rates = RateCache()  # memoize rate lookups for this request
 
@@ -435,11 +468,12 @@ async def net_worth_history(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     account_ids: Optional[str] = None,
+    currency: Optional[str] = None,     # forced target currency (per-account rows)
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
     parsed_ids = _parse_account_ids(account_ids)
-    base_ccy = await get_base_currency(db, pid)
+    base_ccy = await scope_currency(db, pid, parsed_ids, currency)
     rates = RateCache()  # memoize rate lookups for this request
 
     filters = _date_filters(date_from, date_to)
@@ -821,16 +855,20 @@ async def budget_full(
         entries = planned[category_id].get(month, [])
         active = 0
         states = set()
+        listed = []
         for p, amount in entries:
             own = actuals[category_id].get(month, 0) if p.account_id is None \
                 else actuals_by_account[category_id][month].get(p.account_id, 0)
             if p.matched or own == amount:
-                continue
-            if own == 0:
+                state = "done"
+            elif own == 0:
                 active += amount
-                states.add("planned")
+                state = "planned"
             else:
-                states.add("confirm")
+                state = "confirm"
+            if state != "done":
+                states.add(state)
+            listed.append(PlannedCellEntry(id=p.id, account_id=p.account_id, amount_cents=amount, state=state))
         return dict(
             planned_cents=sum(amount for _, amount in entries),
             planned_matched=bool(entries) and all(p.matched for p, _ in entries),
@@ -838,6 +876,7 @@ async def budget_full(
             planned_count=len(entries),
             planned_state="confirm" if "confirm" in states else "planned" if states else "none",
             planned_active_cents=active,
+            planned_entries=listed,
         )
 
     cats_result = await db.execute(select(Category).where(Category.profile_id == pid))

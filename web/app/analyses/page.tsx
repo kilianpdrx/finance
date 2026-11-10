@@ -22,7 +22,7 @@ import { CourantTabs, type CourantSelection } from "@/components/analytics/coura
 import { toast } from "sonner";
 import { CategorySelect } from "@/components/transactions/category-select";
 import {
-  useAnalyticsContext, useByCategory, useSpendingTrends, useCategories,
+  useAnalyticsContext, useAnalyticsCurrency, useByCategory, useSpendingTrends, useCategories,
   useByCategoryPerAccount, useCashFlowPerAccount, useTransactionMutations,
   type SpendingTrend, type CategoryBreakdown, type Transaction, type Category,
 } from "@/lib/api/hooks";
@@ -101,7 +101,7 @@ function rollupTrends(trends: SpendingTrend[], cats: Category[]): SpendingTrend[
 }
 
 export default function AnalysesPage() {
-  const { query, currency, accounts } = useAnalyticsContext();
+  const { query, currency: baseLabel, accounts } = useAnalyticsContext();
   const courant = accounts.filter((a) => a.account_type === "courant");
   const courantIds = courant.map((a) => a.id);
 
@@ -110,6 +110,10 @@ export default function AnalysesPage() {
   const income = flow === "revenus";
   const scopeIds = sel === "all" ? courantIds : [sel];
   const q = { ...query, account_ids: scopeIds.length ? scopeIds.join(",") : undefined, income };
+  // The page's own scope (« Tous » or one account) decides the currency: one CHF
+  // account alone reads in CHF, as the budget table does.
+  const scopeCurrency = useAnalyticsCurrency(q.account_ids);
+  const currency = scopeCurrency ?? baseLabel;
 
   const { data: categories = [] } = useCategories();
   // fixe → 0, variable → 1, everything else (income, unknown) → 2. Categories are
@@ -177,8 +181,8 @@ export default function AnalysesPage() {
   const tabTrends = granularity === "day" ? dailyTrends : trends;
   const rolledTabTrends = useMemo(() => rollupTrends(tabTrends.data ?? [], categories), [tabTrends.data, categories]);
   const totals = useMemo(() => totalSeries(rolledTabTrends), [rolledTabTrends]);
-  const perAccountCats = useByCategoryPerAccount(q, scopeIds);
-  const perAccountFlux = useCashFlowPerAccount(q, scopeIds);
+  const perAccountCats = useByCategoryPerAccount(q, scopeIds, scopeCurrency);
+  const perAccountFlux = useCashFlowPerAccount(q, scopeIds, scopeCurrency);
 
   const accName = (id: number) => accounts.find((a) => a.id === id)?.name ?? `Compte ${id}`;
   const catAccountId = (id: number | null) => categories.find((c) => c.id === id)?.account_id ?? null;

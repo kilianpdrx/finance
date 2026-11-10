@@ -4,6 +4,7 @@ import {
   fillWithTypical, fitsKind, isDetailed, isMinimum, monthPace, moveCategory, planTotals, removeLine, setCategoryAmount, setLine, standing,
   type DraftEnvelope,
 } from './budget-plan';
+import { setStartPart, startYears } from './budget-plan';
 
 describe('budget-plan.ts', () => {
   describe('monthPace', () => {
@@ -208,5 +209,20 @@ describe('budget-plan.ts', () => {
       expect(offered.filter((c) => fitsKind(c, 'goal')).map((c) => c.id)).toEqual([2, 5]);
       expect(offered.some((c) => fitsKind(c, 'unplanned'))).toBe(false);
     });
+  });
+});
+
+describe('le début du plan', () => {
+  const today = new Date(2026, 10, 10);
+  it('propose les années de la première transaction à aujourd\'hui', () => {
+    expect(startYears('2024-07', today)).toEqual([2024, 2025, 2026]);
+    expect(startYears(null, today)).toEqual([2026]);
+    expect(startYears('2025-01', today, '2023-04')).toEqual([2023, 2025, 2026]);   // a start already chosen stays offered
+  });
+  it('compose le mois et l\'année choisis séparément', () => {
+    expect(setStartPart('', { month: '03' }, today)).toBe('2026-03');
+    expect(setStartPart('', { year: '2025' }, today)).toBe('2025-01');
+    expect(setStartPart('2025-06', { year: '2024' }, today)).toBe('2024-06');
+    expect(setStartPart('2025-06', { month: '11' }, today)).toBe('2025-11');
   });
 });

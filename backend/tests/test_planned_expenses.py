@@ -173,3 +173,26 @@ async def test_a_confirmed_entry_is_settled(client: AsyncClient, seed_data: dict
     for params in ({"account_ids": f"{a},{b}"}, {"account_id": a}):
         cell = _cell(await _table(client, **params), cat, "2026-07")
         assert (cell["planned_matched"], cell["planned_state"], cell["planned_active_cents"]) == (True, "none", 0), params
+
+
+async def test_each_entry_of_a_cell_comes_with_its_state(client: AsyncClient, seed_data: dict, db_session):
+    """Kilian's October « Abonnements »: one entry of an account, confirmed, and one
+    typed in « Tous » to confirm. With two entries the cell had no buttons, and no
+    account view shows a « Tous » entry: it could never be settled. Each entry now
+    comes with its state, so the cell can act on each one."""
+    cat = seed_data["cat_courses"].id
+    a, b = await _two_accounts(db_session, seed_data)
+    confirmed = await _plan(client, cat, "2026-10", 1500, a)
+    await client.patch(f"/api/planned-expenses/{confirmed}", json={"matched": True})
+    tous = await _plan(client, cat, "2026-10", 4000)
+    await _spend(db_session, seed_data, b, "2026-10-05", 3990, "abo")
+
+    cell = _cell(await _table(client, account_ids=f"{a},{b}"), cat, "2026-10")
+    assert (cell["planned_state"], cell["planned_count"], cell["planned_id"]) == ("confirm", 2, None)
+    assert sorted((e["id"], e["account_id"], e["amount_cents"], e["state"]) for e in cell["planned_entries"]) == sorted([
+        (confirmed, a, 1500, "done"), (tous, None, 4000, "confirm")])
+
+    # Confirming the « Tous » entry from that list settles the cell.
+    await client.patch(f"/api/planned-expenses/{tous}", json={"matched": True})
+    cell = _cell(await _table(client, account_ids=f"{a},{b}"), cat, "2026-10")
+    assert cell["planned_state"] == "none" and {e["state"] for e in cell["planned_entries"]} == {"done"}

@@ -480,6 +480,9 @@ async def confirm(
     batch.transaction_count = imported
     if imported == 0:
         await db.delete(batch)
+    # A saved bank profile remembers where its files go: the next preview opens there.
+    if isinstance(profile, BankProfile) and profile.id is not None:
+        profile.last_account_id = account_id
     await db.commit()
     logger.info("Import complete: %d imported, %d skipped (duplicates)", imported, skipped)
 

@@ -12,8 +12,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchBudgetProposal, previewBudgetPlan, useBudgetCategoryStats, useBudgetPlanMutations, useCategories, type Category } from "@/lib/api/hooks";
 import {
-  AMOUNT_LABEL, KIND_LABEL, addLine, centsToAmount, draftAmountCents, draftsFromPlan, draftsToPayload, eligibleCategories, fitsKind,
-  isDetailed, moveCategory, planTotals, removeLine, setLine, type BudgetPlan, type DraftEnvelope, type EnvelopeKind,
+  AMOUNT_LABEL, KIND_LABEL, MONTH_NAMES, addLine, centsToAmount, draftAmountCents, draftsFromPlan, draftsToPayload, eligibleCategories, fitsKind,
+  isDetailed, moveCategory, planTotals, removeLine, setLine, setStartPart, startYears, type BudgetPlan, type DraftEnvelope, type EnvelopeKind,
 } from "@/lib/budget-plan";
 import { currencySymbol, formatCents } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -70,6 +70,8 @@ export function PlanEditor({
   const [stats, setStats] = useState<Record<string, Stats>>({});
   const [proposed, setProposed] = useState(false);
   const [planNote, setPlanNote] = useState("");
+  const [startMonth, setStartMonth] = useState("");   // "YYYY-MM", "": from the plan's first amount
+  const [firstMonth, setFirstMonth] = useState<string | null>(null);   // the account's first transaction
   // Envelopes whose note field was opened (one with a note shows it anyway).
   const [notesOpen, setNotesOpen] = useState<Set<string>>(new Set());
   const nextKey = useRef(0);
@@ -84,6 +86,8 @@ export function PlanEditor({
       setDrafts(initial);
       setProposed(isProposal);
       setPlanNote(source.note ?? "");
+      setStartMonth(source.start_month ?? "");
+      setFirstMonth(source.first_month ?? null);
       setNotesOpen(new Set());
       setStats(Object.fromEntries(initial.map((d, i) => [d.key, { typical: source.envelopes[i].typical_cents ?? null, average: source.envelopes[i].average_cents ?? null }])));
     };
@@ -145,7 +149,7 @@ export function PlanEditor({
   const submit = async () => {
     if (!drafts) return;
     try {
-      await save.mutateAsync({ accountId, envelopes: draftsToPayload(drafts), note: planNote });
+      await save.mutateAsync({ accountId, envelopes: draftsToPayload(drafts), note: planNote, startMonth: startMonth || null });
       toast.success("Plan enregistré");
       onOpenChange(false);
     } catch (e) {
@@ -353,6 +357,31 @@ export function PlanEditor({
         </div>
 
         <aside aria-label="Notes et totaux du plan" className="mt-4 space-y-4 px-1 lg:mt-0 lg:overflow-y-auto lg:border-l lg:border-border lg:pl-5">
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium">Plan en vigueur depuis</p>
+            <div className="flex items-center gap-2">
+              <Select value={startMonth ? startMonth.slice(5, 7) : ""} onValueChange={(m) => setStartMonth(setStartPart(startMonth, { month: m }, new Date()))}>
+                <SelectTrigger aria-label="Mois de début du plan" className="w-36"><SelectValue placeholder="Mois" /></SelectTrigger>
+                <SelectContent>
+                  {MONTH_NAMES.map((name, i) => <SelectItem key={name} value={String(i + 1).padStart(2, "0")}>{name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={startMonth ? startMonth.slice(0, 4) : ""} onValueChange={(y) => setStartMonth(setStartPart(startMonth, { year: y }, new Date()))}>
+                <SelectTrigger aria-label="Année de début du plan" className="w-28"><SelectValue placeholder="Année" /></SelectTrigger>
+                <SelectContent>
+                  {startYears(firstMonth, new Date(), startMonth || undefined).map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {startMonth && (
+                <button type="button" onClick={() => setStartMonth("")} aria-label="Retirer le début du plan"
+                  className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"><X className="size-3.5" /></button>
+              )}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Ses montants valent à partir de ce mois ; l&apos;évolution ne montre que les mois suivants.
+              {!startMonth && " Vide : depuis son premier montant."}
+            </p>
+          </div>
           <div className="space-y-1.5">
             <label htmlFor="plan-note" className="text-sm font-medium">Notes du plan</label>
             <Textarea id="plan-note" value={planNote} rows={8} onChange={(e) => setPlanNote(e.target.value)}

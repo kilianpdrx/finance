@@ -78,3 +78,26 @@ async def test_confirm_applies_account_scoped_rule(client: AsyncClient, seed_dat
         select(Transaction).where(Transaction.account_id == acc.id)
     )).scalars().all()
     assert len(stored) == 1 and stored[0].category_id == cat.id
+
+
+async def test_a_bank_profile_remembers_the_account_its_files_went_to(client: AsyncClient, seed_data: dict, db_session: AsyncSession):
+    """The preview runs the rules (and the duplicate check) against the account it
+    is given: it now opens on the account this bank's files went to last time."""
+    from models import BankProfile
+    profile = BankProfile(profile_id=seed_data["profile"].id, name="Banque test",
+                          column_mapping={"date": "Date", "description": "Libelle", "amount": "Montant"},
+                          date_format="%Y-%m-%d", delimiter=";", encoding="utf-8",
+                          detection_fingerprint={"columns": ["Date", "Libelle", "Montant"]})
+    db_session.add(profile)
+    await db_session.commit()
+    h = {"X-Profile-Id": str(seed_data["profile"].id)}
+
+    first = (await client.post("/api/upload/detect", headers=h, files={"file": ("b.csv", CSV, "text/csv")})).json()
+    assert first["detected"] and first["profile"]["last_account_id"] is None
+
+    acc = seed_data["account_courant"]
+    r = await client.post("/api/upload/confirm", headers=h, files={"file": ("b.csv", CSV, "text/csv")},
+                          data={"account_id": str(acc.id), "profile_id": str(profile.id)})
+    assert r.status_code == 200, r.text
+    again = (await client.post("/api/upload/detect", headers=h, files={"file": ("b.csv", CSV, "text/csv")})).json()
+    assert again["profile"]["last_account_id"] == acc.id

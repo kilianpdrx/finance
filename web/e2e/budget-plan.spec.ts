@@ -332,6 +332,43 @@ test.describe("Plan de budget", () => {
     }
   });
 
+  test("un plan en vigueur depuis un mois choisi, et une enveloppe ouvre ses transactions", async ({ page, api }) => {
+    const { profile, account } = await household(api, "Début du plan E2E");
+    try {
+      await api.savePlan(account.id, PLAN);
+      await useProfile(page, profile.id);
+      await page.goto("/budget");
+      await expectAppReady(page);
+      await page.getByRole("tab", { name: "Plan" }).click();
+
+      // The start month is chosen in the editor, beside the plan's note.
+      await page.getByRole("button", { name: "Modifier le plan" }).first().click();
+      const editor = page.getByRole("dialog");
+      const [startYear, startMonth] = month(-1).split("-");
+      const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+      await editor.getByLabel("Mois de début du plan").click();
+      await page.getByRole("option", { name: MONTHS[Number(startMonth) - 1], exact: true }).click();
+      await editor.getByLabel("Année de début du plan").click();
+      await page.getByRole("option", { name: startYear, exact: true }).click();
+      await editor.getByRole("button", { name: "Enregistrer" }).click();
+      await expect(editor).toBeHidden();
+      await expect(page.getByText(/En vigueur depuis/)).toBeVisible();
+
+      // Clicking an envelope lists its transactions of the month, under the plan.
+      await page.getByRole("button", { name: "Courses", exact: true }).click();
+      const listed = page.getByRole("list", { name: "Transactions de Courses" });
+      await expect(listed).toContainText("CARREFOUR MARKET LYON");
+      await expect(listed).not.toContainText("GARAGE");
+
+      // Évolution only shows the months the plan is in force: last month and this one.
+      await page.getByRole("tab", { name: "Évolution" }).click();
+      const table = page.locator("table");
+      await expect(table.getByRole("columnheader")).toHaveCount(4);
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
   test("l'évolution montre chaque mois, et le tableau de bord le mois en cours", async ({ page, api }) => {
     const { profile, account } = await household(api, "Évolution E2E");
     try {

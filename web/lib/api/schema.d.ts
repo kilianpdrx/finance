@@ -763,6 +763,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/analytics/currency": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Analytics Currency
+         * @description The currency the analytics of these accounts are given in (`scope_currency`):
+         *     the interface labels with it and passes it to the per-account rows.
+         */
+        get: operations["analytics_currency_api_analytics_currency_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/analytics/summary": {
         parameters: {
             query?: never;
@@ -2318,6 +2339,11 @@ export interface components {
             is_active?: boolean | null;
             loan_details?: components["schemas"]["LoanDetailsUpdate"] | null;
         };
+        /** AnalyticsCurrency */
+        AnalyticsCurrency: {
+            /** Currency */
+            currency: string;
+        };
         /** AnalyticsSummary */
         AnalyticsSummary: {
             /** Total Income Cents */
@@ -2363,6 +2389,11 @@ export interface components {
              * @default EUR
              */
             base_currency: string;
+            /**
+             * Currency
+             * @default EUR
+             */
+            currency: string;
             /**
              * Net Worth By Currency
              * @default []
@@ -2431,6 +2462,8 @@ export interface components {
             } | null;
             /** Id */
             id: number;
+            /** Last Account Id */
+            last_account_id?: number | null;
         };
         /** BankProfileUpdate */
         BankProfileUpdate: {
@@ -2602,6 +2635,8 @@ export interface components {
             current_month: string;
             /** Rows */
             rows: components["schemas"]["EvolutionRow"][];
+            /** Start Month */
+            start_month?: string | null;
         };
         /** BudgetFullResponse */
         BudgetFullResponse: {
@@ -2630,6 +2665,8 @@ export interface components {
             envelopes: components["schemas"]["EnvelopeIn"][];
             /** Note */
             note?: string | null;
+            /** Start Month */
+            start_month?: string | null;
         };
         /** BudgetPlanOut */
         BudgetPlanOut: {
@@ -2643,6 +2680,10 @@ export interface components {
             exists: boolean;
             /** Note */
             note: string | null;
+            /** Start Month */
+            start_month?: string | null;
+            /** First Month */
+            first_month?: string | null;
             /** Envelopes */
             envelopes: components["schemas"]["EnvelopeOut"][];
             /** Outside Spent Cents */
@@ -2700,6 +2741,11 @@ export interface components {
              * @default 0
              */
             planned_active_cents: number;
+            /**
+             * Planned Entries
+             * @default []
+             */
+            planned_entries: components["schemas"]["PlannedCellEntry"][];
         };
         /** BudgetTableRow */
         BudgetTableRow: {
@@ -3696,6 +3742,20 @@ export interface components {
             checks: {
                 [key: string]: unknown;
             };
+        };
+        /** PlannedCellEntry */
+        PlannedCellEntry: {
+            /** Id */
+            id: number;
+            /** Account Id */
+            account_id: number | null;
+            /** Amount Cents */
+            amount_cents: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "done" | "planned" | "confirm";
         };
         /**
          * PlannedEntryOut
@@ -5872,12 +5932,46 @@ export interface operations {
             };
         };
     };
+    analytics_currency_api_analytics_currency_get: {
+        parameters: {
+            query?: {
+                account_ids?: string | null;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsCurrency"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     summary_api_analytics_summary_get: {
         parameters: {
             query?: {
                 date_from?: string | null;
                 date_to?: string | null;
                 account_ids?: string | null;
+                currency?: string | null;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
@@ -5913,6 +6007,7 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
                 account_ids?: string | null;
+                currency?: string | null;
                 income?: boolean;
             };
             header?: {
@@ -5949,6 +6044,7 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
                 account_ids?: string | null;
+                currency?: string | null;
                 income?: boolean;
                 granularity?: "month" | "day";
             };
@@ -5986,6 +6082,7 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
                 account_ids?: string | null;
+                currency?: string | null;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
@@ -6021,6 +6118,7 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
                 account_ids?: string | null;
+                currency?: string | null;
             };
             header?: {
                 "X-Profile-Id"?: number | null;

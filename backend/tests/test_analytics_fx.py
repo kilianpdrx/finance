@@ -196,3 +196,28 @@ async def test_budget_says_when_a_rate_is_missing(client: AsyncClient, db_sessio
     table = (await client.get("/api/analytics/budget-full", params={"year": 2026})).json()
     assert table["currency"] == "EUR" and table["fx_incomplete"] is True
     assert _budget_cell(table, seed_data["cat_courses"].id, "2026-03")["actual_cents"] == 1000    # passed through, and flagged
+
+
+async def test_one_account_reads_in_its_own_currency(client: AsyncClient, usd_flows: dict, seed_data: dict):
+    """The budget table's rule, now for analytics: accounts sharing one currency are
+    shown in it, untouched; mixed ones in the base currency, converted. `currency=`
+    keeps the per-account rows of a selection in the selection's currency."""
+    h = {"X-Profile-Id": str(usd_flows["profile"].id)}
+    usd, eur = usd_flows["usd"].id, seed_data["account_courant"].id
+    params = {"date_from": "2026-06-01", "date_to": "2026-07-31"}
+
+    assert (await client.get("/api/analytics/currency", params={"account_ids": str(usd)}, headers=h)).json() == {"currency": "USD"}
+    assert (await client.get("/api/analytics/currency", params={"account_ids": f"{usd},{eur}"}, headers=h)).json() == {"currency": "EUR"}
+    assert (await client.get("/api/analytics/currency", headers=h)).json() == {"currency": "EUR"}
+
+    alone = (await client.get("/api/analytics/by-category", params={**params, "account_ids": str(usd)}, headers=h)).json()
+    assert {r["category_id"]: r["total_cents"] for r in alone}[usd_flows["cat"].id] == 2000      # not converted
+    summary = (await client.get("/api/analytics/summary", params={**params, "account_ids": str(usd)}, headers=h)).json()
+    assert (summary["currency"], summary["base_currency"], summary["total_expenses_cents"]) == ("USD", "EUR", 2000)
+
+    mixed = (await client.get("/api/analytics/cash-flow", params={**params, "account_ids": f"{usd},{eur}"}, headers=h)).json()
+    assert {m["month"]: m["expenses_cents"] for m in mixed}["2026-06"] == 800                  # converted to EUR
+    forced = (await client.get("/api/analytics/cash-flow", params={**params, "account_ids": str(usd), "currency": "EUR"}, headers=h)).json()
+    assert {m["month"]: m["expenses_cents"] for m in forced}["2026-07"] == 900
+    bad = await client.get("/api/analytics/cash-flow", params={"currency": "euro"}, headers=h)
+    assert bad.status_code == 400 and "Devise" in bad.json()["detail"]

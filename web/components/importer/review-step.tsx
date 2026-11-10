@@ -6,13 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { Wallet } from "lucide-react";
+import { Loader2, Wallet } from "lucide-react";
 import { AccountSelect } from "@/components/accounts/account-select";
 import { CategorySelect } from "@/components/transactions/category-select";
 import { ConflictBadge } from "@/components/transactions/conflict-badge";
 import { formatCents } from "@/lib/format";
 import type { Account, Category } from "@/lib/api/hooks";
 import type { ParsePreviewTransaction, SkippedReport } from "@/lib/api/upload";
+import { choicesForConfirm } from "@/lib/import-review";
 
 /** Human-readable reason for a dropped row, in the order we show them. */
 const SKIP_REASONS: { key: keyof SkippedReport; label: string }[] = [
@@ -30,7 +31,7 @@ function money(cents: number, isDebit: boolean, currency: string) {
 }
 
 export function ReviewStep({
-  transactions, categories, accounts, selectedAccount, onSelectAccount, loading, error, onConfirm, onBack, fileName, skipped,
+  transactions, categories, accounts, selectedAccount, onSelectAccount, loading, refreshing, error, onConfirm, onBack, fileName, skipped,
 }: {
   transactions: ParsePreviewTransaction[];
   categories: Category[];
@@ -38,34 +39,42 @@ export function ReviewStep({
   selectedAccount: string;
   onSelectAccount: (v: string) => void;
   loading: boolean;
+  /** The preview is running again for another destination account. */
+  refreshing?: boolean;
   error: string;
   onConfirm: (overrides: Record<string, number | null>, force: string[]) => void;
   onBack: () => void;
   fileName?: string;
   skipped?: SkippedReport;
 }) {
-  const [overrides, setOverrides] = useState<Record<string, number | null>>({});
+  // Keyed by row: the hashes change with the account (lib/import-review.ts).
+  const [overrides, setOverrides] = useState<Record<number, number | null>>({});
   const [filterUncat, setFilterUncat] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [showSkipped, setShowSkipped] = useState(false);
-  const [force, setForce] = useState<Set<string>>(new Set());
+  const [force, setForce] = useState<Set<number>>(new Set());
 
   const destCurrency = accounts.find((a) => String(a.id) === selectedAccount)?.currency ?? "EUR";
   const accountNames = Object.fromEntries(accounts.map((a) => [a.id, a.name])) as Record<number, string>;
-  const catId = (t: ParsePreviewTransaction) => (t.import_hash in overrides ? overrides[t.import_hash] : t.category_id);
-  const duplicateTxns = useMemo(() => transactions.filter((t) => t.is_duplicate), [transactions]);
+  const rows = useMemo(() => transactions.map((t, row) => ({ ...t, row })), [transactions]);
+  type Row = (typeof rows)[number];
+  const catId = (t: Row) => (t.row in overrides ? overrides[t.row] : t.category_id);
+  const duplicateTxns = useMemo(() => rows.filter((t) => t.is_duplicate), [rows]);
   const duplicates = duplicateTxns.length;
-  const forcedCount = duplicateTxns.filter((t) => force.has(t.import_hash)).length;
-  const uncategorized = transactions.filter((t) => (!t.is_duplicate || force.has(t.import_hash)) && catId(t) === null).length;
-  const toImport = transactions.filter((t) => !t.is_duplicate).length + forcedCount;
+  const forcedCount = duplicateTxns.filter((t) => force.has(t.row)).length;
+  const included = (t: Row) => !t.is_duplicate || force.has(t.row);
+  const uncategorized = rows.filter((t) => included(t) && catId(t) === null).length;
+  const toImport = rows.filter((t) => !t.is_duplicate).length + forcedCount;
   const canImport = toImport > 0 && !!selectedAccount;
   const skippedTotal = skipped?.total ?? 0;
 
-  const displayed = (filterUncat
-    ? transactions.filter((t) => (!t.is_duplicate || force.has(t.import_hash)) && catId(t) === null)
-    : transactions.filter((t) => !t.is_duplicate || force.has(t.import_hash)));
+  const displayed = filterUncat ? rows.filter((t) => included(t) && catId(t) === null) : rows.filter(included);
 
-  const toggleForce = (h: string) => setForce((p) => { const n = new Set(p); if (n.has(h)) n.delete(h); else n.add(h); return n; });
+  const toggleForce = (row: number) => setForce((p) => { const n = new Set(p); if (n.has(row)) n.delete(row); else n.add(row); return n; });
+  const confirm = () => {
+    const choices = choicesForConfirm(transactions, overrides, force);
+    onConfirm(choices.overrides, choices.force);
+  };
 
   return (
     <div className="space-y-4">
@@ -82,6 +91,7 @@ export function ReviewStep({
           <Wallet className="size-4" /> Compte destination
         </Label>
         <AccountSelect accounts={accounts} value={selectedAccount} onChange={onSelectAccount} className="flex-1" />
+        {refreshing && <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" /> Mise à jour…</span>}
       </Card>
 
       <div className={cn("grid gap-3", skippedTotal > 0 ? "grid-cols-4" : "grid-cols-3")}>
@@ -92,7 +102,7 @@ export function ReviewStep({
         </Card>
         <Card onClick={() => duplicates > 0 && setShowDuplicates((v) => !v)} className={cn("p-3 text-center", duplicates > 0 && "cursor-pointer")}>
           <p className={cn("text-2xl font-bold", duplicates > 0 ? "text-warning" : "text-muted-foreground")}>{duplicates}</p>
-          <p className={cn("mt-0.5 text-xs", duplicates > 0 ? "text-warning" : "text-muted-foreground")}>doublons {force.size > 0 ? `(${force.size} inclus)` : "· cliquer"}</p>
+          <p className={cn("mt-0.5 text-xs", duplicates > 0 ? "text-warning" : "text-muted-foreground")}>doublons {forcedCount > 0 ? `(${forcedCount} inclus)` : "· cliquer"}</p>
         </Card>
         {skippedTotal > 0 && (
           <Card onClick={() => setShowSkipped((v) => !v)} className="cursor-pointer border-negative/40 p-3 text-center">
@@ -132,16 +142,16 @@ export function ReviewStep({
         <Card className="overflow-hidden p-0">
           <div className="flex items-center justify-between bg-warning/10 px-4 py-2.5">
             <p className="text-sm font-medium text-warning">{duplicates} doublon(s) — déjà importé(s)</p>
-            <Button variant="outline" size="sm" onClick={() => setForce(force.size < duplicates ? new Set(duplicateTxns.map((t) => t.import_hash)) : new Set())}>
-              {force.size < duplicates ? "Tout inclure" : "Tout exclure"}
+            <Button variant="outline" size="sm" onClick={() => setForce(forcedCount < duplicates ? new Set(duplicateTxns.map((t) => t.row)) : new Set())}>
+              {forcedCount < duplicates ? "Tout inclure" : "Tout exclure"}
             </Button>
           </div>
           <div className="max-h-48 overflow-y-auto">
             <table className="w-full text-sm">
               <tbody>
-                {duplicateTxns.map((t, i) => (
-                  <tr key={`${t.import_hash}-${i}`} className={cn("border-t border-border", force.has(t.import_hash) && "bg-positive/8")}>
-                    <td className="w-8 px-4 py-1.5"><Checkbox checked={force.has(t.import_hash)} onCheckedChange={() => toggleForce(t.import_hash)} /></td>
+                {duplicateTxns.map((t) => (
+                  <tr key={t.row} className={cn("border-t border-border", force.has(t.row) && "bg-positive/8")}>
+                    <td className="w-8 px-4 py-1.5"><Checkbox checked={force.has(t.row)} onCheckedChange={() => toggleForce(t.row)} /></td>
                     <td className="nums px-2 py-1.5 text-xs text-muted-foreground">{t.date}</td>
                     <td className="max-w-xs truncate px-2 py-1.5 text-xs">{t.description}</td>
                     <td className={cn("nums whitespace-nowrap px-2 py-1.5 text-right text-xs font-medium", t.is_debit ? "text-negative" : "text-positive")}>{money(t.amount_cents, t.is_debit, destCurrency)}</td>
@@ -173,11 +183,11 @@ export function ReviewStep({
               {displayed.length === 0 && (
                 <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">{filterUncat ? "Toutes catégorisées !" : "Aucune transaction à importer."}</td></tr>
               )}
-              {displayed.map((t, i) => {
+              {displayed.map((t) => {
                 const cid = catId(t);
                 const uncat = cid === null;
                 return (
-                  <tr key={`${t.import_hash}-${i}`} className={cn("border-t border-border", uncat ? "bg-warning/8" : t.categorization_source === "rule" ? "bg-positive/6" : "")}>
+                  <tr key={t.row} className={cn("border-t border-border", uncat ? "bg-warning/8" : t.categorization_source === "rule" ? "bg-positive/6" : "")}>
 
                     <td className="nums whitespace-nowrap px-4 py-2 text-xs text-muted-foreground">{t.date}</td>
                     <td className="max-w-xs px-4 py-2 text-xs">
@@ -190,7 +200,7 @@ export function ReviewStep({
                     <td className="px-4 py-2">
                       <CategorySelect
                         value={cid}
-                        onChange={(v) => setOverrides((p) => ({ ...p, [t.import_hash]: v }))}
+                        onChange={(v) => setOverrides((p) => ({ ...p, [t.row]: v }))}
                         categories={categories}
                         accountId={selectedAccount ? Number(selectedAccount) : null}
                         accountNames={accountNames}
@@ -208,7 +218,7 @@ export function ReviewStep({
       {error && <div className="rounded-lg border border-negative/30 bg-negative/10 p-3 text-sm text-negative">{error}</div>}
 
       <div className="flex justify-end">
-        <Button disabled={loading || !canImport} onClick={() => onConfirm(overrides, [...force])}>
+        <Button disabled={loading || refreshing || !canImport} onClick={confirm}>
           {loading ? "Import en cours…" : `Importer ${toImport} transaction${toImport !== 1 ? "s" : ""}`}
         </Button>
       </div>

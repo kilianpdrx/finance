@@ -2,7 +2,8 @@
 // Requests go through the Next rewrite to the FastAPI backend.
 
 export interface DetectResponse {
-  profile: { id: number; name: string } | null;
+  /** `last_account_id`: the account this bank's files went to last time. */
+  profile: { id: number; name: string; last_account_id?: number | null } | null;
   filename: string;
   raw_headers: string[];
   raw_preview: string[][];

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, FolderOpen, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,10 @@ export default function ImporterPage() {
   const [detected, setDetected] = useState<DetectResponse | null>(null);
   const [selectedAccount, setSelectedAccount] = useState("");
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  // The options the preview ran with, to run it again for another account.
+  const [previewOpts, setPreviewOpts] = useState<Parameters<typeof uploadApi.parsePreview>[1] | null>(null);
+  const previewRun = useRef(0);   // only the latest account's preview is shown
   const [error, setError] = useState("");
   const [result, setResult] = useState<ConfirmResponse | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -53,17 +57,37 @@ export default function ImporterPage() {
   const selectedAccObj = accounts.find((a) => String(a.id) === selectedAccount);
   const isInvestmentTarget = selectedAccObj?.account_type === "investissement";
 
-  const goToReview = async (f: File, opts: Parameters<typeof uploadApi.parsePreview>[1]) => {
+  const goToReview = async (f: File, opts: Parameters<typeof uploadApi.parsePreview>[1], account = selectedAccount) => {
     setLoading(true); setError("");
     try {
-      const res = await uploadApi.parsePreview(f, { ...opts, accountId: selectedAccount ? Number(selectedAccount) : undefined });
+      const res = await uploadApi.parsePreview(f, { ...opts, accountId: account ? Number(account) : undefined });
       setPreviewTxns(res.transactions);
       setPreviewSkipped(res.skipped);
+      setPreviewOpts(opts);
       setStep("review");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur de prévisualisation");
     } finally {
       setLoading(false);
+    }
+  };
+
+  /** Another destination account in the review: the rules bound to an account
+   *  and the duplicate check depend on it, so the preview runs again for it. */
+  const changeReviewAccount = async (account: string) => {
+    setSelectedAccount(account);
+    if (!file || !previewOpts) return;
+    const run = ++previewRun.current;
+    setRefreshing(true); setError("");
+    try {
+      const res = await uploadApi.parsePreview(file, { ...previewOpts, accountId: account ? Number(account) : undefined });
+      if (run !== previewRun.current) return;
+      setPreviewTxns(res.transactions);
+      setPreviewSkipped(res.skipped);
+    } catch (e) {
+      if (run === previewRun.current) setError(e instanceof Error ? e.message : "Erreur de prévisualisation");
+    } finally {
+      if (run === previewRun.current) setRefreshing(false);
     }
   };
 
@@ -91,7 +115,12 @@ export default function ImporterPage() {
     try {
       const res = await uploadApi.detect(f);
       setDetected(res);
-      if (res.detected && res.profile) await goToReview(f, { profileId: res.profile.id });
+      // This bank's files went to that account last time: open there, so its
+      // account-bound rules and the duplicate check run against it.
+      const remembered = res.profile?.last_account_id;
+      const account = remembered != null && accounts.some((a) => a.id === remembered) ? String(remembered) : selectedAccount;
+      if (account !== selectedAccount) setSelectedAccount(account);
+      if (res.detected && res.profile) await goToReview(f, { profileId: res.profile.id }, account);
       else setStep("mapping");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur de détection");
@@ -226,7 +255,7 @@ export default function ImporterPage() {
       <ReviewStep
         transactions={previewTxns} categories={categories} accounts={accounts} fileName={file.name}
         skipped={previewSkipped}
-        selectedAccount={selectedAccount} onSelectAccount={setSelectedAccount}
+        selectedAccount={selectedAccount} onSelectAccount={changeReviewAccount} refreshing={refreshing}
         loading={loading} error={error} onConfirm={handleConfirm}
         onBack={() => { setError(""); if (detected && !detected.detected) setStep("mapping"); else reset(); }}
       />

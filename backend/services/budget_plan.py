@@ -86,6 +86,19 @@ def amount_in_force(amounts: list[tuple[str, int]], month: str) -> Optional[int]
     return found
 
 
+def in_force_from(amounts: list[tuple[str, int]], month: str, start: Optional[str]) -> Optional[int]:
+    """The amount planned for `month` once the plan has a start month: nothing
+    before it, and from it the plan's first amount counts even if it was set
+    later (a plan written in October can be in force since January). Saved
+    amounts are never rewritten — only read this way."""
+    if start is not None and month < start:
+        return None
+    found = amount_in_force(amounts, month)
+    if found is None and start is not None and amounts:
+        return sorted(amounts)[0][1]
+    return found
+
+
 def typical(values: list[int]) -> Optional[int]:
     """A typical month: the median. One exceptional month moves an average a
     lot and a median not at all — and irregular months are the norm."""
@@ -193,6 +206,8 @@ class Envelope:
     # planned amount only — nothing realised can be told apart for them.
     lines: list = field(default_factory=list)
     note: Optional[str] = None
+    # The plan's start month (`budget_plans.start_month`), None: from its first amount.
+    start: Optional[str] = None
 
     @property
     def detailed(self) -> bool:
@@ -215,10 +230,14 @@ class Envelope:
         the plan's totals differ from the ones the editor had just shown."""
         return sum(sums.planned[c].get(month, 0) for c in self.category_ids)
 
+    def in_force(self, month: str) -> Optional[int]:
+        """The amount planned for `month`, the plan's start month applied."""
+        return in_force_from(self.amounts, month, self.start)
+
     def target(self, sums: AccountSums, month: str) -> Optional[int]:
         """What `month` is compared with: the amount in force, and nothing else
-        (None before the envelope had one)."""
-        return amount_in_force(self.amounts, month)
+        (None before the envelope had one, or before the plan's start)."""
+        return self.in_force(month)
 
 
 async def load_envelopes(db: AsyncSession, pid: int, account_id: int) -> list[Envelope]:
@@ -248,12 +267,20 @@ async def load_envelopes(db: AsyncSession, pid: int, account_id: int) -> list[En
         BudgetEnvelopeLine.profile_id == pid, BudgetEnvelopeLine.envelope_id.in_(ids),
     ).order_by(BudgetEnvelopeLine.position, BudgetEnvelopeLine.id))).scalars():
         lines[line.envelope_id].append((line.id, line.name, line.amount_cents))
+    start = await load_plan_start(db, pid, account_id)
     return [Envelope(r.id, r.name, r.kind, sorted(categories[r.id]), sorted(amounts[r.id]), detail[r.id],
-                     lines[r.id], r.note) for r in rows]
+                     lines[r.id], r.note, start) for r in rows]
 
 
 async def load_plan_note(db: AsyncSession, pid: int, account_id: int) -> Optional[str]:
     return (await db.execute(select(BudgetPlanNote.note).where(
+        BudgetPlanNote.profile_id == pid, BudgetPlanNote.account_id == account_id,
+    ))).scalar_one_or_none()
+
+
+async def load_plan_start(db: AsyncSession, pid: int, account_id: int) -> Optional[str]:
+    """The month the account's plan is in force from; None: from its first amount."""
+    return (await db.execute(select(BudgetPlanNote.start_month).where(
         BudgetPlanNote.profile_id == pid, BudgetPlanNote.account_id == account_id,
     ))).scalar_one_or_none()
 
@@ -346,7 +373,7 @@ def provision_year_to_date(envelope: Envelope, sums: AccountSums, month: str) ->
     provision is judged over the year, not month by month."""
     provision = spent = 0
     for m in months_until(month, int(month[5:7])):
-        amount = amount_in_force(envelope.amounts, m)
+        amount = envelope.in_force(m)
         if amount is None:
             continue
         provision += amount

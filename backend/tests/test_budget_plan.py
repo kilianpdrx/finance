@@ -57,9 +57,10 @@ def _env(name: str, kind: str, amount: int, categories=(), **kw) -> dict:
     return {"name": name, "kind": kind, "amount_cents": amount, "category_ids": list(categories), **kw}
 
 
-async def _save(client: AsyncClient, w: dict, envelopes: list, account=None, note=None):
+async def _save(client: AsyncClient, w: dict, envelopes: list, account=None, note=None, start=None):
     return await client.put("/api/budget-plan", params={"account_id": account or w["account"]},
-                            headers=w["h"], json={"envelopes": envelopes, **({"note": note} if note is not None else {})})
+                            headers=w["h"], json={"envelopes": envelopes, **({"note": note} if note is not None else {}),
+                                                  **({"start_month": start} if start is not None else {})})
 
 
 async def _plan(client: AsyncClient, w: dict, month: str = NOW, account=None) -> dict:
@@ -780,3 +781,45 @@ async def test_sub_lines_and_notes_are_checked(client: AsyncClient, seed_data: d
     assert (preview.json()["envelopes"][0]["amount_cents"], preview.json()["note"]) == (150_00, "brouillon")
     assert (await db_session.execute(select(func.count()).select_from(BudgetEnvelopeLine))).scalar() == 0
 
+
+
+async def test_a_plan_is_in_force_from_its_start_month(client: AsyncClient, seed_data: dict, db_session: AsyncSession, monkeypatch):
+    """Written in June, in force since April: its first amount counts from April,
+    nothing is compared before, and Évolution starts there. The saved amount rows
+    are not rewritten — the start is only how they are read."""
+    assert bp.in_force_from([("2026-06", 400_00)], "2026-04", "2026-04") == 400_00
+    assert bp.in_force_from([("2026-06", 400_00)], "2026-03", "2026-04") is None
+    assert bp.in_force_from([("2026-02", 300_00), ("2026-06", 400_00)], "2026-03", "2026-04") is None   # before the start
+    assert bp.in_force_from([("2026-02", 300_00), ("2026-06", 400_00)], "2026-05", "2026-04") == 300_00
+    assert bp.in_force_from([("2026-06", 400_00)], "2026-04", None) is None                             # no start: as before
+
+    w = await _world(db_session, seed_data)
+    db_session.add_all([_txn(w, f"2026-{m:02d}-05", (m * 100) * 100, w["courses"]) for m in (3, 4, 5, 6)])
+    await db_session.commit()
+    monkeypatch.setattr(bp, "current_month", lambda: "2026-06")
+    saved = await _save(client, w, [_env("Courses", "expense", 400_00, [w["courses"]])], start="2026-04")
+    assert saved.status_code == 200 and saved.json()["start_month"] == "2026-04"
+    assert saved.json()["first_month"] == "2026-03"          # the editor offers years from there
+    envelope_id = saved.json()["envelopes"][0]["id"]
+
+    evolution = (await client.get("/api/budget-plan/evolution", headers=w["h"],
+                                  params={"account_id": w["account"], "months": 6, "month": "2026-06"})).json()
+    assert (evolution["months"], evolution["start_month"]) == (["2026-04", "2026-05", "2026-06"], "2026-04")
+    row = next(r for r in evolution["rows"] if r["key"] == f"envelope-{envelope_id}")
+    assert [c["target_cents"] for c in row["cells"]] == [400_00, 400_00, 400_00]
+    assert (await _plan(client, w, "2026-04"))["envelopes"][0]["amount_cents"] == 400_00
+    assert (await _plan(client, w, "2026-03"))["envelopes"][0]["amount_cents"] == 0
+    rows = (await db_session.execute(select(BudgetEnvelopeAmount.effective_from))).scalars().all()
+    assert rows == ["2026-06"]
+
+    # Saving again keeps the start (and writes no new amount); a start later than the period shows nothing.
+    again = await _save(client, w, [_env("Courses", "expense", 400_00, [w["courses"]], id=envelope_id)], start="2026-04")
+    assert again.json()["start_month"] == "2026-04"
+    assert (await db_session.execute(select(func.count(BudgetEnvelopeAmount.id)))).scalar() == 1
+    await _save(client, w, [_env("Courses", "expense", 400_00, [w["courses"]], id=envelope_id)], start="2026-09")
+    later = (await client.get("/api/budget-plan/evolution", headers=w["h"],
+                              params={"account_id": w["account"], "months": 6, "month": "2026-06"})).json()
+    assert (later["months"], later["rows"], later["start_month"]) == ([], [], "2026-09")
+    for typed in ("2026-13", "janvier 2026"):     # Safari has no month field: whatever was typed came through
+        bad = await _save(client, w, [_env("Courses", "expense", 400_00, [w["courses"]], id=envelope_id)], start=typed)
+        assert bad.status_code == 422 and bad.json()["detail"] == "Mois attendu au format AAAA-MM."

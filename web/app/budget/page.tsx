@@ -195,6 +195,7 @@ function BudgetTable({ accountSel, setAccountSel }: { accountSel: CourantSelecti
   // accounts — the one they share, else the base currency, each month converted
   // at its own rate. Until it answers, the same guess the API will make.
   const currency = responses[0]?.currency ?? deriveCurrency(courant, accountId != null ? [accountId] : null);
+  const accountName = (id: number | null) => (id == null ? "Tous les comptes" : accounts.find((a) => a.id === id)?.name ?? "Compte");
   const converted = accountId == null ? Array.from(new Set(courant.map((a) => a.currency))).filter((c) => c !== currency) : [];
   const fxIncomplete = responses.some((r) => r.fx_incomplete);
   // Only block the whole table on the very first load — extensions fill in place.
@@ -329,7 +330,7 @@ function BudgetTable({ accountSel, setAccountSel }: { accountSel: CourantSelecti
               onClick={pick ? () => pickCell(pick, cell.month) : undefined}
               onDoubleClick={() => { setEditing(key); setEditValue(cell.expected_cents ? String(cell.expected_cents / 100) : ""); }}
               title={cell.planned_count > 1 && type !== "regular" && type !== "manual"
-                ? `${cell.planned_count} dépenses planifiées ici : ouvrez le compte concerné pour confirmer ou retirer chacune.`
+                ? `${cell.planned_count} dépenses planifiées ici : cliquez le nombre pour confirmer ou retirer chacune.`
                 : undefined}
               className={`group/cell relative w-24 cursor-pointer px-2 py-2 text-right text-sm ${bg} ${isPicked(pick, cell.month) ? PICKED : ""}`}
             >
@@ -361,6 +362,10 @@ function BudgetTable({ accountSel, setAccountSel }: { accountSel: CourantSelecti
                       >
                         <Check className="size-3.5" />
                       </button>
+                    )}
+                    {(type === "planned" || type === "confirm") && cell.planned_count > 1 && (
+                      <PlannedEntries cell={cell} currency={currency} accountName={accountName}
+                        onConfirm={(id) => plannedMut.confirm.mutate(id)} onRemove={(id) => plannedMut.remove.mutate(id)} />
                     )}
                     {(type === "planned" || type === "confirm") && cell.planned_id != null && (
                       <button
@@ -602,5 +607,49 @@ function BudgetTable({ accountSel, setAccountSel }: { accountSel: CourantSelecti
 
       <PlanExpenseDialog open={planOpen} onOpenChange={setPlanOpen} accountId={accountId ?? null} prefill={planPrefill} />
     </div>
+  );
+}
+
+/** A cell holding several « Planifier » entries: each one with its account and
+ *  its state, to confirm or remove — one typed in « Tous » belongs to no account
+ *  view, so this list is the only place it can be settled. */
+function PlannedEntries({ cell, currency, accountName, onConfirm, onRemove }: {
+  cell: MergedCell;
+  currency: string;
+  accountName: (id: number | null) => string;
+  onConfirm: (id: number) => void;
+  onRemove: (id: number) => void;
+}) {
+  const STATE = { done: "confirmée", planned: "prévue", confirm: "à confirmer" } as const;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
+          aria-label={`${cell.planned_count} dépenses planifiées`}
+          className="rounded bg-warning/25 px-1 text-[10px] font-semibold leading-4 text-warning hover:bg-warning/40">
+          {cell.planned_count}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 p-2" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+        <p className="px-1 pb-1.5 text-xs font-medium">Dépenses planifiées · {formatMonthLabel(cell.month, { withYear: true })}</p>
+        <ul aria-label="Dépenses planifiées de la cellule" className="space-y-1">
+          {cell.planned_entries.map((e) => (
+            <li key={e.id} className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/60">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{accountName(e.account_id)}</span>
+                <span className={e.state === "confirm" ? "text-warning" : "text-muted-foreground"}>{STATE[e.state]}</span>
+              </span>
+              <span className="nums blurable shrink-0">{formatCents(e.amount_cents, currency)}</span>
+              {e.state !== "done" && (
+                <button type="button" title="C'est cette dépense : la confirmer" aria-label={`Confirmer la dépense de ${accountName(e.account_id)}`}
+                  onClick={() => onConfirm(e.id)} className="rounded p-0.5 text-warning hover:bg-warning/20"><Check className="size-3.5" /></button>
+              )}
+              <button type="button" title="Retirer cette dépense planifiée" aria-label={`Retirer la dépense de ${accountName(e.account_id)}`}
+                onClick={() => onRemove(e.id)} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-negative"><X className="size-3.5" /></button>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 }

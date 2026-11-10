@@ -95,3 +95,36 @@ async def test_rate_cache_same_currency_never_queries(db_session: AsyncSession):
     from services.fx import RateCache
     cents, ok = await RateCache().convert_checked(db_session, 500, "EUR", "EUR", date.today())
     assert (cents, ok) == (500, True)
+
+
+async def test_two_requests_fetching_the_same_rate_do_not_break(db_session: AsyncSession, monkeypatch):
+    """Analytics fire several requests at once: both miss the cache, both fetch the
+    same rate, and the second plain INSERT broke on the unique constraint — leaving
+    its session rolled back, so the request answered 500. The insert ignores a row
+    already there, and the session goes on."""
+    day = date(2026, 11, 9)
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"rates": {"EUR": 1.0912}}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, params=None):
+            # Meanwhile, the other request stored the very same rate.
+            db_session.add(ExchangeRate(base_currency="GBP", target_currency="EUR", date=day, rate=1.0912))
+            await db_session.commit()
+            return Response()
+
+    fxmod._fail_cache.clear()
+    monkeypatch.setattr(fxmod.httpx, "AsyncClient", lambda **kw: Client())
+    assert await get_rate(db_session, "GBP", "EUR", day) == 1.0912
+    assert await get_rate(db_session, "GBP", "EUR", day) == 1.0912        # the session still works

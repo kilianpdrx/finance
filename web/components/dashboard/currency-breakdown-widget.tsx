@@ -9,7 +9,8 @@ import type { AnalyticsSummary } from "@/lib/api/hooks";
  *  conversion. Renders nothing unless holdings span more than one currency. */
 export function CurrencyBreakdownWidget({ summary }: { summary: AnalyticsSummary | undefined }) {
   const rows = summary?.net_worth_by_currency ?? [];
-  const base = summary?.base_currency ?? "EUR";
+  // The converted amounts are in the summary's currency (the selection's own, else the base one).
+  const base = summary?.currency ?? summary?.base_currency ?? "EUR";
   if (rows.length <= 1) return null;
 
   const maxAbs = Math.max(1, ...rows.map((r) => Math.abs(r.converted_cents)));

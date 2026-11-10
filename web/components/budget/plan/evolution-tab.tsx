@@ -45,6 +45,18 @@ export function EvolutionTab({ accountId }: { accountId: number }) {
   const [picked, setPicked] = useState<string | null>(null);
 
   if (isLoading || !data) return <Skeleton className="h-96 w-full rounded-2xl" />;
+  // A plan shows from its start month on: none of the months asked may be left.
+  if (data.months.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center text-sm text-muted-foreground">
+          {data.start_month
+            ? <>Le plan commence en <span className="capitalize">{formatMonthLabel(data.start_month, { withYear: true })}</span> : rien à comparer avant.</>
+            : "Aucun mois à montrer."}
+        </CardContent>
+      </Card>
+    );
+  }
 
   const currency = data.currency;
   const hasPlan = data.rows.some((r) => r.key.startsWith("envelope-") || (r.key === "unplanned" && r.reference_cents != null));

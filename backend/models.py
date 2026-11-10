@@ -235,6 +235,9 @@ class BankProfile(Base):
     encoding = Column(String, default="utf-8")
     delimiter = Column(String, default=";")
     detection_fingerprint = Column(JSON, nullable=True)
+    # The account this bank's files went to last time: where the import preview
+    # opens. Deliberately no foreign key — a deleted account only loses the hint.
+    last_account_id = Column(Integer, nullable=True)
 
 
 
@@ -313,6 +316,8 @@ class BudgetPlanNote(Base):
     profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     note = Column(String, nullable=True)
+    # "YYYY-MM": the plan is in force from that month. NULL: from its first amount.
+    start_month = Column(String, nullable=True)
 
     __table_args__ = (UniqueConstraint("account_id", name="uq_budget_plan_account"),)
 

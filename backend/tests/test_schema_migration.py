@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 import database
 from models import Base
 
-HEAD = "020_payroll"
+HEAD = "021_plan_start_import_account"
 
 
 @pytest.fixture
@@ -347,3 +347,30 @@ def test_payroll_tables_are_added_to_an_existing_database(temp_db):
     assert {"payroll_situations", "employers", "documents", "payslips", "payslip_lines", "payslip_label_rules"} <= tables
     assert unique == {"uq_payslip_employer_period", "uq_document_profile_hash", "uq_payslip_rule_employer_label",
                       "uq_payroll_situation_year"}
+
+
+def test_plan_start_and_import_account_columns_are_added(temp_db):
+    """An install on 020 has neither a plan start nor a bank's last account:
+    upgrading adds both, empty, and a second run changes nothing."""
+    eng = create_engine(f"sqlite:///{temp_db}")
+    Base.metadata.create_all(eng)
+    with eng.begin() as c:
+        c.execute(text("ALTER TABLE budget_plans DROP COLUMN start_month"))
+        c.execute(text("ALTER TABLE bank_profiles DROP COLUMN last_account_id"))
+    eng.dispose()
+    database._sync_schema_blocking()  # stamps head (no alembic_version yet)
+    eng = create_engine(f"sqlite:///{temp_db}")
+    with eng.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num='020_payroll'"))
+    eng.dispose()
+
+    database._sync_schema_blocking()  # upgrade path: runs 021
+    database._sync_schema_blocking()  # and again: nothing left to do
+
+    assert _version(temp_db) == HEAD
+    eng = create_engine(f"sqlite:///{temp_db}")
+    try:
+        assert "start_month" in {c["name"] for c in inspect(eng).get_columns("budget_plans")}
+        assert "last_account_id" in {c["name"] for c in inspect(eng).get_columns("bank_profiles")}
+    finally:
+        eng.dispose()

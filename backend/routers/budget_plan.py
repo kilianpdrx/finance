@@ -58,7 +58,7 @@ def _category_out(e: bp.Envelope, category_id: int, sums: bp.AccountSums, month:
 
 
 def _envelope_out(e: bp.Envelope, sums: bp.AccountSums, month: str, past: list[str]) -> EnvelopeOut:
-    amount = bp.amount_in_force(e.amounts, month) or 0
+    amount = e.in_force(month) or 0
     usual, average, last = bp.history_stats(e, sums, past)
     members = set(e.category_ids)
     out = EnvelopeOut(
@@ -79,10 +79,12 @@ def _envelope_out(e: bp.Envelope, sums: bp.AccountSums, month: str, past: list[s
 
 
 async def _plan_out(db: AsyncSession, pid: int, account: Account, month: str,
-                    envelopes: list[bp.Envelope], exists: bool, note: Optional[str] = None) -> BudgetPlanOut:
+                    envelopes: list[bp.Envelope], exists: bool, note: Optional[str] = None,
+                    start_month: Optional[str] = None) -> BudgetPlanOut:
     """One month of a plan — the saved one, or a proposal that is not saved."""
     categories = await bp.profile_categories(db, pid)
-    past = bp.history_months(month, await bp.first_month_of(db, pid, account.id))
+    first_month = await bp.first_month_of(db, pid, account.id)
+    past = bp.history_months(month, first_month)
     # Far enough back for a typical month AND for the provision since January.
     first = min([*past, f"{month[:4]}-01", month])
     sums = await bp.load_sums(db, pid, account.id, first, month)
@@ -90,6 +92,7 @@ async def _plan_out(db: AsyncSession, pid: int, account: Account, month: str,
     out = bp.outside(sums, envelopes, income_ids, month)
     return BudgetPlanOut(
         account_id=account.id, currency=account.currency or "EUR", month=month, exists=exists, note=note,
+        start_month=start_month, first_month=first_month,
         envelopes=[_envelope_out(e, sums, month, past) for e in envelopes],
         outside_spent_cents=out.spent, outside_received_cents=out.received, outside_category_ids=out.category_ids,
         unplanned_cents=sums.unplanned.get(month, 0),
@@ -107,7 +110,8 @@ async def get_plan(
     account = await _account(db, pid, account_id)
     envelopes = await bp.load_envelopes(db, pid, account.id)
     return await _plan_out(db, pid, account, _month(month), envelopes, exists=bool(envelopes),
-                           note=await bp.load_plan_note(db, pid, account.id))
+                           note=await bp.load_plan_note(db, pid, account.id),
+                           start_month=await bp.load_plan_start(db, pid, account.id))
 
 
 @router.get("/proposal", response_model=BudgetPlanOut)
@@ -164,8 +168,13 @@ async def get_evolution(
     envelope had an amount — earlier ones show what happened, uncompared."""
     account = await _account(db, pid, account_id)
     last = _month(month)
-    span = bp.months_until(last, months)
+    start = await bp.load_plan_start(db, pid, account.id)
+    # Only the months the plan is in force: none before its start.
+    span = [m for m in bp.months_until(last, months) if start is None or m >= start]
     envelopes = await bp.load_envelopes(db, pid, account.id)
+    if not span:
+        return BudgetEvolutionOut(account_id=account.id, currency=account.currency or "EUR", months=[], current_month=last,
+                                  rows=[], start_month=start)
     categories = await bp.profile_categories(db, pid)
     income_ids = {cid for cid, c in categories.items() if c.is_income}
     sums = await bp.load_sums(db, pid, account.id, span[0], last)
@@ -174,7 +183,7 @@ async def get_evolution(
     for e in envelopes:
         rows.append(EvolutionRow(
             key="unplanned" if e.kind == bp.UNPLANNED else f"envelope-{e.id}", name=e.name, kind=e.kind,
-            reference_cents=bp.amount_in_force(e.amounts, last),
+            reference_cents=e.in_force(last),
             cells=[EvolutionCell(month=m, realised_cents=e.realised(sums, m), target_cents=e.target(sums, m)) for m in span],
         ))
     if not any(e.kind == bp.UNPLANNED for e in envelopes) and any(sums.unplanned.get(m, 0) for m in span):
@@ -197,6 +206,7 @@ async def get_evolution(
     ))
     return BudgetEvolutionOut(
         account_id=account.id, currency=account.currency or "EUR", months=span, current_month=last, rows=rows,
+        start_month=start,
     )
 
 
@@ -338,6 +348,7 @@ async def save_plan(
         ))).scalars()
     }
     _check_plan(payload, categories, account, set(existing))
+    start_month = None if payload.start_month is None else _month(payload.start_month)   # before any write
     in_force = {e.id: bp.amount_in_force(e.amounts, month) for e in await bp.load_envelopes(db, pid, account.id)}
 
     # Memberships and sub-lines are rewritten whole; they hang off envelopes, so they go first.
@@ -376,10 +387,12 @@ async def save_plan(
         plan_note = BudgetPlanNote(profile_id=pid, account_id=account.id)
         db.add(plan_note)
     plan_note.note = _note(payload.note)
+    plan_note.start_month = start_month
     await db.commit()
 
     envelopes = await bp.load_envelopes(db, pid, account.id)
-    return await _plan_out(db, pid, account, month, envelopes, exists=bool(envelopes), note=plan_note.note)
+    return await _plan_out(db, pid, account, month, envelopes, exists=bool(envelopes), note=plan_note.note,
+                           start_month=plan_note.start_month)
 
 
 @router.put("/envelopes/{envelope_id}/amount", status_code=204)

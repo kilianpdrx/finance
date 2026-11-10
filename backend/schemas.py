@@ -341,6 +341,7 @@ class BankProfileUpdate(BaseModel):
 class BankProfileOut(BankProfileBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    last_account_id: Optional[int] = None   # where this bank's files went last time
 
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
@@ -348,7 +349,11 @@ class BankProfileOut(BankProfileBase):
 class CurrencyBalance(BaseModel):
     currency: str
     native_cents: int      # summed balance in the account's own currency
-    converted_cents: int   # the same, converted to the profile's base currency
+    converted_cents: int   # the same, converted to the summary's `currency`
+
+class AnalyticsCurrency(BaseModel):
+    currency: str
+
 
 class AnalyticsSummary(BaseModel):
     total_income_cents: int
@@ -365,6 +370,9 @@ class AnalyticsSummary(BaseModel):
     total_loans_display: str = ""
     last_transaction_date: Optional[str] = None
     base_currency: str = "EUR"                # the profile's reporting currency
+    # What every amount above is in: the selected accounts' shared currency, else
+    # the base currency (routers/analytics.py: scope_currency).
+    currency: str = "EUR"
     net_worth_by_currency: List[CurrencyBalance] = []
     # True when at least one amount could not be converted to the base currency
     # (a missing FX rate) — the totals are provisional and the UI should flag it.
@@ -429,6 +437,13 @@ class BudgetEntryOut(BudgetEntryBase):
     id: int
 
 
+class PlannedCellEntry(BaseModel):
+    id: int
+    account_id: Optional[int]            # None: typed in « Tous »
+    amount_cents: int                    # in the table's currency
+    state: Literal["done", "planned", "confirm"]
+
+
 class BudgetTableCell(BaseModel):
     month: str
     actual_cents: int
@@ -441,6 +456,9 @@ class BudgetTableCell(BaseModel):
     planned_count: int = 0
     planned_state: Literal["none", "planned", "confirm"] = "none"
     planned_active_cents: int = 0        # still a forecast: added to the displayed value
+    # Every entry, each with its own state: a cell holding several can still act on
+    # each one — an entry typed in « Tous » belongs to no account view.
+    planned_entries: List[PlannedCellEntry] = []
 
 class BudgetTableRow(BaseModel):
     category_id: Optional[int]
@@ -538,6 +556,8 @@ class EnvelopeIn(BaseModel):
 class BudgetPlanIn(BaseModel):
     envelopes: List[EnvelopeIn]
     note: Optional[str] = None        # about the account's plan as a whole
+    # "YYYY-MM": the plan is in force from that month. None: from its first amount.
+    start_month: Optional[str] = None   # checked by the router, with a French message
 
 
 class EnvelopeAmountIn(BaseModel):
@@ -607,6 +627,8 @@ class BudgetPlanOut(BaseModel):
     month: str
     exists: bool                      # false: no plan saved yet for this account
     note: Optional[str]               # about the plan as a whole
+    start_month: Optional[str] = None # in force from that month; None: from its first amount
+    first_month: Optional[str] = None # the account's first transaction: the earliest start offered
     envelopes: List[EnvelopeOut]
     # What no envelope covers: unassigned categories and uncategorised rows.
     outside_spent_cents: int
@@ -636,6 +658,7 @@ class BudgetEvolutionOut(BaseModel):
     months: List[str]
     current_month: str
     rows: List[EvolutionRow]
+    start_month: Optional[str] = None  # months before it are not shown: the plan was not in force
 
 
 class UnplannedSuggestion(BaseModel):

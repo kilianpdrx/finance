@@ -71,7 +71,7 @@ export function CellTransactions({
       })) as Promise<Transaction[]>,
   });
   const rows = useMemo(
-    () => (selection ? cellTransactions(data ?? [], selection.categoryIds, accountId != null ? null : accountIds) : []),
+    () => (selection ? cellTransactions(data ?? [], selection.categoryIds, accountId != null ? null : accountIds, selection.unplanned) : []),
     [data, selection, accountId, accountIds],
   );
 
@@ -146,7 +146,7 @@ export function CellTransactions({
           description={forecast !== 0 ? "Ce montant est prévu ou ajusté à la main : aucune transaction ne lui correspond encore." : "Rien sur cette période."} />
       ) : (
         <>
-          <ul className="max-h-[60vh] divide-y divide-border overflow-y-auto" onScroll={() => setHover(null)}>
+          <ul aria-label={`Transactions de ${selection.label}`} className="max-h-[60vh] divide-y divide-border overflow-y-auto" onScroll={() => setHover(null)}>
             {rows.map((t) => {
               const open = openId === t.id;
               return (

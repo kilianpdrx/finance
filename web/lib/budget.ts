@@ -18,6 +18,16 @@ export interface MergedCell {
   planned_state: "none" | "planned" | "confirm";
   /** The part still a forecast: added to the displayed value. */
   planned_active_cents: number;
+  /** Every entry with its own state: a cell holding several acts on each one
+   *  (one typed in « Tous » belongs to no account view). */
+  planned_entries: PlannedCellEntry[];
+}
+
+export interface PlannedCellEntry {
+  id: number;
+  account_id: number | null;   // null: typed in « Tous »
+  amount_cents: number;
+  state: "done" | "planned" | "confirm";
 }
 
 /** Cell classification for styling (three types + a confirm state):
@@ -80,6 +90,10 @@ export interface CellSelection {
   /** The categories the cell adds up: one, a parent with its sub-categories, or
    *  every category of a section for a TOTAL row. */
   categoryIds: number[];
+  /** The budget plan's view (an envelope): expenses marked « imprévu » leave their
+   *  envelope for the provision. "exclude" for an envelope, "only" for the
+   *  provision — which then lists them whatever their category. */
+  unplanned?: "only" | "exclude";
 }
 
 export interface CellAmounts {
@@ -133,16 +147,22 @@ export function periodRange(period: string): { date_from: string; date_to: strin
  *  and — when the budget covers "all current accounts" rather than one — only
  *  those accounts (`accountIds`; null = no restriction). Internal transfers are
  *  already excluded by the request. */
-export function cellTransactions<T extends { category_id?: number | null; account_id: number }>(
+export function cellTransactions<T extends { category_id?: number | null; account_id: number; is_debit?: boolean; is_unplanned?: boolean | null }>(
   transactions: T[],
   categoryIds: number[],
   accountIds: number[] | null,
+  unplanned?: "only" | "exclude",
 ): T[] {
   const cats = new Set(categoryIds);
   const accounts = accountIds ? new Set(accountIds) : null;
-  return transactions.filter(
-    (t) => t.category_id != null && cats.has(t.category_id) && (accounts == null || accounts.has(t.account_id)),
-  );
+  // As the plan counts them (services/budget_plan.py): an expense marked « imprévu ».
+  const marked = (t: T) => t.is_unplanned === true && t.is_debit === true;
+  return transactions.filter((t) => {
+    if (accounts != null && !accounts.has(t.account_id)) return false;
+    if (unplanned === "only") return marked(t);
+    if (unplanned === "exclude" && marked(t)) return false;
+    return t.category_id != null && cats.has(t.category_id);
+  });
 }
 
 export function yearOf(m: string): string {
@@ -175,7 +195,7 @@ export function cellDisplayValue(cell: MergedCell, _currentMonth?: string): numb
 export function emptyCell(month: string): MergedCell {
   return {
     month, actual_cents: 0, expected_cents: 0, planned_cents: 0, planned_matched: false, planned_id: null,
-    planned_count: 0, planned_state: "none", planned_active_cents: 0,
+    planned_count: 0, planned_state: "none", planned_active_cents: 0, planned_entries: [],
   };
 }
 
@@ -215,6 +235,7 @@ export function mergeYears(responses: BudgetFullResponse[], targetMonths: string
       planned_count: c.planned_count ?? 0,
       planned_state: c.planned_state ?? "none",
       planned_active_cents: c.planned_active_cents ?? 0,
+      planned_entries: c.planned_entries ?? [],
     };
   };
 

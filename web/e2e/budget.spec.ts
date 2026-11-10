@@ -105,6 +105,36 @@ test.describe("Budget", () => {
     }
   });
 
+  test("une cellule avec plusieurs dépenses planifiées se règle entrée par entrée, « Tous » comprise", async ({ page, api }) => {
+    // One entry of the joint account, met by its 13,50; one typed in « Tous » for 40.
+    // Two entries used to hide ✓/✕ behind « ouvrez le compte concerné » — which no
+    // account view could satisfy for the « Tous » one: the cell stayed yellow.
+    const profile = await budgetProfile(api, "Budget entrées E2E");
+    try {
+      const joint = await api.createAccount({ name: "Compte joint", bank_name: "Banque Test" });
+      await api.importCsv(joint.id, ["Date;Libelle;Montant", `${thisMonth}-04;PRLV ABONNEMENT STREAMING;-13,50`].join("\n") + "\n");
+      const [subscription] = await api.transactions({ search: "STREAMING" });
+      await api.setCategory(subscription.id, "Abonnements");
+      await api.planExpense(joint.id, "Abonnements", thisMonth, 1350);
+      await api.planExpense(null, "Abonnements", thisMonth, 4000);
+
+      await useProfile(page, profile.id);
+      await page.goto("/budget");
+      await expectAppReady(page);
+      const row = () => page.getByRole("row", { name: /Abonnements/ });
+      await expect(row().getByText("réel")).toBeVisible();
+
+      await row().getByRole("button", { name: "2 dépenses planifiées" }).click();
+      const list = page.getByRole("list", { name: "Dépenses planifiées de la cellule" });
+      await expect(list).toContainText("Compte joint");
+      await expect(list).toContainText("Tous les comptes");
+      await list.getByRole("button", { name: "Confirmer la dépense de Tous les comptes" }).click();
+      await expect(row().getByText("réel")).toHaveCount(0);
+    } finally {
+      await api.deleteProfile(profile.id);
+    }
+  });
+
   test("une transaction du panneau montre son libellé entier et change de catégorie", async ({ page, api }) => {
     const profile = await budgetProfile(api, "Budget édition E2E");
     try {

@@ -84,8 +84,9 @@ export class Api {
     return res.json();
   }
 
-  /** A "libellé contient …" rule towards the category with this name. */
-  async createContainsRule(categoryName: string, value: string) {
+  /** A "libellé contient …" rule towards the category with this name; bound to
+   *  one account when `accountId` is given. */
+  async createContainsRule(categoryName: string, value: string, accountId?: number) {
     const cats: { id: number; name: string }[] = await this.categories();
     const cat = cats.find((c) => c.name === categoryName);
     expect(cat, `category ${categoryName} must exist`).toBeTruthy();
@@ -95,6 +96,7 @@ export class Api {
         category_id: cat!.id,
         logic_operator: "AND",
         conditions: [{ field: "description", operator: "contains", value }],
+        ...(accountId != null ? { account_id: accountId } : {}),
       },
     });
     expect(res.status(), await res.text()).toBe(201);
@@ -175,8 +177,22 @@ export class Api {
     return res.json();
   }
 
-  /** Plan a one-off expense, as « Planifier » does from an account's budget table. */
-  async planExpense(accountId: number, categoryName: string, month: string, amountCents: number) {
+  /** A saved bank profile the importer detects from the file's columns (Date;Libelle;Montant). */
+  async saveBankProfile(name: string) {
+    const res = await this.request.post(`${BACKEND}/api/upload/save-profile`, {
+      headers: this.headers(),
+      data: {
+        name, column_mapping: { date: "Date", description: "Libelle", amount: "Montant" }, date_format: "%Y-%m-%d",
+        encoding: "utf-8", delimiter: ";", detection_fingerprint: { columns: ["Date", "Libelle", "Montant"] },
+      },
+    });
+    expect(res.ok(), await res.text()).toBeTruthy();
+    return res.json();
+  }
+
+  /** Plan a one-off expense, as « Planifier » does from an account's budget table
+   *  (`accountId` null: typed in « Tous »). */
+  async planExpense(accountId: number | null, categoryName: string, month: string, amountCents: number) {
     const cats: { id: number; name: string }[] = await this.categories();
     const cat = cats.find((c) => c.name === categoryName);
     expect(cat, `category ${categoryName} must exist`).toBeTruthy();

@@ -69,13 +69,18 @@ async def get_rate(
             data = resp.json()
             rate = data.get("rates", {}).get(target)
             if rate is not None:
-                db.add(ExchangeRate(
-                    base_currency=base,
-                    target_currency=target,
-                    date=on_date,
-                    rate=rate,
-                    fetched_at=datetime.utcnow(),
-                ))
+                # OR IGNORE, like backfill_range: two requests converting at once
+                # fetch the same rate, and the second plain INSERT broke on the
+                # unique constraint — leaving its session rolled back, so the
+                # whole analytics request answered 500.
+                await db.execute(
+                    text(
+                        "INSERT OR IGNORE INTO exchange_rates "
+                        "(base_currency, target_currency, date, rate, fetched_at) "
+                        "VALUES (:base, :target, :date, :rate, :now)"
+                    ),
+                    {"base": base, "target": target, "date": on_date.isoformat(), "rate": rate, "now": datetime.utcnow()},
+                )
                 await db.commit()
                 return rate
     except Exception as e:

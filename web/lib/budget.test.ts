@@ -26,6 +26,7 @@ function cell(over: Partial<MergedCell> = {}): MergedCell {
     planned_count: 0,
     planned_state: 'none',
     planned_active_cents: 0,
+    planned_entries: [],
     ...over,
   };
 }
@@ -185,6 +186,18 @@ describe('cellTransactions — les transactions derrière une cellule', () => {
   it('n\'attribue jamais une transaction sans catégorie', () => {
     expect(ids(cellTransactions(txns, [], null))).toEqual([]);
     expect(ids(cellTransactions(txns, [10, 11, 12], null))).not.toContain(4);
+  });
+
+  it('dans le plan, une dépense « imprévu » quitte son enveloppe pour la provision', () => {
+    const marked = [
+      { id: 6, category_id: 10, account_id: 1, is_debit: true, is_unplanned: true },     // marquée : à la provision
+      { id: 7, category_id: 10, account_id: 1, is_debit: true, is_unplanned: false },    // « c'est normal »
+      { id: 8, category_id: 11, account_id: 1, is_debit: false, is_unplanned: true },    // un revenu n'est jamais imprévu
+      { id: 9, category_id: 13, account_id: 1, is_debit: true, is_unplanned: true },     // hors enveloppe, marquée
+    ];
+    expect(ids(cellTransactions(marked, [10, 11], null, 'exclude'))).toEqual([7, 8]);
+    expect(ids(cellTransactions(marked, [], null, 'only'))).toEqual([6, 9]);
+    expect(ids(cellTransactions(marked, [10], null))).toEqual([6, 7]);                 // le tableau de budget : inchangé
   });
 });
 

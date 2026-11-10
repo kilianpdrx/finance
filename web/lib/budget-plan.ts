@@ -252,3 +252,26 @@ export function fitsKind(category: { is_income?: boolean }, kind: EnvelopeKind):
   if (kind === "unplanned") return false;
   return Boolean(category.is_income) === (kind === "income");
 }
+
+// ── The plan's start month ──────────────────────────────────────────────────
+
+export const MONTH_NAMES = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+
+/** The years a plan can start in: from the account's first transaction to this
+ *  year — plus the year already chosen, should it lie outside. */
+export function startYears(firstMonth: string | null | undefined, today: Date, chosen?: string): number[] {
+  const last = today.getFullYear();
+  const first = firstMonth ? Math.min(Number(firstMonth.slice(0, 4)), last) : last;
+  const years = new Set<number>();
+  for (let y = first; y <= last; y++) years.add(y);
+  if (chosen) years.add(Number(chosen.slice(0, 4)));
+  return [...years].sort((a, b) => a - b);
+}
+
+/** One of the two lists changed: the other keeps its value, or takes a sensible
+ *  one (January for a year alone, this year for a month alone). */
+export function setStartPart(start: string, part: { month?: string; year?: string }, today: Date): string {
+  const year = part.year ?? (start ? start.slice(0, 4) : String(today.getFullYear()));
+  const month = part.month ?? (start ? start.slice(5, 7) : "01");
+  return `${year}-${month}`;
+}

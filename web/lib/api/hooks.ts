@@ -128,6 +128,9 @@ export interface AnalyticsQuery {
   account_ids?: string | null;
   income?: boolean;   // by-category / spending-trends: true = revenus, false = dépenses
   granularity?: "month" | "day";   // spending-trends only
+  /** Forces the target currency — only the per-account rows of a selection pass
+   *  it, to stay in the selection's currency (backend `scope_currency`). */
+  currency?: string;
 }
 
 export interface TransactionFilters {
@@ -157,16 +160,32 @@ export function useAnalyticsContext() {
   const { selectedAccountIds } = useSelectedAccountsStore();
   const { data: accounts = [], isSuccess: accountsLoaded } = useAccounts();
   const baseCurrency = useBaseCurrency();
+  const accountIds = selectedAccountIds ? selectedAccountIds.join(",") : undefined;
+  const scope = useAnalyticsCurrency(accountIds);
 
   const query: AnalyticsQuery = {
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
-    account_ids: selectedAccountIds ? selectedAccountIds.join(",") : undefined,
+    account_ids: accountIds,
   };
   // `accountsLoaded` distinguishes "you genuinely have no accounts" from "we
   // couldn't reach the backend" — without it a failed fetch looks like an empty
   // account list and the app shows first-run onboarding to an existing user.
-  return { query, currency: baseCurrency, accounts, accountsLoaded, selectedAccountIds };
+  return {
+    query, currency: scope ?? baseCurrency, scopeCurrency: scope,
+    accounts, accountsLoaded, selectedAccountIds,
+  };
+}
+
+/** The currency the API gives these accounts' analytics in — their own when
+ *  they share one, else the base currency (`scope_currency`). Asked, never
+ *  derived here. Undefined while loading. */
+export function useAnalyticsCurrency(accountIds: string | null | undefined): string | undefined {
+  const { data } = useQuery({
+    queryKey: ["analytics", "currency", accountIds ?? null],
+    queryFn: () => unwrap(api.GET("/api/analytics/currency", { params: { query: { account_ids: accountIds ?? undefined } } })),
+  });
+  return data?.currency;
 }
 
 /** Polls the backend so the shell can tell the user the server is unreachable
@@ -261,22 +280,26 @@ export function useNetWorth(query: AnalyticsQuery) {
 
 /** By-category breakdown fetched once per account (for the per-account donut row).
  *  Reuses the existing /by-category endpoint; one parallel query per account id. */
-export function useByCategoryPerAccount(query: AnalyticsQuery, accountIds: number[]) {
+export function useByCategoryPerAccount(query: AnalyticsQuery, accountIds: number[], currency: string | undefined) {
+  // Each account in the selection's currency, so the rows sit side by side.
   const results = useQueries({
     queries: accountIds.map((id) => ({
-      queryKey: ["analytics", "by-category", { ...query, account_ids: String(id) }],
-      queryFn: () => unwrap(api.GET("/api/analytics/by-category", { params: { query: { ...query, account_ids: String(id) } } })) as Promise<CategoryBreakdown[]>,
+      queryKey: ["analytics", "by-category", { ...query, account_ids: String(id), currency }],
+      enabled: currency != null,
+      queryFn: () => unwrap(api.GET("/api/analytics/by-category", { params: { query: { ...query, account_ids: String(id), currency } } })) as Promise<CategoryBreakdown[]>,
     })),
   });
   return accountIds.map((id, i) => ({ accountId: id, data: results[i]?.data ?? [], isLoading: results[i]?.isLoading ?? false }));
 }
 
 /** Cash-flow fetched once per account (for the per-account flux charts). */
-export function useCashFlowPerAccount(query: AnalyticsQuery, accountIds: number[]) {
+export function useCashFlowPerAccount(query: AnalyticsQuery, accountIds: number[], currency: string | undefined) {
+  // Each account in the selection's currency, so the rows sit side by side.
   const results = useQueries({
     queries: accountIds.map((id) => ({
-      queryKey: ["analytics", "cash-flow", { ...query, account_ids: String(id) }],
-      queryFn: () => unwrap(api.GET("/api/analytics/cash-flow", { params: { query: { ...query, account_ids: String(id) } } })) as Promise<CashFlowMonth[]>,
+      queryKey: ["analytics", "cash-flow", { ...query, account_ids: String(id), currency }],
+      enabled: currency != null,
+      queryFn: () => unwrap(api.GET("/api/analytics/cash-flow", { params: { query: { ...query, account_ids: String(id), currency } } })) as Promise<CashFlowMonth[]>,
     })),
   });
   return accountIds.map((id, i) => ({ accountId: id, data: results[i]?.data ?? [], isLoading: results[i]?.isLoading ?? false }));
@@ -587,8 +610,9 @@ export function useBudgetPlanMutations() {
   const onSuccess = () => invalidate("budget-plan");
   return {
     save: useMutation({
-      mutationFn: ({ accountId, envelopes, note }: { accountId: number; envelopes: EnvelopeIn[]; note?: string }) =>
-        unwrap(api.PUT("/api/budget-plan", { params: { query: { account_id: accountId } }, body: { envelopes, note } })) as Promise<BudgetPlan>,
+      // `startMonth` is always sent: left out, the plan would lose its start.
+      mutationFn: ({ accountId, envelopes, note, startMonth }: { accountId: number; envelopes: EnvelopeIn[]; note?: string; startMonth: string | null }) =>
+        unwrap(api.PUT("/api/budget-plan", { params: { query: { account_id: accountId } }, body: { envelopes, note, start_month: startMonth } })) as Promise<BudgetPlan>,
       onSuccess,
     }),
     // From the current month on; past months keep the amount planned then.
