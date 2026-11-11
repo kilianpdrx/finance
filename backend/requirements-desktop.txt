@@ -1,0 +1,8 @@
+# Construction de l'application de bureau uniquement (desktop/, .github/workflows/desktop.yml).
+# PyInstaller fige le serveur et ses dépendances en un dossier exécutable : les proches
+# n'ont pas besoin de Python. Jamais installé dans l'image Docker (elle n'installe que
+# requirements.txt), et exclu de son contexte de build (.dockerignore).
+#   pip install -r requirements-desktop.txt && pyinstaller finance-backend.spec
+-r requirements.txt
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9

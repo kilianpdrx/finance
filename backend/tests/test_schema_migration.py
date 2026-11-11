@@ -70,6 +70,33 @@ def test_upgrade_from_old_revision_is_idempotent(temp_db):
     assert _version(temp_db) == HEAD
 
 
+def test_upgrade_works_from_another_working_directory(temp_db, monkeypatch, tmp_path):
+    """The desktop app starts the backend from its own folder, not from backend/:
+    alembic.ini names the migrations relative to itself (%(here)s). With a path
+    relative to the working directory, the upgrade failed — silently, since
+    sync_schema only logs — and the database stayed on its old revision."""
+    eng = create_engine(f"sqlite:///{temp_db}")
+    Base.metadata.create_all(eng)
+    eng.dispose()
+    database._sync_schema_blocking()  # stamps head
+    eng = create_engine(f"sqlite:///{temp_db}")
+    with eng.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num='020_payroll'"))
+    eng.dispose()
+
+    monkeypatch.chdir(tmp_path)
+    database._sync_schema_blocking()
+
+    assert _version(temp_db) == HEAD
+
+
+def test_alembic_ini_is_ascii():
+    """Alembic reads alembic.ini in the locale encoding, and an app opened from
+    the Finder has none (ASCII): an accent in a comment made the desktop app skip
+    every migration — sync_schema only logs the failure."""
+    (Path(database.__file__).parent / "alembic.ini").read_bytes().decode("ascii")
+
+
 def test_rule_priority_column_is_dropped_and_rules_survive(temp_db):
     """An existing install still has `category_rules.priority`. Upgrading must
     remove it without losing a rule."""

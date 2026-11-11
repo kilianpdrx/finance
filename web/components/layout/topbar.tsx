@@ -8,6 +8,7 @@ import { QuitButton } from "./quit-button";
 import { DateRangePicker } from "./date-range-picker";
 import { NAV_ITEMS } from "@/lib/nav";
 import { usePrivacyStore } from "@/lib/stores";
+import { useAppVersion } from "@/lib/api/hooks";
 
 function pageTitle(pathname: string) {
   if (pathname === "/") return "Tableau de bord";
@@ -18,6 +19,9 @@ function pageTitle(pathname: string) {
 export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const pathname = usePathname();
   const { hidden, toggle } = usePrivacyStore();
+  // The desktop app stops its servers when its window closes: no « Quitter »
+  // there (its shutdown route would only refuse). Shown once the build is known.
+  const { data: build } = useAppVersion();
 
   // Period picker lives only where the date range actually drives the data.
   const showPeriod = pathname === "/" || pathname.startsWith("/analyses");
@@ -41,7 +45,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
           {hidden ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
         </Button>
         <ThemeToggle />
-        <QuitButton />
+        {build && !build.is_desktop && <QuitButton />}
       </div>
     </header>
   );

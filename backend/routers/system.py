@@ -140,17 +140,24 @@ def _in_container() -> bool:
         return False
 
 
+def _is_desktop() -> bool:
+    """True in the desktop app: `desktop_server.py`, the frozen backend's entry
+    point, sets FINANCE_DESKTOP. Electron owns both servers there — closing the
+    window stops them — and updating means installing the new version."""
+    return os.environ.get("FINANCE_DESKTOP", "").strip().lower() in ("1", "true", "yes")
+
+
 @router.get("/version")
 async def version():
     """Which build is running, so a bug report can name a version.
 
-    `APP_VERSION` is baked into the image by CI from the git tag; a source run
-    reports "dev". `is_container` lets the UI tailor its update instructions
-    (relaunch the app vs. restart start.sh).
+    `APP_VERSION` is baked into the image by CI from the git tag (the desktop app
+    passes its own version); a source run reports "dev". `is_container` and
+    `is_desktop` let the UI tailor its update and quit instructions.
     """
     return {
         "version": os.getenv("APP_VERSION", "dev"), "is_container": _in_container(),
-        "data_copied_at": _data_copied_at(),
+        "is_desktop": _is_desktop(), "data_copied_at": _data_copied_at(),
     }
 
 
@@ -164,7 +171,19 @@ async def shutdown():
     Under Docker this would just kill PID 1 and the `restart: unless-stopped`
     policy would immediately bring the container back, so the button would look
     broken. Report that instead of pretending to stop.
+
+    In the desktop app Electron runs both servers and stops them when its window
+    closes. Killing "what looks like ours" on 3000/8000 would hit other programs
+    (a dev server, the Docker app) and pull the backend out from under the window.
     """
+    if _is_desktop():
+        logger.info("Shutdown requested in the desktop app — refusing (closing the window stops it).")
+        return {
+            "stopping": False,
+            "reason": "desktop",
+            "detail": "Pour fermer l'application, fermez simplement sa fenêtre.",
+            "ports": list(_APP_PORTS),
+        }
     if _in_container():
         logger.info("Shutdown requested but running in a container — refusing (restart policy would revive it).")
         return {
@@ -202,6 +221,7 @@ async def diagnostics(db: AsyncSession = Depends(get_db)):
         "generated_at": _dt.now().isoformat(timespec="seconds"),
         "version": os.getenv("APP_VERSION", "dev"),
         "is_container": _in_container(),
+        "is_desktop": _is_desktop(),
         "python": sys.version.split()[0],
         "platform": platform.platform(),
     }
@@ -326,19 +346,41 @@ async def download_backup():
     )
 
 
+def _sqlite_copy(src: Path, dst: Path) -> None:
+    """Copy database `src` into `dst` with SQLite's backup function: pages are
+    written inside a transaction on `dst`, so the copy is whole or not at all,
+    and a database in WAL mode is read with what is still in its -wal file."""
+    source = sqlite3.connect(src)
+    target = sqlite3.connect(dst)
+    try:
+        # Out of WAL for the copy when nothing else holds the file: a WAL
+        # database refuses a backup whose page size differs from its own. With
+        # another connection open the switch is refused, and the copy goes ahead
+        # in WAL (same page size: the usual case). The app sets WAL again.
+        try:
+            target.execute("PRAGMA journal_mode=DELETE")
+        except sqlite3.OperationalError:
+            pass
+        source.backup(target)
+    finally:
+        source.close()
+        target.close()
+
+
 @router.post("/restore")
-async def restore_backup(
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-):
+async def restore_backup(file: UploadFile = File(...)):
     """Restore database from an uploaded SQLite backup file.
 
     Hardened flow: read with a size cap, validate the magic header AND a full
     ``PRAGMA integrity_check`` on the uploaded file in a temp location, keep a
-    timestamped copy of the current DB, then atomically swap the new one in.
+    timestamped copy of the current DB, then copy the backup INTO it.
+
+    Copied in, never renamed over: SQLite opens its files without
+    FILE_SHARE_DELETE on Windows, so replacing (or unlinking the -wal/-shm of) a
+    database that any connection still holds fails there — and on macOS/Linux
+    renaming an open database is undefined behaviour per SQLite. This route takes
+    no session of its own for the same reason.
     """
-    import sqlite3
-    import shutil
 
     # 1. Read with a size cap (chunked, so an oversized upload can't exhaust memory).
     buf = bytearray()
@@ -369,7 +411,7 @@ async def restore_backup(
     try:
         with open(tmp_path, "wb") as f:
             f.write(content)
-        con = sqlite3.connect(f"file:{tmp_path}?mode=ro", uri=True)
+        con = sqlite3.connect(f"{tmp_path.resolve().as_uri()}?mode=ro", uri=True)
         try:
             result = con.execute("PRAGMA integrity_check").fetchone()
         finally:
@@ -384,34 +426,24 @@ async def restore_backup(
         logger.error("Restore validation failed: %s", e)
         raise HTTPException(status_code=400, detail=f"Fichier SQLite illisible : {e}")
 
-    # 3. Flush & dispose the active pool, snapshot the current DB, then atomically swap.
-    try:
-        await db.execute(text("PRAGMA wal_checkpoint(TRUNCATE);"))
-    except Exception as e:
-        # Non bloquant : le fichier est de toute façon remplacé juste après. Mais
-        # un checkpoint raté signale une base encore occupée, ce qui explique une
-        # restauration qui se comporte bizarrement.
-        logger.warning("WAL checkpoint before restore failed: %s", e)
+    # 3. Release the pool, keep a copy of the current database, copy the backup in.
     await engine.dispose()
 
-    try:
+    def _swap() -> None:
         if DB_PATH.exists():
             prev = DB_PATH.with_name(f"finance.pre-restore-{datetime.now():%Y%m%d-%H%M%S}.db")
-            shutil.copy2(DB_PATH, prev)
+            _sqlite_copy(DB_PATH, prev)
             logger.info("Saved pre-restore snapshot to %s", prev.name)
             _prune_pre_restore_snapshots()
-        # Drop the temp file's integrity-check sidecars before swapping it in.
-        for suffix in ("-wal", "-shm"):
-            Path(f"{tmp_path}{suffix}").unlink(missing_ok=True)
-        os.replace(tmp_path, DB_PATH)  # atomic on the same filesystem
-        for suffix in ("-wal", "-shm"):
-            sidecar = Path(f"{DB_PATH}{suffix}")
-            if sidecar.exists():
-                sidecar.unlink()
+        _sqlite_copy(tmp_path, DB_PATH)
+
+    try:
+        await asyncio.to_thread(_swap)
     except Exception as e:
-        _rm_tmp()
-        logger.error("Failed to swap in restored database: %s", e)
+        logger.error("Failed to copy the restored database in: %s", e)
         raise HTTPException(status_code=500, detail=f"Erreur lors du remplacement : {e}")
+    finally:
+        _rm_tmp()
 
     # 4. Reconcile schema/Alembic bookkeeping for the restored DB (best-effort).
     try:

@@ -60,6 +60,11 @@ web/*.tsbuildinfo
 # Next artefacts égarés hors de web/ (un build lancé depuis le mauvais dossier)
 .next/
 
+# Application de bureau : dépendances, assemblage (scripts/stage.mjs), installeurs
+desktop/node_modules/
+desktop/stage/
+desktop/dist/
+
 # macOS
 .DS_Store
 

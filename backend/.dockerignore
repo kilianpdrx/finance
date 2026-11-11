@@ -24,6 +24,14 @@ pytest.ini
 Dockerfile
 requirements-dev.txt
 
+# Application de bureau : son point d'entrée, sa recette PyInstaller et ce qu'elle
+# produit ici quand on la construit sur place. L'image n'en a pas l'usage.
+desktop_server.py
+finance-backend.spec
+requirements-desktop.txt
+build/
+dist/
+
 # Artefacts Python
 __pycache__/
 *.py[cod]

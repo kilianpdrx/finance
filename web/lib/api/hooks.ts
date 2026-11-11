@@ -426,8 +426,10 @@ export function useDividendCalendar(months = 12) {
     },
   });
 }
-/** Which build is running (stamped into the image by CI). `is_container` tells the
- *  UI whether updating means relaunching the app or restarting start.sh;
+/** Which build is running (stamped into the image by CI, or passed by the desktop
+ *  app). `is_container` / `is_desktop` tell the UI whether updating means
+ *  relaunching, installing the new version or restarting start.sh — and whether
+ *  « Quitter » has a meaning (the desktop app closes with its window);
  *  `data_copied_at` is set when the data is a copy made by dev-data.sh. */
 export function useAppVersion() {
   return useQuery({
@@ -435,7 +437,7 @@ export function useAppVersion() {
     queryFn: async () => {
       const res = await fetch("/api/system/version");
       if (!res.ok) throw new Error("Failed to fetch version");
-      return res.json() as Promise<{ version: string; is_container: boolean; data_copied_at?: string | null }>;
+      return res.json() as Promise<{ version: string; is_container: boolean; is_desktop?: boolean; data_copied_at?: string | null }>;
     },
     staleTime: Infinity,
   });

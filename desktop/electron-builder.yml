@@ -1,0 +1,48 @@
+# Finance — application de bureau. Construite à partir de stage/ (scripts/stage.mjs),
+# jamais depuis web/ directement : voir CLAUDE.md, « never build inside web/ ».
+#   node scripts/stage.mjs --web <web construit> --backend <dist PyInstaller>
+#   npx electron-builder --mac --arm64      # ou --win --x64, sur Windows
+appId: io.github.kilianpdrx.finance
+productName: Finance
+directories:
+  output: dist
+  # Pas « build/ » : le dépôt ignore tous les dossiers de ce nom.
+  buildResources: resources
+files:
+  - main.js
+  - loading.html
+  - package.json
+asar: true
+# Le serveur (PyInstaller) et l'interface (Next standalone) vont dans Resources/
+# par ce script, pas par extraResources : celui-ci écarte un node_modules placé à la
+# racine de sa source, celui dont l'interface a besoin.
+afterPack: scripts/after-pack.js
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+  # Signature ad hoc (pas de certificat) : un Mac Apple Silicon refuse le code non
+  # signé. « - » signe chaque binaire de l'app, Resources/ compris.
+  identity: "-"
+  # Ad hoc + runtime renforcé = l'app ne se lance pas.
+  hardenedRuntime: false
+  category: public.app-category.finance
+  minimumSystemVersion: "12.0"
+  icon: resources/icon.png
+dmg:
+  title: Finance ${version}
+  artifactName: Finance-${version}-mac-arm64.${ext}
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.png
+nsis:
+  # Installation pour l'utilisateur, sans droits administrateur. Les données
+  # (%APPDATA%\Finance\data) restent si l'application est désinstallée.
+  oneClick: true
+  perMachine: false
+  deleteAppDataOnUninstall: false
+  artifactName: Finance-${version}-windows-x64-setup.${ext}

@@ -114,6 +114,113 @@ async def test_shutdown_refuses_inside_container(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_shutdown_refuses_in_the_desktop_app(client, monkeypatch):
+    """In the desktop app Electron owns both servers. The port-killing path would
+    hit whatever else holds 3000/8000 (a dev server) and pull the backend out from
+    under the window — so it refuses, and nothing is signalled."""
+    import threading
+    from routers import system
+
+    monkeypatch.setenv("FINANCE_DESKTOP", "1")
+    monkeypatch.setattr(threading, "Thread", lambda *a, **k: pytest.fail("the shutdown worker must not start"))
+    res = await client.post("/api/system/shutdown")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["stopping"] is False
+    assert body["reason"] == "desktop"
+    assert "fenêtre" in body["detail"]
+    assert system._is_desktop() is True
+
+
+@pytest.mark.asyncio
+async def test_version_says_whether_this_is_the_desktop_app(client, monkeypatch):
+    """The UI hides « Quitter » and words the update advice from this."""
+    monkeypatch.delenv("FINANCE_DESKTOP", raising=False)
+    assert (await client.get("/api/system/version")).json()["is_desktop"] is False
+    monkeypatch.setenv("FINANCE_DESKTOP", "1")
+    assert (await client.get("/api/system/version")).json()["is_desktop"] is True
+
+
+def _sqlite_file(path, rows, page_size=4096, wal=False):
+    con = sqlite3.connect(path)
+    con.execute(f"PRAGMA page_size={page_size}")
+    if wal:
+        con.execute("PRAGMA journal_mode=WAL")
+    con.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, label TEXT)")
+    con.executemany("INSERT INTO t (label) VALUES (?)", [(r,) for r in rows])
+    con.commit()
+    return con
+
+
+def _labels(path):
+    con = sqlite3.connect(path)
+    try:
+        return [r[0] for r in con.execute("SELECT label FROM t ORDER BY id")]
+    finally:
+        con.close()
+
+
+@pytest.fixture
+def live_db(tmp_path, monkeypatch):
+    """The restore endpoint works on the module-level DB_PATH / engine: point both
+    at a temp file, and keep Alembic away from the suite's own data folder."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    import database
+    from routers import system
+
+    db_file = tmp_path / "finance.db"
+    monkeypatch.setattr(system, "DB_PATH", db_file)
+    monkeypatch.setattr(system, "engine", create_async_engine(f"sqlite+aiosqlite:///{db_file}"))
+    synced = []
+
+    async def _sync():
+        synced.append(True)
+    monkeypatch.setattr(database, "sync_schema", _sync)
+    return db_file, synced
+
+
+@pytest.mark.asyncio
+async def test_restore_copies_the_backup_into_the_database(client, live_db, tmp_path):
+    """The backup is copied INTO the live file (SQLite's backup function), never
+    renamed over it: Windows refuses to replace a file SQLite holds open. The
+    current data — what still sits in its -wal file included — is kept aside
+    first, and the staging file does not stay behind."""
+    db_file, synced = live_db
+    live = _sqlite_file(db_file, ["avant 1", "avant 2"], wal=True)   # left in the -wal file
+    backup = tmp_path / "sauvegarde.sqlite"
+    _sqlite_file(backup, ["restauré 1", "restauré 2", "restauré 3"], page_size=8192).close()
+    live.close()
+
+    res = await client.post("/api/system/restore",
+                            files={"file": ("sauvegarde.sqlite", backup.read_bytes(), "application/x-sqlite3")})
+
+    assert res.status_code == 200, res.text
+    assert _labels(db_file) == ["restauré 1", "restauré 2", "restauré 3"]
+    snapshots = list(tmp_path.glob("finance.pre-restore-*.db"))
+    assert len(snapshots) == 1 and _labels(snapshots[0]) == ["avant 1", "avant 2"]
+    assert not list(tmp_path.glob("finance.db.restore.tmp*"))
+    assert synced == [True]
+
+
+@pytest.mark.asyncio
+async def test_restore_works_while_another_connection_holds_the_database(client, live_db, tmp_path):
+    """A connection that stays open (another request, a background job) does not
+    stop the restore, and reads the restored data afterwards — the file it holds
+    is the same file, rewritten."""
+    db_file, _ = live_db
+    holder = _sqlite_file(db_file, ["avant"], wal=True)
+    backup = tmp_path / "sauvegarde.sqlite"
+    _sqlite_file(backup, ["restauré"]).close()
+
+    res = await client.post("/api/system/restore",
+                            files={"file": ("sauvegarde.sqlite", backup.read_bytes(), "application/x-sqlite3")})
+
+    assert res.status_code == 200, res.text
+    assert [r[0] for r in holder.execute("SELECT label FROM t")] == ["restauré"]
+    holder.close()
+
+
+@pytest.mark.asyncio
 async def test_version_endpoint_reports_build(client, monkeypatch):
     """Bug reports need a version to name; CI stamps APP_VERSION into the image."""
     monkeypatch.setenv("APP_VERSION", "v1.2.3")

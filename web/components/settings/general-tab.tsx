@@ -145,6 +145,7 @@ function AboutCard() {
   const { data: info } = useAppVersion();
   const version = info?.version ?? "…";
   const isContainer = info?.is_container ?? false;
+  const isDesktop = info?.is_desktop ?? false;
 
   return (
     <Card>
@@ -172,7 +173,13 @@ function AboutCard() {
         <div className="rounded-xl border border-border bg-muted/30 p-4">
           <p className="text-sm font-semibold">Mettre à jour</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {isContainer ? (
+            {isDesktop ? (
+              <>
+                Téléchargez la nouvelle version de l&apos;application, puis installez-la à la
+                place de celle-ci : vos données restent dans leur dossier et sont reprises
+                telles quelles.
+              </>
+            ) : isContainer ? (
               <>
                 Fermez l&apos;application (<span className="font-mono">Arrêter</span>), puis
                 relancez-la avec <span className="font-mono">Finance</span>. La dernière
