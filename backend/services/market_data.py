@@ -91,6 +91,32 @@ _PRICE_MATCH_TOL = 0.08
 _REF_DEVIATION_TOL = 0.35
 
 
+def _last_close(data, ticker: str) -> float | None:
+    """Latest usable close for `ticker` in a `yf.download()` frame, else None.
+
+    yfinance ≥ 0.2.48 (1.4.1 here) returns (Price, Ticker) MultiIndex columns
+    even for ONE ticker, so `data["Close"]` is a DataFrame with a column per
+    ticker; a flat frame (older yfinance, or `multi_level_index=False` with one
+    ticker) gives a Series. The old `len(tickers) == 1` branch took `iloc[-1]`
+    of that DataFrame, got a Series, and its truth test raised — a lone ticker
+    was never priced. Selecting the ticker's column covers 1 and N tickers.
+
+    The last non-NaN value is taken, not the last row: tickers whose markets
+    are on different dates share one index, and the one that hasn't traded on
+    the latest date reads NaN there.
+    """
+    closes = data["Close"]
+    if closes.ndim == 2:
+        if ticker not in closes.columns:
+            return None
+        closes = closes[ticker]
+    closes = closes.dropna()
+    if closes.empty:
+        return None
+    close = float(closes.iloc[-1])
+    return close if close > 0 else None
+
+
 async def _fetch_stock_prices(tickers: list[str]) -> dict[str, tuple[float, str]]:
     """Fetch current prices for stocks/ETFs via yfinance (runs in executor)."""
 
@@ -105,15 +131,12 @@ async def _fetch_stock_prices(tickers: list[str]) -> dict[str, tuple[float, str]
         import yfinance as yf
         result = {}
         data = yf.download(tickers, period="1d", progress=False, threads=True)
-        if data.empty:
+        if data is None or data.empty:
             return result
         for ticker in tickers:
             try:
-                if len(tickers) == 1:
-                    close = data["Close"].iloc[-1]
-                else:
-                    close = data["Close"][ticker].iloc[-1]
-                if close and close == close:  # NaN check
+                close = _last_close(data, ticker)
+                if close is not None:
                     t_upper = ticker.upper()
                     if t_upper.endswith((".PA", ".DE", ".AS", ".MI", ".MC", ".BR", ".F", ".LS")):
                         currency = "EUR"
@@ -132,7 +155,7 @@ async def _fetch_stock_prices(tickers: list[str]) -> dict[str, tuple[float, str]
                             # devise : ça se voit dans les totaux, pas dans le prix.
                             logger.warning(
                                 "Currency lookup failed for %s, assuming USD: %s", ticker, e)
-                    result[ticker] = (float(close), currency.upper())
+                    result[ticker] = (close, currency.upper())
             except Exception as e:
                 logger.warning("yfinance price extraction failed for %s: %s", ticker, e)
 
