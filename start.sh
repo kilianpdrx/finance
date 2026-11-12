@@ -77,11 +77,12 @@ export BACKEND_URL="http://127.0.0.1:$API_PORT"
 export FINANCE_APP_PORTS="$UI_PORT,$API_PORT"
 
 # Today's data at every launch. A data folder filled by ./dev-data.sh (it holds a
-# `.copie`) is refreshed from the installed app first — after the ports above, which
-# stopped a previous run that held the database. A checkout with no database yet
-# (a new worktree) gets its first copy the same way when the installed app is on
-# this machine. FRESH_DATA=0 ./start.sh keeps the copy as it is: what you changed
-# in it then survives the restart. A database that is not a copy is never touched.
+# `.copie`) is refreshed from the installed app first — the desktop app, else
+# Docker's (dev-data.sh says which) — after the ports above, which stopped a
+# previous run that held the database. A checkout with no database yet (a new
+# worktree) gets its first copy the same way when an installed app is on this
+# machine. FRESH_DATA=0 ./start.sh keeps the copy as it is: what you changed in it
+# then survives the restart. A database that is not a copy is never touched.
 DATA_DIR="${FINANCE_DATA_DIR:-$BACKEND/data}"
 if [ "${FRESH_DATA:-1}" != "0" ]; then
   if [ -f "$DATA_DIR/.copie" ]; then
@@ -89,7 +90,7 @@ if [ "${FRESH_DATA:-1}" != "0" ]; then
     FINANCE_DATA_DIR="$DATA_DIR" FROM_START_SH=1 "$ROOT/dev-data.sh" \
       || echo "Warning: the copy could not be refreshed — starting on the one from $(sed -n 1p "$DATA_DIR/.copie")."
   elif [ -z "${FINANCE_DATA_DIR:-}" ] && [ ! -f "$DATA_DIR/finance.db" ] \
-      && command -v docker &>/dev/null && docker inspect finance-backend &>/dev/null; then
+      && "$ROOT/dev-data.sh" --find &>/dev/null; then
     echo "No data here yet: copying the installed app's (FRESH_DATA=0 ./start.sh starts empty)..."
     FROM_START_SH=1 "$ROOT/dev-data.sh" || echo "Warning: no copy made — starting on an empty database."
   fi
