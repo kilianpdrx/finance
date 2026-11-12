@@ -40,6 +40,30 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
 
 
+ALEMBIC_DIR = Path(__file__).parent / "alembic"
+
+
+def _alembic_config():
+    """Alembic's settings for the app's own run, given here rather than read
+    from alembic.ini (which stays for the `alembic` CLI):
+      • a value there goes through ConfigParser's interpolation, alembic.ini's
+        `%(here)s` included, and a bare '%' in the install path (a folder
+        « 100% », a Windows user name) is an error;
+      • Alembic reads the file in the locale encoding, which an app opened from
+        the Finder or the Start menu does not have.
+    The migrations are found from this file's location, whatever the working
+    directory (the desktop app starts the backend from its own folder)."""
+    from alembic.config import Config
+
+    cfg = Config()
+    # A literal '%' is written '%%' in a ConfigParser value.
+    cfg.set_main_option("script_location", str(ALEMBIC_DIR).replace("%", "%%"))
+    cfg.set_main_option("path_separator", "os")
+    # Keep the app's logging setup — see the note in alembic/env.py.
+    cfg.attributes["embedded"] = True
+    return cfg
+
+
 def _sync_schema_blocking() -> None:
     """Reconcile Alembic's version bookkeeping with the schema `init_db` built.
 
@@ -53,16 +77,12 @@ def _sync_schema_blocking() -> None:
     bookkeeping hiccup must never block startup.
     """
     import logging
-    from pathlib import Path
-    from alembic.config import Config
     from alembic import command
     from sqlalchemy import create_engine, inspect, text
 
     log = logging.getLogger(__name__)
     try:
-        cfg = Config(str(Path(__file__).parent / "alembic.ini"))
-        # Keep the app's logging setup — see the note in alembic/env.py.
-        cfg.attributes["embedded"] = True
+        cfg = _alembic_config()
         sync_engine = create_engine(f"sqlite:///{DB_PATH}")
         try:
             with sync_engine.connect() as conn:

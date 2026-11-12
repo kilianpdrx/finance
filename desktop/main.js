@@ -8,19 +8,24 @@
  *   interface Resources/web/server.js             Next's standalone server, in an
  *                                                Electron utility process
  *
- * Startup: « Démarrage… » → backend → /api/health → interface → its /api/health
- * (which crosses the proxy) → the app. Closing the window stops both servers.
+ * Startup: « Démarrage… » → backend, which takes a port and says which → the
+ * interface starts meanwhile (it needs the address, not the backend itself) →
+ * both answer → the interface's /api/health (which crosses the proxy) → the app.
+ * Closing the window quits and stops both servers.
+ *
+ * The decisions that need no Electron live in core.js, tested by `npm test`.
  */
 const { app, BrowserWindow, Menu, dialog, nativeTheme, session, shell, utilityProcess } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
-const net = require("node:net");
 const path = require("node:path");
+const core = require("./core");
 
-const HOST = "127.0.0.1";
+const { HOST } = core;
 const BACKEND_START_MS = 90_000;  // first opening: Gatekeeper / Defender scan the files, migrations run
 const INTERFACE_START_MS = 30_000;
-const STOP_GRACE_MS = 5_000;
+const STOP_GRACE_MS = 5_000;      // then SIGKILL (the backend gives its requests 3 s)
+const QUIT_DEADLINE_MS = 8_000;   // then the app exits whatever is still running
 
 // Test hook: a separate profile, data folder and single-instance lock.
 if (process.env.FINANCE_USER_DATA) app.setPath("userData", path.resolve(process.env.FINANCE_USER_DATA));
@@ -38,12 +43,13 @@ let appOrigin = null;     // http://127.0.0.1:<interface port>, once chosen
 let ready = false;        // the app is on screen
 let quitting = false;
 let failed = false;
-const servers = {};       // { backend, web }: { proc, exited, code, label, tail }
+const servers = {};       // { backend, web }, see track()
 
 // ── Log ─────────────────────────────────────────────────────────────────────
 // desktop.log, next to the backend's finance.log: what this process did, the
 // servers' output while they start, and their last lines if one stops. Not their
-// routine output afterwards — finance.log has the backend's.
+// routine output afterwards — finance.log has the backend's. The previous
+// launch's is kept as desktop.previous.log.
 const LOG_CAP = 1_000_000;
 let logStream = null;
 let logged = 0;
@@ -63,6 +69,7 @@ function follow(server, stream, name, { always = false } = {}) {
     partial = lines.pop();
     for (const line of lines) {
       if (!line) continue;
+      server.onLine?.(line);
       server.tail.push(line);
       if (server.tail.length > 200) server.tail.shift();
       if (always || !server.healthy) log(`[${name}] ${line}`);
@@ -70,58 +77,19 @@ function follow(server, stream, name, { always = false } = {}) {
   });
 }
 
-// ── Ports ───────────────────────────────────────────────────────────────────
-function portIsFree(port) {
-  return new Promise((resolve) => {
-    const probe = net.createServer();
-    probe.once("error", () => resolve(false));
-    probe.listen(port, HOST, () => probe.close(() => resolve(true)));
-  });
-}
-
-function anyFreePort() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.once("error", reject);
-    probe.listen(0, HOST, () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
-  });
-}
-
-/** The interface's port stays the same from one launch to the next: the page's
- *  saved state (profile, period, accounts, masking, theme) lives in its origin's
- *  storage, and the origin includes the port. Drawn once in 20000–29999, below
- *  every system's ephemeral range; drawn again only if another program took it. */
-async function interfacePort() {
-  const file = path.join(userData, "ports.json");
-  let saved = null;
-  try {
-    saved = JSON.parse(fs.readFileSync(file, "utf8")).interface;
-  } catch {
-    // first launch, or an unreadable file: draw one
-  }
-  if (Number.isInteger(saved) && saved >= 20000 && saved <= 29999 && (await portIsFree(saved))) return saved;
-  for (let i = 0; i < 50; i++) {
-    const port = 20000 + Math.floor(Math.random() * 10000);
-    if (await portIsFree(port)) {
-      fs.writeFileSync(file, JSON.stringify({ interface: port }));
-      if (saved) log(`Port ${saved} occupé par un autre programme : l'interface passe sur ${port}.`);
-      return port;
-    }
-  }
-  throw new Error("Aucun port libre n'a été trouvé pour l'interface.");
-}
-
 // ── Servers ─────────────────────────────────────────────────────────────────
-/** `stopped`: the French sentence for "it stopped" (« L'interface s'est arrêtée »). */
-function track(label, stopped, proc) {
-  const server = { proc, label, stopped, exited: false, code: null, healthy: false, tail: [] };
+/** `stopped`: the French sentence for "it stopped" (« L'interface s'est arrêtée »).
+ *  `stop` asks the process to end, `kill` forces it (core.stopAll). */
+function track(label, stopped, proc, { stop, kill }) {
+  const server = {
+    proc, label, stopped, stop, kill,
+    exited: false, code: null, healthy: false, tail: [], onLine: null, onExit: null,
+  };
   proc.on("exit", (code, signal) => {
     server.exited = true;
     server.code = code ?? signal;
     log(`${stopped} (code ${server.code}).`);
+    server.onExit?.();
     if (!quitting && server.healthy) {
       for (const line of server.tail.slice(-50)) log(`[${label}, dernières lignes] ${line}`);
       fail(`${stopped} de manière inattendue (code ${server.code}).`, { running: true });
@@ -130,9 +98,11 @@ function track(label, stopped, proc) {
   return server;
 }
 
-function startBackend(apiPort, webPort) {
+function startBackend(webPort) {
   if (!fs.existsSync(backendExe)) throw new Error(`Serveur introuvable : ${backendExe}`);
-  const proc = spawn(backendExe, ["--port", String(apiPort), "--watch-stdin"], {
+  // --port 0: it binds a free port itself, before its (long) startup, and says
+  // which on its first line (core.backendPortFrom).
+  const proc = spawn(backendExe, ["--port", "0", "--watch-stdin"], {
     cwd: backendDir,
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],
@@ -140,21 +110,43 @@ function startBackend(apiPort, webPort) {
       ...process.env,
       FINANCE_DATA_DIR: dataDir,
       APP_VERSION: `v${app.getVersion()}`,
-      FINANCE_APP_PORTS: `${webPort},${apiPort}`,
+      FINANCE_APP_PORTS: String(webPort),     // the backend adds its own
       MPLCONFIGDIR: path.join(userData, "cache", "matplotlib"),
       PYTHONUNBUFFERED: "1",
       PYTHONIOENCODING: "utf-8",
     },
   });
-  const server = track("Le serveur de données", "Le serveur de données s'est arrêté", proc);
+  const server = track("Le serveur de données", "Le serveur de données s'est arrêté", proc, {
+    // SIGTERM: it finishes its requests (3 s at most) and closes the database;
+    // on Windows kill() terminates it — SQLite's WAL is crash-safe. Closing its
+    // stdin stops it too (its watchdog).
+    stop: () => {
+      proc.stdin?.end();
+      proc.kill("SIGTERM");
+    },
+    kill: () => proc.kill("SIGKILL"),
+  });
+  server.port = new Promise((resolve, reject) => {
+    server.onLine = (line) => {
+      const port = core.backendPortFrom(line);
+      if (port) {
+        server.onLine = null;
+        resolve(port);
+      }
+    };
+    server.onExit = () => reject(new Error(`${server.stopped} pendant le démarrage (code ${server.code}).`));
+  });
+  server.port.catch(() => {});   // read by start(); a rejection after a failure is not news
   proc.on("error", (err) => {
     server.exited = true;
     server.code = err.code;
     log(`Le serveur de données n'a pas pu être lancé : ${err.message}`);
+    server.onExit?.();
   });
   follow(server, proc.stdout, "serveur");
   follow(server, proc.stderr, "serveur");
   servers.backend = server;
+  return server;
 }
 
 function startInterface(apiPort, webPort) {
@@ -175,57 +167,44 @@ function startInterface(apiPort, webPort) {
       NEXT_TELEMETRY_DISABLED: "1",
     },
   });
-  const server = track("L'interface", "L'interface s'est arrêtée", proc);
+  // A utility process takes no signal: kill() is all there is, and it dies with
+  // the app anyway.
+  const server = track("L'interface", "L'interface s'est arrêtée", proc, {
+    stop: () => proc.kill(),
+    kill: () => proc.kill(),
+  });
   follow(server, proc.stdout, "interface");
   follow(server, proc.stderr, "interface", { always: true });
   servers.web = server;
+  return server;
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+class Quitting extends Error {}
 
-async function waitUntilHealthy(server, url, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (server.exited) {
-      for (const line of server.tail.slice(-20)) log(`[${server.label}, dernières lignes] ${line}`);
-      throw new Error(`${server.stopped} pendant le démarrage (code ${server.code}).`);
-    }
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(2_000) });
-      if (res.ok) {
-        server.healthy = true;
-        return;
-      }
-    } catch {
-      // not listening yet
-    }
-    await sleep(250);
+/** Until `url` answers: a 2xx (the server is healthy), or with `anyAnswer` any
+ *  HTTP answer at all (the server is up, what it serves may not be yet). */
+async function waitUntil(server, url, timeoutMs, { anyAnswer = false } = {}) {
+  try {
+    await core.waitForHttp(url, {
+      timeoutMs,
+      accept: anyAnswer ? () => true : (res) => res.ok,
+      check: () => {
+        if (quitting || failed) throw new Quitting();
+        if (server.exited) {
+          for (const line of server.tail.slice(-20)) log(`[${server.label}, dernières lignes] ${line}`);
+          throw new Error(`${server.stopped} pendant le démarrage (code ${server.code}).`);
+        }
+      },
+    });
+  } catch (err) {
+    if (err instanceof Quitting || server.exited) throw err;
+    throw new Error(`${server.label} n'a pas répondu en ${Math.round(timeoutMs / 1000)} secondes.`);
   }
-  throw new Error(`${server.label} n'a pas répondu en ${Math.round(timeoutMs / 1000)} secondes.`);
+  if (!anyAnswer) server.healthy = true;
 }
 
-/** Stop both servers: the backend gets SIGTERM (it finishes its requests and
- *  closes the database; on Windows kill() terminates it — SQLite's WAL is
- *  crash-safe), SIGKILL if it is still there after a few seconds. */
 function stopServers() {
-  const waits = [];
-  for (const server of Object.values(servers)) {
-    if (!server || server.exited) continue;
-    waits.push(new Promise((resolve) => {
-      server.proc.once("exit", resolve);
-      const timer = setTimeout(() => {
-        if (!server.exited) server.proc.kill("SIGKILL");
-      }, STOP_GRACE_MS);
-      timer.unref?.();
-    }));
-    if (server === servers.backend) {
-      server.proc.stdin?.end();         // its watchdog stops it too
-      server.proc.kill("SIGTERM");
-    } else {
-      server.proc.kill();
-    }
-  }
-  return Promise.all(waits);
+  return core.stopAll(Object.values(servers), { graceMs: STOP_GRACE_MS, deadlineMs: QUIT_DEADLINE_MS });
 }
 
 async function fail(reason, { running = false } = {}) {
@@ -250,24 +229,6 @@ async function fail(reason, { running = false } = {}) {
 }
 
 // ── Window & security ───────────────────────────────────────────────────────
-function originOf(url) {
-  try {
-    return new URL(url).origin;   // for a blob: URL, the origin that made it
-  } catch {
-    return null;
-  }
-}
-
-const isAppUrl = (url) => appOrigin !== null && originOf(url) === appOrigin;
-
-function isWebLink(url) {
-  try {
-    return ["https:", "http:"].includes(new URL(url).protocol) && !isAppUrl(url);
-  } catch {
-    return false;
-  }
-}
-
 function openInBrowser(url) {
   shell.openExternal(url).catch((err) => log(`Le navigateur n'a pas pu s'ouvrir : ${err.message}`));
 }
@@ -276,24 +237,24 @@ function secureContents(contents) {
   // Inside the app's own origin only. A link to the web opens in the browser; a
   // file dropped on the window, or anything else, goes nowhere.
   const guard = (event, url) => {
-    if (isAppUrl(url)) return;
+    const target = core.navigationTarget(url, appOrigin);
+    if (target === "app") return;
     event.preventDefault();
-    if (isWebLink(url)) openInBrowser(url);
-    else log(`Navigation refusée (${originOf(url) ?? "adresse illisible"}).`);
+    if (target === "browser") openInBrowser(url);
+    else log(`Navigation refusée (${core.originOf(url) ?? "adresse illisible"}).`);
   };
   contents.on("will-navigate", guard);
   contents.on("will-redirect", guard);
   contents.on("will-attach-webview", (event) => event.preventDefault());
-  // The payslip PDF opens in a window of its own: an empty page, then a blob:
-  // URL of the app's origin (which the system browser could not read).
   contents.setWindowOpenHandler(({ url }) => {
-    if (url === "about:blank" || (url.startsWith("blob:") && isAppUrl(url))) {
+    const target = core.windowOpenTarget(url, appOrigin);
+    if (target === "child") {
       return {
         action: "allow",
         overrideBrowserWindowOptions: { width: 1000, height: 820, title: "Finance", autoHideMenuBar: true },
       };
     }
-    if (isWebLink(url)) openInBrowser(url);
+    if (target === "browser") openInBrowser(url);
     return { action: "deny" };
   });
 }
@@ -322,8 +283,12 @@ function createWindow() {
     },
   });
   win.once("ready-to-show", () => win.show());
+  // Closing the window quits, even with a payslip PDF still open in a window of
+  // its own: otherwise the app and both servers kept running with no window to
+  // come back to, and opening Finance again showed nothing.
   win.on("closed", () => {
     win = null;
+    app.quit();
   });
   win.loadFile(path.join(__dirname, "loading.html"));
 }
@@ -388,34 +353,48 @@ function buildMenu() {
 // ── Life cycle ──────────────────────────────────────────────────────────────
 async function start() {
   const started = Date.now();
-  fs.mkdirSync(logDir, { recursive: true });
-  logStream = fs.createWriteStream(path.join(logDir, "desktop.log"), { flags: "w" });
+  const since = () => `${Date.now() - started} ms`;
+  logStream = fs.createWriteStream(core.rotateLog(logDir), { flags: "w" });
   log(`Finance ${app.getVersion()} — ${process.platform} ${process.arch}, Electron ${process.versions.electron}`);
 
   Menu.setApplicationMenu(buildMenu());
   secureSession();
   createWindow();
 
+  // Quitting can start during any step (the window closed while « Démarrage… »
+  // shows): each step checks, so nothing is started once it has begun.
   try {
-    const webPort = await interfacePort();
-    const apiPort = await anyFreePort();
+    const webPort = await core.stickyPort(path.join(userData, "ports.json"), { log });
+    if (quitting) return;
     appOrigin = `http://${HOST}:${webPort}`;
-    log(`Ports : interface ${webPort}, serveur ${apiPort}.`);
 
-    startBackend(apiPort, webPort);
-    await waitUntilHealthy(servers.backend, `http://${HOST}:${apiPort}/api/health`, BACKEND_START_MS);
-    log(`Serveur de données prêt (${Date.now() - started} ms).`);
+    const backend = startBackend(webPort);
+    const apiPort = await core.within(backend.port, BACKEND_START_MS,
+      `Le serveur de données n'a pas démarré en ${BACKEND_START_MS / 1000} secondes.`);
+    if (quitting) return;
+    log(`Ports : interface ${webPort}, serveur ${apiPort} (${since()}).`);
 
-    startInterface(apiPort, webPort);
-    await waitUntilHealthy(servers.web, `${appOrigin}/api/health`, INTERFACE_START_MS);
-    log(`Interface prête (${Date.now() - started} ms).`);
+    // The interface needs the backend's address to start, not the backend:
+    // both start together. It is up once it answers a page of its own — not
+    // /api/*, which waits for the backend (a first launch can take longer than
+    // the interface's own time limit).
+    const web = startInterface(apiPort, webPort);
+    await Promise.all([
+      waitUntil(backend, `http://${HOST}:${apiPort}/api/health`, BACKEND_START_MS)
+        .then(() => log(`Serveur de données prêt (${since()}).`)),
+      waitUntil(web, `${appOrigin}/`, INTERFACE_START_MS, { anyAnswer: true })
+        .then(() => log(`Interface démarrée (${since()}).`)),
+    ]);
+    // Through the interface's proxy and request guard, as the window will.
+    await waitUntil(web, `${appOrigin}/api/health`, INTERFACE_START_MS);
+    log(`Interface prête (${since()}).`);
 
-    if (!win) return;          // closed during startup: quitting
+    if (quitting || !win) return;
     await win.loadURL(`${appOrigin}/`);
     ready = true;
-    log(`Fenêtre ouverte (${Date.now() - started} ms).`);
+    log(`Fenêtre ouverte (${since()}).`);
   } catch (err) {
-    if (!quitting) fail(err.message);
+    if (!quitting && !(err instanceof Quitting)) fail(err.message);
   }
 }
 
@@ -429,7 +408,7 @@ if (!app.requestSingleInstanceLock()) {
   app.setAboutPanelOptions({ applicationName: "Finance", applicationVersion: app.getVersion() });
 
   app.on("second-instance", () => {
-    if (!win) return;
+    if (!win) return;          // quitting
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
@@ -439,13 +418,17 @@ if (!app.requestSingleInstanceLock()) {
   app.on("before-quit", () => {
     quitting = true;
   });
+  let stopping = false;
   app.on("will-quit", (event) => {
     if (Object.values(servers).every((s) => !s || s.exited)) {
       logStream?.end();
       return;
     }
     event.preventDefault();
-    stopServers().then(() => {
+    if (stopping) return;      // a second quit request while the servers stop
+    stopping = true;
+    stopServers().then((allStopped) => {
+      if (!allStopped) log(`Un serveur ne s'est pas arrêté en ${QUIT_DEADLINE_MS / 1000} secondes : Finance se ferme quand même.`);
       log(ready ? "Finance fermé." : "Finance fermé pendant le démarrage.");
       logStream?.end(() => app.exit(0));
     });

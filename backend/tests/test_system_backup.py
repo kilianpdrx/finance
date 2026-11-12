@@ -221,6 +221,27 @@ async def test_restore_works_while_another_connection_holds_the_database(client,
 
 
 @pytest.mark.asyncio
+async def test_restore_of_another_page_size_while_the_database_is_held(client, live_db, tmp_path):
+    """While a connection holds it, the live database stays in WAL mode, and a
+    WAL database refuses a backup whose page size differs from its own
+    (SQLITE_READONLY): the restore answered 500. The staged copy is brought to
+    the live page size first."""
+    db_file, _ = live_db
+    holder = _sqlite_file(db_file, ["avant"], wal=True)               # 4096
+    backup = tmp_path / "sauvegarde.sqlite"
+    _sqlite_file(backup, ["restauré 1", "restauré 2"], page_size=8192).close()
+
+    res = await client.post("/api/system/restore",
+                            files={"file": ("sauvegarde.sqlite", backup.read_bytes(), "application/x-sqlite3")})
+
+    assert res.status_code == 200, res.text
+    assert [r[0] for r in holder.execute("SELECT label FROM t ORDER BY id")] == ["restauré 1", "restauré 2"]
+    assert holder.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    holder.close()
+    assert not list(tmp_path.glob("finance.db.restore.tmp*"))
+
+
+@pytest.mark.asyncio
 async def test_version_endpoint_reports_build(client, monkeypatch):
     """Bug reports need a version to name; CI stamps APP_VERSION into the image."""
     monkeypatch.setenv("APP_VERSION", "v1.2.3")

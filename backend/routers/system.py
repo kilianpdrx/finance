@@ -309,6 +309,43 @@ def _prune_pre_restore_snapshots(keep: int = PRE_RESTORE_KEEP) -> None:
         logger.warning("Could not prune pre-restore snapshots: %s", e)
 
 
+def _sqlite_copy(src: Path, dst: Path) -> None:
+    """Copy database `src` into `dst` with SQLite's backup function: pages are
+    written inside a transaction on `dst`, so the copy is whole or not at all,
+    and a database in WAL mode is read with what is still in its -wal file.
+
+    A `dst` in WAL mode (the live database, whenever anything else has it open)
+    refuses a source of another page size: see `_set_page_size`."""
+    source = sqlite3.connect(src)
+    target = sqlite3.connect(dst)
+    try:
+        source.backup(target)
+    finally:
+        source.close()
+        target.close()
+
+
+def _page_size(path: Path) -> int:
+    con = sqlite3.connect(path)
+    try:
+        return con.execute("PRAGMA page_size").fetchone()[0]
+    finally:
+        con.close()
+
+
+def _set_page_size(path: Path, page_size: int) -> None:
+    """Rewrite database `path` — a file nothing else has open — with `page_size`.
+    VACUUM applies a new page size only outside WAL mode."""
+    con = sqlite3.connect(path)
+    try:
+        if con.execute("PRAGMA page_size").fetchone()[0] != page_size:
+            con.execute("PRAGMA journal_mode=DELETE")
+            con.execute(f"PRAGMA page_size={int(page_size)}")
+            con.execute("VACUUM")
+    finally:
+        con.close()
+
+
 @router.get("/backup")
 async def download_backup():
     """A consistent copy of the database, to download.
@@ -323,18 +360,8 @@ async def download_backup():
 
     copy_path = DB_PATH.with_name(f"finance.backup-{uuid.uuid4().hex[:8]}.sqlite")
 
-    def _copy() -> None:
-        src = sqlite3.connect(DB_PATH)
-        dst = sqlite3.connect(copy_path)
-        try:
-            with dst:
-                src.backup(dst)
-        finally:
-            src.close()
-            dst.close()
-
     try:
-        await asyncio.to_thread(_copy)
+        await asyncio.to_thread(_sqlite_copy, DB_PATH, copy_path)
     except Exception:
         copy_path.unlink(missing_ok=True)
         raise
@@ -344,27 +371,6 @@ async def download_backup():
         media_type="application/x-sqlite3",
         background=BackgroundTask(copy_path.unlink, missing_ok=True),
     )
-
-
-def _sqlite_copy(src: Path, dst: Path) -> None:
-    """Copy database `src` into `dst` with SQLite's backup function: pages are
-    written inside a transaction on `dst`, so the copy is whole or not at all,
-    and a database in WAL mode is read with what is still in its -wal file."""
-    source = sqlite3.connect(src)
-    target = sqlite3.connect(dst)
-    try:
-        # Out of WAL for the copy when nothing else holds the file: a WAL
-        # database refuses a backup whose page size differs from its own. With
-        # another connection open the switch is refused, and the copy goes ahead
-        # in WAL (same page size: the usual case). The app sets WAL again.
-        try:
-            target.execute("PRAGMA journal_mode=DELETE")
-        except sqlite3.OperationalError:
-            pass
-        source.backup(target)
-    finally:
-        source.close()
-        target.close()
 
 
 @router.post("/restore")
@@ -403,9 +409,9 @@ async def restore_backup(file: UploadFile = File(...)):
     tmp_path = DB_PATH.with_name(DB_PATH.name + ".restore.tmp")
 
     def _rm_tmp() -> None:
-        # Opening the temp DB for the integrity check may spawn -wal/-shm sidecars;
-        # remove the temp file and any sidecars so nothing is left behind.
-        for suffix in ("", "-wal", "-shm"):
+        # Opening the temp DB (integrity check, page size) may spawn sidecars;
+        # remove the temp file and any of them so nothing is left behind.
+        for suffix in ("", "-wal", "-shm", "-journal"):
             Path(f"{tmp_path}{suffix}").unlink(missing_ok=True)
 
     try:
@@ -435,6 +441,10 @@ async def restore_backup(file: UploadFile = File(...)):
             _sqlite_copy(DB_PATH, prev)
             logger.info("Saved pre-restore snapshot to %s", prev.name)
             _prune_pre_restore_snapshots()
+            # The live database is in WAL mode while anything holds it, and then
+            # refuses a backup of another page size (SQLITE_READONLY). The staged
+            # file is ours alone: bring it to the live page size.
+            _set_page_size(tmp_path, _page_size(DB_PATH))
         _sqlite_copy(tmp_path, DB_PATH)
 
     try:

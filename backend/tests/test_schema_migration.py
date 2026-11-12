@@ -72,9 +72,9 @@ def test_upgrade_from_old_revision_is_idempotent(temp_db):
 
 def test_upgrade_works_from_another_working_directory(temp_db, monkeypatch, tmp_path):
     """The desktop app starts the backend from its own folder, not from backend/:
-    alembic.ini names the migrations relative to itself (%(here)s). With a path
-    relative to the working directory, the upgrade failed — silently, since
-    sync_schema only logs — and the database stayed on its old revision."""
+    the migrations are found from this module's location. With a path relative
+    to the working directory, the upgrade failed — silently, since sync_schema
+    only logs — and the database stayed on its old revision."""
     eng = create_engine(f"sqlite:///{temp_db}")
     Base.metadata.create_all(eng)
     eng.dispose()
@@ -90,10 +90,34 @@ def test_upgrade_works_from_another_working_directory(temp_db, monkeypatch, tmp_
     assert _version(temp_db) == HEAD
 
 
+def test_upgrade_works_from_a_folder_whose_path_holds_a_percent_sign(temp_db, monkeypatch, tmp_path):
+    """Alembic's settings go through ConfigParser's interpolation, where a bare
+    '%' is an error: installed under a path holding one (a folder « 100% », a
+    Windows user name), the desktop app skipped every migration — silently."""
+    import shutil
+
+    install = tmp_path / "100% Finance" / "alembic"
+    shutil.copytree(database.ALEMBIC_DIR, install, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.setattr(database, "ALEMBIC_DIR", install)
+    eng = create_engine(f"sqlite:///{temp_db}")
+    Base.metadata.create_all(eng)
+    eng.dispose()
+    database._sync_schema_blocking()  # stamps head
+    eng = create_engine(f"sqlite:///{temp_db}")
+    with eng.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num='020_payroll'"))
+    eng.dispose()
+
+    database._sync_schema_blocking()
+
+    assert _version(temp_db) == HEAD
+
+
 def test_alembic_ini_is_ascii():
-    """Alembic reads alembic.ini in the locale encoding, and an app opened from
-    the Finder has none (ASCII): an accent in a comment made the desktop app skip
-    every migration — sync_schema only logs the failure."""
+    """The `alembic` CLI reads alembic.ini in the locale encoding, and an app
+    opened from the Finder has none (ASCII): an accent in a comment once made the
+    desktop app skip every migration. The app no longer reads the file (see
+    database._alembic_config); the CLI still does."""
     (Path(database.__file__).parent / "alembic.ini").read_bytes().decode("ascii")
 
 

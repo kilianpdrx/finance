@@ -36,5 +36,12 @@ await mkdir(stage, { recursive: true });
 await cp(join(web, ".next", "standalone"), join(stage, "web"), { recursive: true, verbatimSymlinks: true });
 await cp(join(web, ".next", "static"), join(stage, "web", ".next", "static"), { recursive: true });
 await cp(join(web, "public"), join(stage, "web", "public"), { recursive: true });
+// Copiés par le traçage de Next mais jamais chargés par le serveur de production :
+// sharp (et ses bibliothèques @img, 18 Mo) sert à next/image, que l'interface
+// n'utilise pas ; TypeScript (9 Mo) au serveur de développement. Pas retirés de
+// l'image Docker, qui n'est pas touchée ici.
+for (const unused of ["@img", "sharp", "typescript"]) {
+  await rm(join(stage, "web", "node_modules", unused), { recursive: true, force: true });
+}
 await cp(backend, join(stage, "backend"), { recursive: true, verbatimSymlinks: true });
 console.log(`stage/ prêt : ${stage}`);

@@ -28,8 +28,15 @@ describe('Topbar « Quitter »', () => {
     expect(screen.queryByRole('button', { name: 'Quitter' })).not.toBeInTheDocument();
   });
 
-  it('waits for the build to be known, so it never flashes in the desktop app', () => {
+  it('keeps its place while the build is unknown, so it never flashes in the desktop app', () => {
     render(<Topbar onMenuClick={() => {}} />);
     expect(screen.queryByRole('button', { name: 'Quitter' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('quit-placeholder')).toHaveAttribute('aria-hidden');
+  });
+
+  it('leaves no empty place once the build is known', () => {
+    version.value = { data: { is_desktop: true } };
+    render(<Topbar onMenuClick={() => {}} />);
+    expect(screen.queryByTestId('quit-placeholder')).not.toBeInTheDocument();
   });
 });

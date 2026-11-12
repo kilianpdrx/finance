@@ -14,11 +14,11 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 ROOT = Path(SPECPATH)  # noqa: F821 — provided by PyInstaller
 
-# Alembic reads alembic.ini, env.py and the migrations from DISK (it imports them
-# by file path), so they ship as files beside the executable, at the places
-# alembic.ini names relative to itself (%(here)s). No __pycache__.
+# Alembic reads env.py and the migrations from DISK (it imports them by file
+# path), so they ship as files beside the executable, in alembic/ next to
+# database.py's place (database.ALEMBIC_DIR). Not alembic.ini: the app gives
+# Alembic its settings in code. No __pycache__.
 datas = [
-    (str(ROOT / "alembic.ini"), "."),
     (str(ROOT / "alembic" / "env.py"), "alembic"),
     (str(ROOT / "alembic" / "script.py.mako"), "alembic"),
 ]
@@ -64,8 +64,7 @@ exe = EXE(  # noqa: F821
     # UTF-8 mode, as the Docker image has it (LANG=C.UTF-8). An app opened from
     # the Finder or the Start menu gets no LANG, and a frozen Python does not
     # coerce that to UTF-8: text read or written without an explicit encoding
-    # would be ASCII on macOS, cp1252 on Windows. (Alembic reads alembic.ini in
-    # the locale encoding regardless — hence that file is ASCII only.)
+    # would be ASCII on macOS, cp1252 on Windows.
     [("X utf8=1", None, "OPTION")],
     exclude_binaries=True,
     name="finance-backend",

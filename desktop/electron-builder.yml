@@ -10,9 +10,14 @@ directories:
   buildResources: resources
 files:
   - main.js
+  - core.js
   - loading.html
   - package.json
 asar: true
+# Les langues de Chromium (menus contextuels, boîtes de dialogue) : l'interface est
+# en français. 220 sinon, 49 Mo sur macOS. « en » sert de repli à Chromium sur un
+# système dans une autre langue (macOS : en.lproj, Windows : en-US.pak).
+electronLanguages: [fr, en, en-US]
 # Le serveur (PyInstaller) et l'interface (Next standalone) vont dans Resources/
 # par ce script, pas par extraResources : celui-ci écarte un node_modules placé à la
 # racine de sa source, celui dont l'interface a besoin.

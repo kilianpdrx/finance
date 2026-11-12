@@ -20,7 +20,10 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const pathname = usePathname();
   const { hidden, toggle } = usePrivacyStore();
   // The desktop app stops its servers when its window closes: no « Quitter »
-  // there (its shutdown route would only refuse). Shown once the build is known.
+  // there (its shutdown route would only refuse). Until the build is known its
+  // place is kept empty — nothing shifts when it appears, and it never flashes
+  // in the desktop app. While the backend cannot be reached it stays empty: the
+  // button only asks the backend to stop everything, and would claim it did.
   const { data: build } = useAppVersion();
 
   // Period picker lives only where the date range actually drives the data.
@@ -45,7 +48,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
           {hidden ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
         </Button>
         <ThemeToggle />
-        {build && !build.is_desktop && <QuitButton />}
+        {build ? !build.is_desktop && <QuitButton /> : <span aria-hidden className="size-9 shrink-0" data-testid="quit-placeholder" />}
       </div>
     </header>
   );
