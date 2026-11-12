@@ -70,12 +70,30 @@ class _Backoff:
             self._until.pop(provider, None)
             logger.info("%s recovered", provider)
 
+    def reset(self) -> None:
+        self._fails.clear()
+        self._until.clear()
+
 
 _backoff = _Backoff()
 
 # isin -> resolved Yahoo symbol (validated against broker price). Persists for the
 # process lifetime so repeated imports/refreshes don't re-hit the search API.
 _symbol_cache: dict[str, str] = {}
+
+# ticker -> the currency Yahoo quotes it in, for tickers without an exchange
+# suffix. A listing's currency doesn't change, and asking costs one sequential
+# network call per ticker per refresh.
+_currency_cache: dict[str, str] = {}
+
+
+def reset_provider_state() -> None:
+    """Forget throttle timestamps, backoff and what was learnt from the
+    providers. The guards are process-wide; tests reset them between cases."""
+    _backoff.reset()
+    _last_call.clear()
+    _symbol_cache.clear()
+    _currency_cache.clear()
 
 logger = logging.getLogger(__name__)
 
@@ -94,27 +112,55 @@ _REF_DEVIATION_TOL = 0.35
 def _last_close(data, ticker: str) -> float | None:
     """Latest usable close for `ticker` in a `yf.download()` frame, else None.
 
-    yfinance ≥ 0.2.48 (1.4.1 here) returns (Price, Ticker) MultiIndex columns
-    even for ONE ticker, so `data["Close"]` is a DataFrame with a column per
-    ticker; a flat frame (older yfinance, or `multi_level_index=False` with one
-    ticker) gives a Series. The old `len(tickers) == 1` branch took `iloc[-1]`
-    of that DataFrame, got a Series, and its truth test raised — a lone ticker
-    was never priced. Selecting the ticker's column covers 1 and N tickers.
+    `_fetch_stock_prices` asks for (Price, Ticker) MultiIndex columns, which
+    yfinance 1.4.1 returns even for ONE ticker, so `data["Close"]` has a column
+    per ticker. The old `len(tickers) == 1` branch took `iloc[-1]` of that
+    DataFrame, got a Series, and its truth test raised: a lone ticker was never
+    priced. Selecting the ticker's column covers 1 and N tickers.
 
     The last non-NaN value is taken, not the last row: tickers whose markets
     are on different dates share one index, and the one that hasn't traded on
-    the latest date reads NaN there.
+    the latest date reads NaN there. That value is the close Yahoo gives for the
+    ticker requested on its own.
     """
     closes = data["Close"]
-    if closes.ndim == 2:
-        if ticker not in closes.columns:
-            return None
-        closes = closes[ticker]
-    closes = closes.dropna()
+    if ticker not in closes.columns:
+        return None
+    closes = closes[ticker].dropna()
     if closes.empty:
         return None
     close = float(closes.iloc[-1])
     return close if close > 0 else None
+
+
+_SUFFIX_CURRENCY = (
+    ((".PA", ".DE", ".AS", ".MI", ".MC", ".BR", ".F", ".LS"), "EUR"),
+    ((".SW", ".VX"), "CHF"),
+    ((".L",), "GBP"),
+)
+
+
+def _quote_currency(yf, ticker: str) -> str:
+    """The currency `ticker` is quoted in: from its exchange suffix, else asked
+    of Yahoo once per process (`_currency_cache`)."""
+    t_upper = ticker.upper()
+    for suffixes, currency in _SUFFIX_CURRENCY:
+        if t_upper.endswith(suffixes):
+            return currency
+    if t_upper in _currency_cache:
+        return _currency_cache[t_upper]
+    try:
+        currency = (getattr(yf.Ticker(ticker).fast_info, "currency", None) or "").upper()
+    except Exception as e:
+        # On retombe sur USD. Pour un titre qui cote ailleurs, la valeur
+        # enregistrée est alors dans la mauvaise devise : ça se voit dans les
+        # totaux, pas dans le prix.
+        logger.warning("Currency lookup failed for %s, assuming USD: %s", ticker, e)
+        return "USD"
+    if not currency:
+        return "USD"  # no answer: assumed, not remembered, asked again next time
+    _currency_cache[t_upper] = currency
+    return currency
 
 
 async def _fetch_stock_prices(tickers: list[str]) -> dict[str, tuple[float, str]]:
@@ -130,35 +176,27 @@ async def _fetch_stock_prices(tickers: list[str]) -> dict[str, tuple[float, str]
     def _sync_fetch():
         import yfinance as yf
         result = {}
-        data = yf.download(tickers, period="1d", progress=False, threads=True)
+        # The column shape is part of the call, not a default that has already
+        # changed once under us (see _last_close).
+        data = yf.download(tickers, period="1d", progress=False, threads=True,
+                           group_by="column", multi_level_index=True)
+        missing: list[str] = []
         if data is None or data.empty:
-            return result
-        for ticker in tickers:
-            try:
-                close = _last_close(data, ticker)
-                if close is not None:
-                    t_upper = ticker.upper()
-                    if t_upper.endswith((".PA", ".DE", ".AS", ".MI", ".MC", ".BR", ".F", ".LS")):
-                        currency = "EUR"
-                    elif t_upper.endswith((".SW", ".VX")):
-                        currency = "CHF"
-                    elif t_upper.endswith(".L"):
-                        currency = "GBP"
+            missing = list(tickers)
+        else:
+            for ticker in tickers:
+                try:
+                    close = _last_close(data, ticker)
+                    if close is None:
+                        missing.append(ticker)
                     else:
-                        currency = "USD"
-                        try:
-                            info = yf.Ticker(ticker).fast_info
-                            currency = getattr(info, "currency", "USD") or "USD"
-                        except Exception as e:
-                            # On retombe sur USD. Pour un titre qui cote ailleurs,
-                            # la valeur enregistrée est alors dans la mauvaise
-                            # devise : ça se voit dans les totaux, pas dans le prix.
-                            logger.warning(
-                                "Currency lookup failed for %s, assuming USD: %s", ticker, e)
-                    result[ticker] = (close, currency.upper())
-            except Exception as e:
-                logger.warning("yfinance price extraction failed for %s: %s", ticker, e)
-
+                        result[ticker] = (close, _quote_currency(yf, ticker))
+                except Exception as e:
+                    logger.warning("yfinance price extraction failed for %s: %s", ticker, e)
+        if missing:
+            # Tickers only, never an amount. A fund Yahoo re-issued under a new
+            # 0P… id shows up here: the cue to re-resolve it from its ISIN.
+            logger.warning("Yahoo returned no price for %s", ", ".join(missing))
         return result
 
     try:
