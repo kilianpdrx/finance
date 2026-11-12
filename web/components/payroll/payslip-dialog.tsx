@@ -14,7 +14,7 @@ import {
 } from "@/lib/api/hooks";
 import { monthName } from "@/lib/payroll";
 import {
-  canSave, compare, draftFromPayslip, draftFromRead, draftManual, draftStatus, draftToBody, forEmployer, nextMonth,
+  canSave, compare, draftFromPayslip, draftFromRead, draftManual, draftStatus, draftToBody, employerForRead, forEmployer, nextMonth,
   type Draft, type DraftStatus,
 } from "@/lib/payroll-review";
 import { cn } from "@/lib/utils";
@@ -108,9 +108,16 @@ export function PayslipDialog({ open, onOpenChange, mode, pack }: {
     if (!pdfs.length || !pack) return;
     setReading(true);
     try {
-      const results = await readPayslips(pdfs, pack.id, defaultEmployer);
-      const next = results.map((r, i) => forEmployer(draftFromRead(r, pdfs[i], defaultEmployer), rules, payslips, defaultEmployer))
-        .sort((a, b) => (a.period || "9999").localeCompare(b.period || "9999"));
+      // Each PDF's employer is the one it names (found by the backend); else the
+      // only employer — unless that one already has the month: see employerForRead.
+      const results = await readPayslips(pdfs, pack.id);
+      const next: Draft[] = [];
+      const earlier = drafts.filter((d) => d.saved);            // what this import already saved stays listed
+      results.forEach((r, i) => {
+        const employerId = employerForRead(r, employers, payslips, [...earlier, ...next]);
+        next.push(forEmployer(draftFromRead(r, pdfs[i], employerId), rules, payslips, employerId));
+      });
+      next.sort((a, b) => (a.period || "9999").localeCompare(b.period || "9999"));
       setDrafts((old) => [...old.filter((d) => d.saved), ...next]);
       setSelected(next.find((d) => draftStatus(d) !== "ready")?.uid ?? next[0]?.uid ?? null);
     } catch (e) {
@@ -230,7 +237,9 @@ export function PayslipDialog({ open, onOpenChange, mode, pack }: {
                           d.uid === selected ? "bg-muted" : "hover:bg-muted/50")}>
                         <span className="min-w-0">
                           <span className="block truncate font-medium">{d.period ? monthName(d.period) : "Mois inconnu"}</span>
-                          <span className="block truncate text-[11px] text-muted-foreground">{d.filename}</span>
+                          <span className="block truncate text-[11px] text-muted-foreground">
+                            {d.employerId != null ? employers.find((e) => e.id === d.employerId)?.name : "Employeur à choisir"} · {d.filename}
+                          </span>
                         </span>
                         <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium", STATUS[st].className)}>{STATUS[st].label}</span>
                       </button>
@@ -299,7 +308,7 @@ export function PayslipDialog({ open, onOpenChange, mode, pack }: {
             {mode.kind === "import" && ready.length > 1 && (
               <Button variant="outline" onClick={saveReady} disabled={saving}>Enregistrer les {ready.length} fiches prêtes</Button>
             )}
-            <Button onClick={saveCurrent} disabled={saving || !current || !canSave(current) || newEmployer != null}>
+            <Button onClick={saveCurrent} disabled={saving || !current || !canSave(current, comparisons.get(current.uid)) || newEmployer != null}>
               {saving ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
               Enregistrer
             </Button>

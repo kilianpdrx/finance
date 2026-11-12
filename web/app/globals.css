@@ -28,6 +28,19 @@
   --warning: oklch(0.769 0.188 70);        /* amber */
   --info: oklch(0.62 0.16 256);            /* indigo */
 
+  /* Categorical series (identity: one employer, one colour), in this fixed
+     order, never cycled. Validated for adjacent pairs (CVD ΔE ≥ 8, normal
+     vision ≥ 15) on --surface, light and dark. Three light steps are under
+     3:1 against white: always shown with a label (dataviz rules). */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
+
   --radius: 0.875rem;
 }
 
@@ -50,6 +63,15 @@
   --negative: oklch(0.7 0.18 22);
   --warning: oklch(0.82 0.16 75);
   --info: oklch(0.72 0.13 256);
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
 }
 
 /* Map tokens to Tailwind theme so utilities are generated. */
@@ -138,3 +160,42 @@
   .recharts-surface:focus,
   .recharts-wrapper :focus { outline: none; }
 }
+
+/* Salaire & impôts — the employer timeline (components/payroll/timeline.tsx), drawn
+   like life_planner's metro « frise »: a line per stretch, stations at both ends,
+   a « ? » where a month has no payslip. --c is the employer's --series-* colour. */
+.payroll-metro { background-color: var(--color-surface); }
+.payroll-metro .grid { stroke: var(--border); stroke-width: 1; }
+.payroll-metro .seg { cursor: pointer; outline: none; transition: opacity 150ms; }
+.payroll-metro .seg.dim { opacity: 0.35; }
+.payroll-metro .seg .hit { fill: transparent; }
+.payroll-metro .seg .line { fill: var(--c); transition: filter 120ms; }
+.payroll-metro .seg .station { fill: var(--surface); stroke: var(--c); stroke-width: 3; }
+.payroll-metro .seg-label { font-size: 12px; font-weight: 600; fill: var(--foreground); pointer-events: none; }
+.payroll-metro .seg:hover .line, .payroll-metro .seg:focus-visible .line { filter: brightness(1.12) saturate(1.1); }
+.payroll-metro .seg:focus-visible .line { stroke: var(--foreground); stroke-width: 2; }
+.payroll-metro .seg.selected .line { stroke: var(--c); stroke-width: 8; stroke-opacity: 0.28; paint-order: stroke; }
+.payroll-metro .seg.selected .station { stroke-width: 4; }
+.payroll-metro .gap { cursor: pointer; outline: none; }
+.payroll-metro .gap line { stroke: var(--c); stroke-opacity: 0.6; stroke-width: 2.5; stroke-dasharray: 4 5; }
+.payroll-metro .gap circle { fill: var(--surface); stroke: var(--muted-foreground); stroke-width: 2; stroke-dasharray: 3 2; }
+.payroll-metro .gap text { font-size: 12px; font-weight: 800; fill: var(--muted-foreground); text-anchor: middle; pointer-events: none; }
+.payroll-metro .gap:hover circle, .payroll-metro .gap:focus-visible circle { stroke: var(--foreground); }
+.payroll-metro .gap:hover text, .payroll-metro .gap:focus-visible text { fill: var(--foreground); }
+.payroll-metro .axis-rule { stroke: var(--muted-foreground); stroke-width: 1; }
+.payroll-metro .year { font-size: 13px; font-weight: 800; fill: var(--foreground); }
+.payroll-metro .month { font-size: 11px; fill: var(--muted-foreground); }
+.payroll-metro .month-tick { stroke: var(--muted-foreground); }
+.payroll-metro .today { stroke: var(--muted-foreground); stroke-width: 1.5; stroke-dasharray: 2 4; pointer-events: none; }
+/* The one orchestrated moment, as in life_planner: lines drawn left to right on first load. */
+@media (prefers-reduced-motion: no-preference) {
+  .payroll-metro svg.intro .seg .line {
+    transform-box: fill-box; transform-origin: left center;
+    animation: payroll-draw 700ms cubic-bezier(0.3, 0.7, 0.2, 1) both; animation-delay: var(--delay);
+  }
+  .payroll-metro svg.intro .seg .station, .payroll-metro svg.intro .seg .seg-label {
+    animation: payroll-appear 300ms ease-out both; animation-delay: calc(var(--delay) + 450ms);
+  }
+}
+@keyframes payroll-draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes payroll-appear { from { opacity: 0; } to { opacity: 1; } }

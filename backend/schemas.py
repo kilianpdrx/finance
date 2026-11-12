@@ -960,6 +960,8 @@ class PayslipReadOut(BaseModel):
     sha256: str
     error: Optional[str]               # not a readable PDF, too large, protected…
     duplicate_payslip_id: Optional[int]  # this very file is already a payslip
+    # The employer whose name the PDF prints (else the one asked for); its rules read the lines.
+    employer_id: Optional[int]
     pack: str
     period: Optional[str]
     pay_date: Optional[date]

@@ -42,9 +42,6 @@ export function PayslipReview({ draft, onChange, employers, rules, existing, com
   const checks = checkDraft(draft);
   const figures = draftFigures(draft);
   const withLines = draft.lines.length > 0;
-  // Once saved, the payslip found for that month is this one.
-  const clash = draft.saved ? undefined
-    : existing.find((p) => p.employer_id === draft.employerId && p.period === draft.period && p.id !== draft.payslipId);
 
   // The PDF read, viewable in its own tab before anything is saved.
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -131,11 +128,23 @@ export function PayslipReview({ draft, onChange, employers, rules, existing, com
             </div>
           </div>
 
-          {clash && (
-            <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
-              <Checkbox checked={draft.replace} onCheckedChange={(v) => set({ replace: v === true })} />
-              {employerName.get(clash.employer_id)} a déjà une fiche pour ce mois : la remplacer par celle-ci.
-            </label>
+          {/* One payslip per employer and month: another employer the same month is welcome,
+              so the first answer offered is to choose (or add) that employer, not to replace. */}
+          {comparison.clash && draft.employerId != null && (
+            <div role="alert" className="space-y-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+              <p>
+                {employerName.get(draft.employerId)} a déjà une fiche {ofMonth(draft.period)}
+                {comparison.clash === "draft" ? " dans cet import" : ""}. Si celle-ci vient d&apos;un autre employeur, choisissez-le
+                ci-dessus ou{" "}
+                <button type="button" className="text-brand hover:underline" onClick={onNewEmployer}>ajoutez-le</button>.
+              </p>
+              {comparison.clash === "saved" && (
+                <label className="flex items-center gap-2">
+                  <Checkbox checked={draft.replace} onCheckedChange={(v) => set({ replace: v === true })} />
+                  C&apos;est la même fiche, corrigée : remplacer celle enregistrée.
+                </label>
+              )}
+            </div>
           )}
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

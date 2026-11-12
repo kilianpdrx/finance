@@ -201,7 +201,8 @@ export interface Point {
   /** Held back until the end of the contract, less what was paid out of it:
    *  still the employee's money, only not paid yet. */
   held: number;
-  months: number;
+  /** Payslips added up: two employers in one month are two. */
+  count: number;
 }
 
 /** Month by month, or year by year, in one currency. Several employers in the
@@ -210,65 +211,95 @@ export function series(payslips: Payslip[], mode: "month" | "year"): Point[] {
   const by = new Map<string, Point>();
   for (const p of payslips) {
     const key = mode === "year" ? p.period.slice(0, 4) : p.period;
-    const point = by.get(key) ?? { period: key, gross: 0, contributions: 0, tax: 0, net: 0, held: 0, months: 0 };
+    const point = by.get(key) ?? { period: key, gross: 0, contributions: 0, tax: 0, net: 0, held: 0, count: 0 };
     point.gross += p.gross_cents;
     point.contributions += p.employee_contributions_cents;
     point.tax += p.withholding_cents;
     point.net += p.net_paid_cents;
     point.held += kindSum(p.lines, "retained") - kindSum(p.lines, "released");
-    point.months += 1;
+    point.count += 1;
     by.set(key, point);
   }
   return [...by.values()].sort((a, b) => a.period.localeCompare(b.period));
 }
 
-/** The months where the base salary changed: the payslip's largest gross line
- *  (a bonus month is not a raise). */
-export function raises(payslips: Payslip[]): Set<string> {
-  const base = (p: Payslip) => Math.max(0, ...p.lines.filter((l) => l.kind === "gross").map((l) => l.amount_cents));
-  const out = new Set<string>();
-  const sorted = [...payslips].sort((a, b) => a.period.localeCompare(b.period));
-  for (let i = 1; i < sorted.length; i++) {
-    const before = base(sorted[i - 1]);
-    const now = base(sorted[i]);
-    if (before > 0 && now > 0 && sorted[i].employer_id === sorted[i - 1].employer_id && Math.abs(now - before) > before * 0.005) {
-      out.add(sorted[i].period);
-    }
-  }
-  return out;
+/** A payslip's base salary: its largest gross line (a bonus month is not a raise). */
+const baseOf = (p: Payslip) => Math.max(0, ...p.lines.filter((l) => l.kind === "gross").map((l) => l.amount_cents));
+
+/** An employer's base salary at the end of a month, and the month it took
+ *  that value — a change under 0,5 % is rounding, not a new salary. Null when
+ *  its payslips have no gross line. Compared within ONE employer only. */
+export function baseSalary(payslips: Payslip[], employerId: number, upTo?: string): { cents: number; since: string } | null {
+  const mine = payslips.filter((p) => p.employer_id === employerId && (upTo == null || p.period <= upTo) && baseOf(p) > 0)
+    .sort((a, b) => a.period.localeCompare(b.period));
+  const last = mine.at(-1);
+  if (!last) return null;
+  const cents = baseOf(last);
+  let since = last.period;
+  for (let i = mine.length - 2; i >= 0 && Math.abs(baseOf(mine[i]) - cents) <= cents * 0.005; i--) since = mine[i].period;
+  return { cents, since };
 }
 
-export interface Totals { gross: number; contributions: number; tax: number; net: number; months: number }
+export interface Totals {
+  gross: number;
+  contributions: number;
+  tax: number;
+  net: number;
+  held: number;
+  /** Payslips. */
+  count: number;
+  /** Months with at least one payslip. */
+  months: number;
+}
 
-const totals = (payslips: Payslip[]): Totals => payslips.reduce((t, p) => ({
-  gross: t.gross + p.gross_cents,
-  contributions: t.contributions + p.employee_contributions_cents,
-  tax: t.tax + p.withholding_cents,
-  net: t.net + p.net_paid_cents,
-  months: t.months + 1,
-}), { gross: 0, contributions: 0, tax: 0, net: 0, months: 0 });
+export function totals(payslips: Payslip[]): Totals {
+  return series(payslips, "month").reduce((s, p) => ({
+    gross: s.gross + p.gross, contributions: s.contributions + p.contributions, tax: s.tax + p.tax, net: s.net + p.net,
+    held: s.held + p.held, count: s.count + p.count, months: s.months + 1,
+  }), { gross: 0, contributions: 0, tax: 0, net: 0, held: 0, count: 0, months: 0 });
+}
 
 /** Shares of the gross, in basis points. */
 export interface Rates {
   contributions: number | null;
   tax: number | null;
-  /** Everything else between gross and net: other deductions, less what is
-   *  added (expenses, allowances) — negative when additions win. */
+  /** Everything else gone for good: other deductions, less what is added
+   *  (expenses, allowances) — negative when additions win. */
   other: number | null;
-  /** The share of the gross the employee does not get: (gross − net paid −
-   *  pay held back) / gross. Held-back pay is theirs, only paid later
-   *  (« Retenues en attente »): it is not counted as taken. */
-  total: number | null;
+  /** « Prélevé (hors retenu) »: the share of the gross gone for good —
+   *  contributions, tax, other deductions less additions. Pay held back is
+   *  NOT counted: it comes back at the end of the contract. */
+  taken: number | null;
+  /** « Non versé (retenu compris) »: the share of the gross not in the payout,
+   *  (gross − net paid) / gross — what is held back included. */
+  unpaid: number | null;
+  /** « dont retenu »: what `unpaid` adds to `taken` — pay held back less what
+   *  was paid out of it; negative in a month that pays it out. */
+  held: number | null;
 }
 
-/** The rates of a month or a year. `other` is what `total` leaves once
- *  contributions and tax are counted, so the three add up to `total` exactly —
- *  also for a payslip typed without lines. */
+export const RATE_LABEL: Record<keyof Rates, string> = {
+  contributions: "Cotisations",
+  tax: "Impôt retenu",
+  other: "Autres retenues",
+  taken: "Prélevé (hors retenu)",
+  unpaid: "Non versé (retenu compris)",
+  held: "dont retenu",
+};
+
+/** The rates of a month, a year or a period. `other` is what `taken` leaves
+ *  once contributions and tax are counted, and `held` what `unpaid` adds to
+ *  `taken`: the figures add up exactly, also for a payslip typed without lines. */
 export function rates(p: Pick<Point, "gross" | "contributions" | "tax" | "net" | "held">): Rates {
   const contributions = share(p.contributions, p.gross);
   const tax = share(p.tax, p.gross);
-  const total = share(p.gross - p.net - p.held, p.gross);
-  return { contributions, tax, total, other: total == null ? null : total - (contributions ?? 0) - (tax ?? 0) };
+  const taken = share(p.gross - p.net - p.held, p.gross);
+  const unpaid = share(p.gross - p.net, p.gross);
+  return {
+    contributions, tax, taken, unpaid,
+    other: taken == null ? null : taken - (contributions ?? 0) - (tax ?? 0),
+    held: taken == null || unpaid == null ? null : unpaid - taken,
+  };
 }
 
 export interface YearRate extends Rates { year: string; months: number }
@@ -281,15 +312,6 @@ export function yearRates(payslips: Payslip[]): YearRate[] {
     year: p.period, months: new Set(payslips.filter((x) => x.period.startsWith(p.period)).map((x) => x.period)).size,
     ...rates(p),
   }));
-}
-
-/** From January to the latest month paid this year, against the same months
- *  of the year before (the comparison would otherwise set 9 months against 12). */
-export function yearToDate(payslips: Payslip[], year: number): { now: Totals; before: Totals; untilMonth: string | null } {
-  const thisYear = payslips.filter((p) => p.period.startsWith(`${year}-`));
-  const until = thisYear.map((p) => p.period.slice(5)).sort().at(-1) ?? null;
-  const before = payslips.filter((p) => p.period.startsWith(`${year - 1}-`) && until != null && p.period.slice(5) <= until);
-  return { now: totals(thisYear), before: totals(before), untilMonth: until };
 }
 
 /** Share of the gross, in basis points. */
@@ -310,31 +332,169 @@ export function gaps(payslips: Payslip[]): { employer_id: number; period: string
   for (const [employer_id, periods] of byEmployer) {
     const have = new Set(periods);
     const sorted = [...have].sort();
-    let [y, m] = sorted[0].split("-").map(Number);
-    const last = sorted.at(-1)!;
-    for (;;) {
-      const period = `${y}-${String(m).padStart(2, "0")}`;
-      if (period >= last) break;
+    for (let period = sorted[0]; period < sorted.at(-1)!; period = addMonths(period, 1)) {
       if (!have.has(period)) out.push({ employer_id, period });
-      m += 1;
-      if (m > 12) { m = 1; y += 1; }
     }
   }
   return out.sort((a, b) => a.period.localeCompare(b.period));
 }
 
+// ── Employers ───────────────────────────────────────────────────────────────
+
+export interface EmployerFigures {
+  employerId: number;
+  currency: string;
+  /** First and last month with a payslip. */
+  from: string;
+  to: string;
+  totals: Totals;
+  rates: Rates;
+  /** Payslips whose salary was found on the account (exactly or within 2 %). */
+  deposits: { found: number; total: number };
+}
+
+/** Each employer's figures over the payslips given, in the order they started. */
+export function byEmployer(payslips: Payslip[]): EmployerFigures[] {
+  const by = new Map<number, Payslip[]>();
+  for (const p of payslips) by.set(p.employer_id, [...(by.get(p.employer_id) ?? []), p]);
+  return [...by.entries()].map(([employerId, mine]) => {
+    const periods = mine.map((p) => p.period).sort();
+    const t = totals(mine);
+    return {
+      employerId, currency: mine[0].currency, from: periods[0], to: periods.at(-1)!, totals: t, rates: rates(t),
+      deposits: { found: mine.filter((p) => p.deposit.status === "paid" || p.deposit.status === "gap").length, total: mine.length },
+    };
+  }).sort((a, b) => a.from.localeCompare(b.from) || a.employerId - b.employerId);
+}
+
+/** The categorical palette (globals.css `--series-*`), validated for adjacent
+ *  pairs in both themes. */
+export const SERIES = 8;
+
+/** Each employer's colour: the palette's slots in the order employers first
+ *  appear in ALL the payslips — so a filter or a period never repaints one —
+ *  never cycled: a ninth employer and later share a neutral grey. */
+export function employerColors(payslips: Payslip[], employers: { id: number }[]): Map<number, string> {
+  const first = new Map<number, string>();
+  for (const p of payslips) if (!first.has(p.employer_id) || p.period < first.get(p.employer_id)!) first.set(p.employer_id, p.period);
+  const order = [...employers].sort((a, b) =>
+    (first.get(a.id) ?? "9999").localeCompare(first.get(b.id) ?? "9999") || a.id - b.id);
+  return new Map(order.map((e, i) => [e.id, i < SERIES ? `var(--series-${i + 1})` : "var(--muted-foreground)"]));
+}
+
+export interface Segment {
+  employerId: number;
+  from: string;
+  to: string;
+  /** Months paid in this stretch. */
+  months: number;
+  /** 0: the band; 1, 2…: an employer at the same time as another, below it. */
+  lane: number;
+}
+
+/** The employers in sequence on one band: each employer's stretches of
+ *  consecutive months (a month without a payslip ends one). Two employers at
+ *  the same time take two lanes: each stretch goes on the first lane free by
+ *  then, the longer of two starting together on the band. */
+export function timeline(payslips: Payslip[]): { segments: Segment[]; lanes: number } {
+  const months = new Map<number, Set<string>>();
+  for (const p of payslips) months.set(p.employer_id, (months.get(p.employer_id) ?? new Set()).add(p.period));
+  const runs: Omit<Segment, "lane">[] = [];
+  for (const [employerId, set] of months) {
+    const sorted = [...set].sort();
+    let run = { employerId, from: sorted[0], to: sorted[0], months: 1 };
+    for (const m of sorted.slice(1)) {
+      if (m === addMonths(run.to, 1)) run = { ...run, to: m, months: run.months + 1 };
+      else { runs.push(run); run = { employerId, from: m, to: m, months: 1 }; }
+    }
+    runs.push(run);
+  }
+  runs.sort((a, b) => a.from.localeCompare(b.from) || b.to.localeCompare(a.to) || a.employerId - b.employerId);
+  const ends: string[] = [];
+  const segments = runs.map((r) => {
+    let lane = ends.findIndex((end) => end < r.from);
+    if (lane < 0) lane = ends.push(r.to) - 1;
+    else ends[lane] = r.to;
+    return { ...r, lane };
+  });
+  return { segments, lanes: ends.length };
+}
+
+/** Month by month, each employer's gross or net paid, for bars stacked by employer. */
+export function employerSeries(payslips: Payslip[], metric: "gross" | "net", months: string[]): Record<string, number | string>[] {
+  return months.map((period) => {
+    const row: Record<string, number | string> = { period };
+    for (const p of payslips) {
+      if (p.period !== period) continue;
+      const key = `e${p.employer_id}`;
+      row[key] = (Number(row[key]) || 0) + (metric === "gross" ? p.gross_cents : p.net_paid_cents);
+    }
+    return row;
+  });
+}
+
 // ── The period shown ────────────────────────────────────────────────────────
 
-export type Range = { kind: "year"; year: number } | { kind: "12m" } | { kind: "all" };
+export type Range =
+  | { kind: "year"; year: number }
+  | { kind: "12m" }
+  | { kind: "all" }
+  | { kind: "custom"; from: string; to: string };
+
+export interface Bounds { from: string; to: string }
+
+/** "2026-11" + 3 → "2027-02". */
+export function addMonths(period: string, n: number): string {
+  const [y, m] = period.split("-").map(Number);
+  const i = y * 12 + (m - 1) + n;
+  return `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`;
+}
+
+export function monthsBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let m = from; m <= to; m = addMonths(m, 1)) out.push(m);
+  return out;
+}
+
+/** The months a period covers. « 12 derniers mois »: the twelve ending with
+ *  the latest payslip; a year: January to December; « Tout »: the first
+ *  payslip to the last; a custom period as chosen. Null with nothing to show. */
+export function bounds(payslips: Payslip[], range: Range): Bounds | null {
+  const periods = payslips.map((p) => p.period).sort();
+  if (range.kind === "year") return { from: `${range.year}-01`, to: `${range.year}-12` };
+  if (range.kind === "custom") return range.from <= range.to ? { from: range.from, to: range.to } : { from: range.to, to: range.from };
+  const latest = periods.at(-1);
+  if (!latest) return null;
+  return range.kind === "all" ? { from: periods[0], to: latest } : { from: addMonths(latest, -11), to: latest };
+}
+
+export const within = (payslips: Payslip[], b: Bounds | null): Payslip[] =>
+  b ? payslips.filter((p) => p.period >= b.from && p.period <= b.to) : [];
 
 export function inRange(payslips: Payslip[], range: Range): Payslip[] {
-  if (range.kind === "all") return payslips;
-  if (range.kind === "year") return payslips.filter((p) => p.period.startsWith(`${range.year}-`));
-  const latest = payslips.map((p) => p.period).sort().at(-1);
-  if (!latest) return [];
-  const [y, m] = latest.split("-").map(Number);
-  const from = `${m === 12 ? y : y - 1}-${String(m === 12 ? 1 : m + 1).padStart(2, "0")}`;
-  return payslips.filter((p) => p.period >= from);
+  return within(payslips, bounds(payslips, range));
+}
+
+/** The same months a year earlier, up to the latest month paid in the period:
+ *  January to September of this year against January to September of last
+ *  year, never 9 months against 12. Null when the period has no payslip, or
+ *  spans more than a year (it would be compared with part of itself). */
+export function yearBefore(b: Bounds, shown: Payslip[]): Bounds | null {
+  const latest = shown.map((p) => p.period).sort().at(-1);
+  if (!latest || addMonths(b.from, 12) <= b.to) return null;
+  return { from: addMonths(b.from, -12), to: addMonths(latest < b.to ? latest : b.to, -12) };
+}
+
+/** A change in per mille of what it is compared with; null without a base. */
+export function change(now: number, before: number): number | null {
+  return before > 0 ? Math.round(((now - before) / before) * 1000) : null;
+}
+
+/** "septembre 2026", "janvier – septembre 2026", "mars 2025 – février 2026". */
+export function spanLabel(b: Bounds): string {
+  if (b.from === b.to) return monthName(b.from);
+  if (b.from.slice(0, 4) === b.to.slice(0, 4)) return `${monthName(b.from).split(" ")[0]} – ${monthName(b.to)}`;
+  return `${monthName(b.from)} – ${monthName(b.to)}`;
 }
 
 const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];

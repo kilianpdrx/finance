@@ -177,18 +177,23 @@ async def _rules(db: AsyncSession, pid: int, employer_id: Optional[int]) -> dict
 async def read_payslips(
     files: List[UploadFile] = File(...),
     pack: str = Query(..., description="La situation dont le vocabulaire lit les fiches"),
-    employer_id: Optional[int] = Query(None),
+    employer_id: Optional[int] = Query(None, description="L'employeur à retenir quand la fiche n'imprime aucun nom connu"),
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
-    """Read payslip PDFs into proposals. Saves NOTHING — not even the files."""
+    """Read payslip PDFs into proposals. Saves NOTHING — not even the files.
+
+    Each file's employer is the one whose name it prints, among this profile's;
+    else `employer_id`, else none (the review asks). Its classifications read
+    the lines: a second employer's payslip is never read with the first one's."""
     if pack not in packs.PACKS:
         raise HTTPException(400, "Situation inconnue.")
     if len(files) > MAX_FILES:
         raise HTTPException(400, f"{MAX_FILES} fichiers au plus à la fois.")
     if employer_id is not None:
         await _employer(db, pid, employer_id)
-    rules = await _rules(db, pid, employer_id)
+    names = {e.id: e.name for e in (await db.execute(select(Employer).where(Employer.profile_id == pid))).scalars()}
+    rules: dict[Optional[int], dict] = {}
     out = []
     for f in files:
         data = await f.read(reading.MAX_BYTES + 1)
@@ -196,16 +201,20 @@ async def read_payslips(
         duplicate = (await db.execute(select(Payslip.id).join(Document, Payslip.document_id == Document.id).where(
             Document.profile_id == pid, Document.sha256 == digest))).scalars().first()
         base = {"filename": f.filename or "fiche.pdf", "sha256": digest, "duplicate_payslip_id": duplicate,
-                "pack": pack, "lines": [], "totals": {}, "figures": None, "checks": {},
+                "employer_id": None, "pack": pack, "lines": [], "totals": {}, "figures": None, "checks": {},
                 "period": None, "pay_date": None, "error": None}
         try:
-            p = reading.read(data, pack, rules)
+            text = reading.text_of(data)
         except reading.ReadError as e:
             out.append(PayslipReadOut(**{**base, "error": str(e)}))
             continue
+        employer = reading.find_employer(text, names) or employer_id
+        if employer not in rules:
+            rules[employer] = await _rules(db, pid, employer)
+        p = reading.propose(text, pack, rules[employer])
         out.append(PayslipReadOut(**{
-            **base, "period": p.period, "pay_date": p.pay_date, "totals": p.totals, "figures": p.figures or None,
-            "checks": p.checks, "lines": [vars(ln) for ln in p.lines],
+            **base, "employer_id": employer, "period": p.period, "pay_date": p.pay_date, "totals": p.totals,
+            "figures": p.figures or None, "checks": p.checks, "lines": [vars(ln) for ln in p.lines],
         }))
     return out
 

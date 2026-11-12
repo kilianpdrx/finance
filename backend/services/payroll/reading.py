@@ -312,14 +312,43 @@ def figures(lines: list[Line], totals: dict) -> dict:
     }
 
 
-def read(data: bytes, pack: str, rules: Optional[dict] = None) -> Proposal:
-    """The whole proposal for one PDF. Raises ReadError when it is not a
-    readable PDF; a PDF without text comes back with `checks["no_text"]`."""
+def text_of(data: bytes) -> str:
+    """A payslip file's text. Raises ReadError (French) when it is not a
+    readable PDF; '' for a scan."""
     if len(data) > MAX_BYTES:
         raise ReadError("Fichier trop volumineux (5 Mo au plus).")
     if not is_pdf(data):
         raise ReadError("Ce fichier n'est pas un PDF.")
-    text = pdf_text(data)
+    return pdf_text(data)
+
+
+def find_employer(text: str, employers: dict[int, str]) -> Optional[int]:
+    """The employer whose name the payslip prints, among the user's ({id: name}).
+    Matched on whole words of `normalize_label` (« Beispiel AG » in « BEISPIEL
+    AG, Bahnhofstrasse 1 »). When several names appear — a name inside another,
+    « Muster » and « Muster Services » — the longest wins; a tie is no answer:
+    the user chooses."""
+    page = f" {vocab.normalize_label(text)} "
+    found: dict[int, int] = {}
+    for employer_id, name in employers.items():
+        key = vocab.normalize_label(name)
+        if key and f" {key} " in page:
+            found[employer_id] = len(key)
+    if not found:
+        return None
+    longest = max(found.values())
+    best = [e for e, n in found.items() if n == longest]
+    return best[0] if len(best) == 1 else None
+
+
+def read(data: bytes, pack: str, rules: Optional[dict] = None) -> Proposal:
+    """The whole proposal for one PDF. Raises ReadError when it is not a
+    readable PDF; a PDF without text comes back with `checks["no_text"]`."""
+    return propose(text_of(data), pack, rules)
+
+
+def propose(text: str, pack: str, rules: Optional[dict] = None) -> Proposal:
+    """The proposal for a payslip's text (`text_of`)."""
     if not text.strip():
         return Proposal(pack, None, None, [], {}, checks={"no_text": True})
     lines, totals = read_rows(text, pack, rules)

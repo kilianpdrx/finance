@@ -1,4 +1,4 @@
-"""What a situation is: France or Zurich — its settings, its words, its board.
+"""What a situation is: France or Zurich — its settings and its words.
 
 The interface builds the situation form from `describe()`. A new situation (a
 canton, a cross-border regime) is a new entry here plus its words in vocab.py,
@@ -6,11 +6,8 @@ not a new screen. Settings are checked by `clean_params`: an unknown key is
 dropped, a missing one takes its default, a wrong value is refused in French.
 """
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Optional
-
-# The board's widgets, in their default order (web/lib/payroll-widgets.ts).
-DEFAULT_WIDGETS = ("month", "ytd", "evolution", "rates", "deposits", "payslips")
 
 
 @dataclass(frozen=True)
@@ -35,14 +32,11 @@ class Pack:
     country: str
     currency: str
     params: tuple
-    widgets: tuple = field(default=DEFAULT_WIDGETS)
 
 
 PACKS = {
     "ch_zh": Pack(
         id="ch_zh", label="Suisse · Zurich", country="CH", currency="CHF",
-        # « Rückbehalt »: pay held back until the end of a (temporary) contract.
-        widgets=("month", "retained", *DEFAULT_WIDGETS[1:]),
         params=(
             Param("regime", "Imposition", "select", "source", options=(
                 ("source", "Impôt à la source (permis B, L…)"),
@@ -78,7 +72,7 @@ PACKS = {
 
 def describe() -> list[dict]:
     return [{
-        "id": p.id, "label": p.label, "country": p.country, "currency": p.currency, "widgets": list(p.widgets),
+        "id": p.id, "label": p.label, "country": p.country, "currency": p.currency,
         "params": [{
             "key": q.key, "label": q.label, "type": q.type, "default": q.default, "help": q.help,
             "options": [{"value": v, "label": lbl} for v, lbl in q.options], "min": q.min, "max": q.max,

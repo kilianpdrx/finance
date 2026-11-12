@@ -99,6 +99,20 @@ export function draftFromRead(read: PayslipRead, file: File, employerId: number 
   };
 }
 
+/** The employer of a payslip read: the one whose name it prints (found by
+ *  `/read`); else the only employer there is — unless that one already has
+ *  this month, saved or earlier in the same import: a second employer is then
+ *  likelier than a duplicate, and the user chooses. Assigning it anyway left
+ *  « remplacer » as the only way to save a second job's payslip. */
+export function employerForRead(read: PayslipRead, employers: { id: number }[], payslips: Payslip[], earlier: Draft[]): number | null {
+  if (read.employer_id != null) return read.employer_id;
+  if (employers.length !== 1) return null;
+  const only = employers[0].id;
+  const taken = read.period != null && (payslips.some((p) => p.employer_id === only && p.period === read.period)
+    || earlier.some((d) => d.employerId === only && d.period === read.period));
+  return taken ? null : only;
+}
+
 export function draftManual(employerId: number | null, period: string): Draft {
   return { ...blank(employerId), period };
 }
@@ -281,6 +295,9 @@ export interface Comparison {
   payDateBack: boolean;
   /** No payslip of this employer before this month. */
   first: boolean;
+  /** This employer already has a payslip for this month: saved, or earlier in
+   *  this import. One per employer and month — another employer's is welcome. */
+  clash: "saved" | "draft" | null;
 }
 
 export const nextMonth = (period: string) => {
@@ -292,7 +309,9 @@ export const nextMonth = (period: string) => {
  *  rates, and months that follow each other. */
 export function compare(d: Draft, payslips: Payslip[], drafts: Draft[] = []): Comparison {
   const ref = referenceFor(d, payslips, drafts);
-  const empty: Comparison = { ref, previous: new Map(), fresh: new Set(), missing: [], gapMonths: [], payDateBack: false, first: false };
+  const empty: Comparison = {
+    ref, previous: new Map(), fresh: new Set(), missing: [], gapMonths: [], payDateBack: false, first: false, clash: clashOf(d, payslips, drafts),
+  };
   if (!ref) return { ...empty, first: d.employerId != null && validPeriod(d.period) };
   const matched = pairs(d.lines, ref.lines);
   const used = new Set(matched.values());
@@ -306,6 +325,15 @@ export function compare(d: Draft, payslips: Payslip[], drafts: Draft[] = []): Co
     gapMonths,
     payDateBack: Boolean(ref.payDate && d.payDate && d.payDate < ref.payDate),
   };
+}
+
+function clashOf(d: Draft, payslips: Payslip[], drafts: Draft[]): Comparison["clash"] {
+  if (d.saved || d.employerId == null || !validPeriod(d.period)) return null;
+  if (payslips.some((p) => p.employer_id === d.employerId && p.period === d.period && p.id !== d.payslipId)) return "saved";
+  const at = drafts.findIndex((x) => x.uid === d.uid);
+  const other = drafts.some((x, i) => x.uid !== d.uid && (x.saved || i < at) && !x.error && x.duplicatePayslipId == null
+    && x.employerId === d.employerId && x.period === d.period);
+  return other ? "draft" : null;
 }
 
 /** What the comparison says, sentence by sentence. */
@@ -332,9 +360,9 @@ export function comparisonNotes(c: Comparison): { tone: "warn" | "ok"; text: str
   return notes;
 }
 
-/** A line gone, a line new or a month missing: worth a look, never a block. */
+/** A line gone, a line new, a month missing, the month already there: worth a look. */
 export const comparisonWarns = (c: Comparison | undefined): boolean =>
-  Boolean(c && (c.fresh.size || c.missing.length || c.gapMonths.length || c.payDateBack));
+  Boolean(c && (c.fresh.size || c.missing.length || c.gapMonths.length || c.payDateBack || c.clash));
 
 // ── Figures and checks ──────────────────────────────────────────────────────
 
@@ -394,11 +422,13 @@ export function draftStatus(d: Draft, comparison?: Comparison): DraftStatus {
   return "ready";
 }
 
-/** What can be saved at all: every line classified, a month, an employer. */
-export function canSave(d: Draft): boolean {
+/** What can be saved at all: every line classified, a month, an employer —
+ *  and that employer's month free, or « remplacer » ticked for a saved one. */
+export function canSave(d: Draft, comparison?: Comparison): boolean {
   const c = checkDraft(d);
+  const clash = comparison?.clash === "draft" || (comparison?.clash === "saved" && !d.replace);
   return !d.saved && !d.error && d.duplicatePayslipId == null && c.unclassified === 0 && c.periodOk && c.employerOk
-    && hasGross(d) && d.net.trim() !== "";
+    && hasGross(d) && d.net.trim() !== "" && !clash;
 }
 
 /** Lines in the order shown — block by block — so `position` keeps it. */

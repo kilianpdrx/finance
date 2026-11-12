@@ -1871,6 +1871,10 @@ export interface paths {
         /**
          * Read Payslips
          * @description Read payslip PDFs into proposals. Saves NOTHING — not even the files.
+         *
+         *     Each file's employer is the one whose name it prints, among this profile's;
+         *     else `employer_id`, else none (the review asks). Its classifications read
+         *     the lines: a second employer's payslip is never read with the first one's.
          */
         post: operations["read_payslips_api_payroll_read_post"];
         delete?: never;
@@ -3722,6 +3726,8 @@ export interface components {
             error: string | null;
             /** Duplicate Payslip Id */
             duplicate_payslip_id: number | null;
+            /** Employer Id */
+            employer_id: number | null;
             /** Pack */
             pack: string;
             /** Period */
@@ -8315,6 +8321,7 @@ export interface operations {
             query: {
                 /** @description La situation dont le vocabulaire lit les fiches */
                 pack: string;
+                /** @description L'employeur à retenir quand la fiche n'imprime aucun nom connu */
                 employer_id?: number | null;
             };
             header?: {

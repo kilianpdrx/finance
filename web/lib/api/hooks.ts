@@ -1282,7 +1282,6 @@ export interface PayrollPack {
   label: string;
   country: string;
   currency: string;
-  widgets: string[];
   params: PayrollParam[];
 }
 export type PayrollSituation = components["schemas"]["PayrollSituationOut"];

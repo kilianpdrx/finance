@@ -4,14 +4,16 @@ import { test, expect, expectAppReady, useProfile } from "./fixtures";
 
 /**
  * Salaire & impôts: a situation, a payslip PDF read on this computer and
- * checked before it is saved, the salary found in the bank, a board arranged
- * by the user. The PDFs are INVENTED (e2e/files): a Zurich « Lohnabrechnung »
- * for September 2026 — 9 000 gross, a canteen line the vocabulary does not
- * know, 7 005,75 paid — and October, without the NBU line and with 310 held
- * back until the end of the contract (« Rückbehalt »).
+ * checked before it is saved, the salary found in the bank, the page's three
+ * tabs. The PDFs are INVENTED (e2e/files): a Zurich « Lohnabrechnung » of
+ * Beispiel AG for September 2026 — 9 000 gross, a canteen line the vocabulary
+ * does not know, 7 005,75 paid — October, without the NBU line and with 310
+ * held back until the end of the contract (« Rückbehalt »), and a second job's
+ * September at Muster GmbH.
  */
 const PDF = fileURLToPath(new URL("./files/lohnabrechnung-2026-09-demo.pdf", import.meta.url));
 const PDF_OCTOBER = fileURLToPath(new URL("./files/lohnabrechnung-2026-10-demo.pdf", import.meta.url));
+const PDF_SECOND_JOB = fileURLToPath(new URL("./files/lohnabrechnung-2026-09-muster-demo.pdf", import.meta.url));
 
 /** The labels of a block, top to bottom. */
 const labelsIn = (block: Locator) =>
@@ -82,18 +84,22 @@ test.describe("Salaire & impôts", () => {
       await expect(file).toContainText("enregistrée");
       await importer.getByRole("button", { name: "Fermer" }).first().click();
 
-      // The board: the month, from gross to net; the salary found in the bank.
+      // The month, from gross to net, in « Par employeur »; the salary found in the bank, in the list.
+      await expect(page.getByLabel("Évolution")).toBeVisible();
+      await expect(page.getByLabel("Évolution")).not.toContainText("hausse");
+      await page.getByRole("tab", { name: "Par employeur" }).click();
       const month = page.getByLabel("Le mois");
       await expect(month).toContainText(/7\s005,75/);
       await expect(month).toContainText("Impôt à la source");
-      await expect(page.getByLabel("Versements", { exact: true })).toContainText("versé");
-      await expect(page.getByLabel("Évolution")).toBeVisible();
+      await page.getByRole("tab", { name: "Fiches de paie" }).click();
+      await expect(page.getByRole("table", { name: "Fiches de paie" })).toContainText("versé");
 
       // October follows September: its order, its types, and what changed.
       await page.getByRole("button", { name: "Importer des fiches" }).first().click();
       await importer.getByLabel("Fiches de paie (PDF)").setInputFiles(PDF_OCTOBER);
       const october = importer.getByRole("button", { name: /octobre 2026/ });
       await expect(october).toContainText("à vérifier");
+      await expect(october).toContainText("Beispiel AG");                  // its name is on the PDF
       await expect(importer.getByText("Fait suite à septembre 2026.")).toBeVisible();
       expect(await labelsIn(contributions)).toEqual(["AHV/IV/EO", "BVG / Pensionskasse", "ALV"]);
       expect(await labelsIn(importer.getByRole("rowgroup", { name: "Retenu jusqu'à la fin du contrat" })))
@@ -108,24 +114,56 @@ test.describe("Salaire & impôts", () => {
       await importer.getByRole("button", { name: "Enregistrer", exact: true }).click();
       await expect(october).toContainText("enregistrée");
       await importer.getByRole("button", { name: "Fermer" }).first().click();
+
+      // Held back until the end of the contract: in the month, and in the rates beside « prélevé ».
+      await page.getByRole("tab", { name: "Par employeur" }).click();
       await expect(page.getByLabel("Le mois")).toContainText("à recevoir en fin de contrat");
       await expect(page.getByLabel("Le mois")).toContainText(/310,00/);
+      await page.getByRole("tab", { name: "Synthèse" }).click();
       // The rate of the year: its tax over its gross (950,40 twice over 9 000 twice).
       await expect(page.getByRole("table", { name: "Taux par année" })).toContainText(/2026\s·\s2 mois.*10,56 %/);
+      const rates = page.getByLabel("Taux", { exact: true });
+      await expect(rates).toContainText("Prélevé (hors retenu)");
+      await expect(rates).toContainText("Non versé (retenu compris)");
       const held = page.getByLabel("Retenues en attente", { exact: true });
       await expect(held.getByLabel("En attente")).toHaveText(/310,00/);
       await expect(held.getByRole("table", { name: "Retenues par mois" })).toContainText("octobre 2026");
+      await expect(page.getByRole("button", { name: "Personnaliser" })).toHaveCount(0);
 
-      // The board is the user's: a card hidden stays hidden.
-      await page.getByRole("button", { name: "Personnaliser" }).click();
-      const custom = page.getByRole("dialog", { name: "Personnaliser le tableau" });
-      await custom.getByLabel("Afficher « Taux »").click();
-      await custom.getByRole("button", { name: "Enregistrer" }).click();
-      await expect(page.getByText("Tableau enregistré")).toBeVisible();
-      await page.reload();
-      await expectAppReady(page);
-      await expect(page.getByLabel("Le mois")).toBeVisible();
-      await expect(page.getByLabel("Taux", { exact: true })).toHaveCount(0);
+      // A second job, the same September: not taken for Beispiel AG's, saved beside it.
+      await page.getByRole("button", { name: "Importer des fiches" }).first().click();
+      await importer.getByLabel("Fiches de paie (PDF)").setInputFiles(PDF_SECOND_JOB);
+      const second = importer.getByRole("button", { name: /septembre 2026/ });
+      await expect(second).toContainText("Employeur à choisir");
+      await importer.getByLabel("Employeur").click();
+      await page.getByRole("option", { name: "+ Nouvel employeur…" }).click();
+      await importer.getByLabel("Nom").fill("Muster GmbH");
+      await importer.getByRole("button", { name: "Ajouter" }).click();
+      await importer.getByLabel("Ce que fait Kantinenabzug").click();
+      await page.getByRole("option", { name: "Autre retenue" }).click();
+      await expect(second).toContainText("prête");
+      await importer.getByRole("button", { name: "Enregistrer", exact: true }).click();
+      await expect(second).toContainText("enregistrée");
+      await importer.getByRole("button", { name: "Fermer" }).first().click();
+
+      // Both employers on the band, in sequence; a click shows one of them everywhere.
+      const band = page.getByLabel("Frise des employeurs");
+      await expect(band.getByRole("button", { name: "Beispiel AG : septembre – octobre 2026, 2 mois" })).toBeVisible();
+      const muster = band.getByRole("button", { name: "Muster GmbH : septembre 2026, 1 mois" });
+      await expect(muster).toBeVisible();
+      await page.getByRole("tab", { name: "Fiches de paie" }).click();
+      const list = page.getByRole("table", { name: "Fiches de paie" });
+      await expect(list.getByRole("row")).toHaveCount(4);                 // the header, then every payslip
+      await page.getByRole("tab", { name: "Synthèse" }).click();
+      await muster.click();
+      await expect(page.getByText("1 fiche", { exact: true })).toBeVisible();
+      await page.getByRole("tab", { name: "Fiches de paie" }).click();
+      await expect(list.getByRole("row")).toHaveCount(2);
+      await page.getByRole("button", { name: "Afficher toutes les fiches" }).click();
+      await expect(list.getByRole("row")).toHaveCount(4);
+      await page.getByRole("tab", { name: "Par employeur" }).click();
+      await expect(page.getByRole("article", { name: "Muster GmbH" })).toContainText("compte non choisi");
+      await expect(page.getByRole("article", { name: "Beispiel AG" })).toContainText("1 sur 2");
     } finally {
       await api.deleteProfile(profile.id);
     }
