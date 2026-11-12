@@ -7,9 +7,11 @@
 #
 # Sens unique : l'application installée n'est que LUE. La copie, elle, est jetable —
 # relancer ce script la remplace, et ce qui y a été modifié entre-temps est perdu.
-# `./start.sh` reconnaît une copie (fichier `.copie`) : il le dit, et ne lance pas
+# `./start.sh` reconnaît une copie (fichier `.copie`) : il la RAFRAÎCHIT à chaque
+# lancement (FRESH_DATA=0 ./start.sh la garde telle quelle), le dit, et ne lance pas
 # les tâches réseau (cours, taux, synchronisation du courtier), qui restent
-# l'affaire de l'application installée.
+# l'affaire de l'application installée. Un dossier sans base (une nouvelle copie
+# du dépôt) reçoit sa première copie de la même façon.
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -90,4 +92,6 @@ PY
 
 echo "Source      : $SRC (lue seulement)"
 echo "Destination : $DEST"
-echo "Lancez ./start.sh pour ouvrir l'application de développement sur cette copie."
+if [ -z "${FROM_START_SH:-}" ]; then
+  echo "Lancez ./start.sh pour ouvrir l'application de développement sur cette copie."
+fi
