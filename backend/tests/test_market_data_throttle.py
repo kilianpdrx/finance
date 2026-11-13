@@ -17,13 +17,9 @@ from services import market_data as md
 @pytest.fixture(autouse=True)
 def _reset_guards():
     """Module-level guards are process-wide; reset around every test."""
-    md._backoff._fails.clear()
-    md._backoff._until.clear()
-    md._last_call.clear()
+    md.reset_provider_state()
     yield
-    md._backoff._fails.clear()
-    md._backoff._until.clear()
-    md._last_call.clear()
+    md.reset_provider_state()
 
 
 @pytest.mark.asyncio
