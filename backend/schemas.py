@@ -976,3 +976,15 @@ class PayslipLabelRuleOut(BaseModel):
     label_key: str
     kind: PayslipKind
 
+
+
+class PayrollFxRateOut(BaseModel):
+    currency: str
+    period: str                 # "YYYY-MM"
+    rate: Optional[float]       # null: no rate found — that month is left out of the totals
+
+
+class PayrollFxOut(BaseModel):
+    """Rates to show payslips of several currencies in one (`GET /payroll/fx`)."""
+    to: str
+    rates: List[PayrollFxRateOut]

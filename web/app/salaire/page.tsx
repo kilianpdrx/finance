@@ -20,9 +20,12 @@ import { EvolutionCard, RatesCard, RetainedCard, SummaryTiles, hasRetained } fro
 import { EmployerCards, EmployerCompare, MonthCard } from "@/components/payroll/by-employer";
 import { PayslipList } from "@/components/payroll/payslip-list";
 import {
-  usePayrollEmployers, usePayrollMutations, usePayrollPacks, usePayrollSituations, usePayslips, type Payslip,
+  useBaseCurrency, usePayrollEmployers, usePayrollFx, usePayrollMutations, usePayrollPacks, usePayrollSituations, usePayslips,
+  type Payslip,
 } from "@/lib/api/hooks";
-import { bounds, employerColors, monthName, situationFor, within, yearBefore, type Bounds, type Range } from "@/lib/payroll";
+import {
+  bounds, convertPayslips, employerColors, monthName, situationFor, within, yearBefore, type Bounds, type Range,
+} from "@/lib/payroll";
 
 type Tab = "synthese" | "employeurs" | "fiches";
 const ALL = "__all__";
@@ -37,6 +40,7 @@ export default function SalairePage() {
   const { data: employers = [] } = usePayrollEmployers();
   const { data: payslips = [], isLoading: loadingPayslips } = usePayslips();
   const { deletePayslip } = usePayrollMutations();
+  const baseCurrency = useBaseCurrency();
   const confirm = useConfirm();
 
   const [situationOpen, setSituationOpen] = useState(false);
@@ -56,18 +60,31 @@ export default function SalairePage() {
   const paying = [...colors.keys()].map((id) => employers.find((e) => e.id === id)!)
     .filter((e) => payslips.some((p) => p.employer_id === e.id));
   const employer = employerId != null && paying.some((e) => e.id === employerId) ? employerId : null;
-  const currencies = [...new Set(payslips.map((p) => p.currency))];
-  const currency = employer != null ? payslips.find((p) => p.employer_id === employer)!.currency
-    : chosenCurrency && currencies.includes(chosenCurrency) ? chosenCurrency : (payslips.at(-1)?.currency ?? pack?.currency ?? "EUR");
 
+  // Every employer, whatever its currency. Paid in several, the totals and charts
+  // that add them up are in one — the base currency unless another is chosen —
+  // each payslip converted at its month's rate; one employer's figures stay in its own.
   const ofEmployer = payslips.filter((p) => employer == null || p.employer_id === employer);
-  const all = ofEmployer.filter((p) => p.currency === currency);
+  const currencies = [...new Set(ofEmployer.map((p) => p.currency))].sort();
+  const mixed = currencies.length > 1;
+  const totalsChoices = [...new Set([baseCurrency, ...currencies])];
+  const currency = mixed ? (chosenCurrency && totalsChoices.includes(chosenCurrency) ? chosenCurrency : baseCurrency)
+    : (currencies[0] ?? pack?.currency ?? baseCurrency);
+  const fx = usePayrollFx(mixed ? currency : null);
+  const pending = mixed && fx.isPending;
+  const converted = mixed ? convertPayslips(ofEmployer, currency, fx.data?.rates ?? []) : { payslips: ofEmployer, missing: [] };
+  const all = converted.payslips;
+
   const years = [...new Set(ofEmployer.map((p) => p.period.slice(0, 4)))].sort().reverse();
   const range: Range = rangeKey === "all" ? { kind: "all" } : rangeKey === "12m" ? { kind: "12m" }
     : rangeKey === "custom" ? (custom ? { kind: "custom", ...custom } : { kind: "12m" }) : { kind: "year", year: Number(rangeKey) };
-  const shownBounds = bounds(all, range);
+  const shownBounds = bounds(ofEmployer, range);
+  const own = within(ofEmployer, shownBounds);
   const shown = within(all, shownBounds);
-  const previous = range.kind === "all" || !shownBounds ? null : yearBefore(shownBounds, shown);
+  const missing = within(converted.missing, shownBounds);
+  const previous = range.kind === "all" || !shownBounds ? null : yearBefore(shownBounds, own);
+  /** Totals and charts hand back converted copies: edit and delete the payslip itself. */
+  const original = (p: Payslip) => payslips.find((x) => x.id === p.id) ?? p;
 
   const remove = async (p: Payslip) => {
     const ok = await confirm({
@@ -81,11 +98,15 @@ export default function SalairePage() {
   };
 
   const view: PayrollView = {
-    payslips: shown, all, bounds: shownBounds, before: previous ? { bounds: previous, payslips: within(all, previous) } : null,
-    employers, colors, currency, onEdit: (p) => setDialog({ kind: "edit", payslip: p }), onDelete: remove,
+    payslips: shown, all, own, ownAll: ofEmployer, bounds: shownBounds,
+    before: previous ? { bounds: previous, payslips: within(all, previous) } : null,
+    employers, colors, currency, pending,
+    // Only the currencies the period's payslips were actually converted from.
+    converted: mixed ? { from: [...new Set(own.map((p) => p.currency))].filter((c) => c !== currency).sort(), missing } : null,
+    onEdit: (p) => setDialog({ kind: "edit", payslip: original(p) }), onDelete: (p) => remove(original(p)),
   };
   const choosePeriod = (v: string) => {
-    if (v === "custom" && !custom) setCustom(shownBounds ?? bounds(all, { kind: "12m" }));
+    if (v === "custom" && !custom) setCustom(shownBounds ?? bounds(ofEmployer, { kind: "12m" }));
     setRangeKey(v);
   };
   const showAll = () => { setRangeKey("all"); setEmployerId(null); };
@@ -172,16 +193,28 @@ export default function SalairePage() {
               </SelectContent>
             </Select>
           )}
-          {currencies.length > 1 && employer == null && (
-            <Select value={currency} onValueChange={setChosenCurrency}>
-              <SelectTrigger aria-label="Devise" className="h-9 w-28"><SelectValue /></SelectTrigger>
-              <SelectContent>{currencies.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-            </Select>
+          {mixed && (
+            <span className="flex items-center gap-1.5 text-sm">
+              <span className="text-muted-foreground">Totaux en</span>
+              <Select value={currency} onValueChange={setChosenCurrency}>
+                <SelectTrigger aria-label="Devise des totaux" className="h-9 w-24"><SelectValue /></SelectTrigger>
+                <SelectContent>{totalsChoices.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+              </Select>
+            </span>
           )}
           <span className="text-xs text-muted-foreground">
-            {shown.length} fiche{shown.length > 1 ? "s" : ""}{currencies.length > 1 && ` en ${currency}`}
+            {own.length} fiche{own.length > 1 ? "s" : ""}
+            {view.converted && view.converted.from.length > 0
+              && ` · ${view.converted.from.join(", ")} converti${view.converted.from.length > 1 ? "s" : ""} en ${currency} au taux de chaque mois`}
           </span>
         </div>
+        {!pending && missing.length > 0 && (
+          <p role="status" className="rounded-lg bg-warning/15 px-3 py-2 text-xs">
+            {missing.length} fiche{missing.length > 1 ? "s" : ""} en {[...new Set(missing.map((p) => p.currency))].join(", ")} sans taux
+            de change vers {currency} : absente{missing.length > 1 ? "s" : ""} des totaux et des graphiques, présente{missing.length > 1 ? "s" : ""} dans
+            les cartes « Par employeur » et dans « Fiches de paie ».
+          </p>
+        )}
 
         <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
           <TabsList>
@@ -191,21 +224,23 @@ export default function SalairePage() {
           </TabsList>
 
           <TabsContent value="synthese" className="space-y-4">
-            <SummaryTiles view={view} />
+            {pending ? <Skeleton className="h-24 w-full rounded-2xl" /> : <SummaryTiles view={view} />}
             <EmployerTimeline payslips={within(payslips, shownBounds)} bounds={shownBounds} employers={employers} colors={colors}
               selected={employer} onSelect={(id) => setEmployerId(id === employer ? null : id)}
               onGap={(id) => { setEmployerId(id); setTab("fiches"); }}
               onShowAll={range.kind === "all" ? undefined : () => setRangeKey("all")} />
-            <div className="grid gap-4 lg:grid-flow-row-dense lg:grid-cols-2">
-              <div className="min-w-0 lg:col-span-2"><EvolutionCard view={view} /></div>
-              <RatesCard view={view} className={hasRetained(view) ? undefined : "lg:col-span-2"} />
-              {hasRetained(view) && <RetainedCard view={view} />}
-            </div>
+            {pending ? <Skeleton className="h-80 w-full rounded-2xl" /> : (
+              <div className="grid gap-4 lg:grid-flow-row-dense lg:grid-cols-2">
+                <div className="min-w-0 lg:col-span-2"><EvolutionCard view={view} /></div>
+                <RatesCard view={view} className={hasRetained(view) ? undefined : "lg:col-span-2"} />
+                {hasRetained(view) && <RetainedCard view={view} />}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="employeurs" className="space-y-4">
             <EmployerCards view={view} onShowPayslips={(id) => { setEmployerId(id); setTab("fiches"); }} />
-            <EmployerCompare view={view} />
+            {pending ? <Skeleton className="h-72 w-full rounded-2xl" /> : <EmployerCompare view={view} />}
             <MonthCard view={view} />
           </TabsContent>
 

@@ -7,7 +7,9 @@ employer, an account or a payslip checks it belongs to that profile.
 
 Nothing here logs a label, an amount, a file name or a document's text.
 """
+import calendar
 import json
+from datetime import date
 from typing import List, Optional
 from urllib.parse import quote
 
@@ -22,9 +24,10 @@ from dependencies import current_profile_id
 from models import Document, Employer, PayrollSituation, Payslip, PayslipLabelRule, PayslipLine
 from ownership import require_account
 from schemas import (
-    EmployerIn, EmployerOut, PayrollSituationIn, PayrollSituationOut, PayslipIn, PayslipLabelRuleOut, PayslipOut,
-    PayslipReadOut,
+    EmployerIn, EmployerOut, PayrollFxOut, PayrollSituationIn, PayrollSituationOut, PayslipIn, PayslipLabelRuleOut,
+    PayslipOut, PayslipReadOut,
 )
+from services.fx import RateCache
 from services.payroll import matching, packs, reading, vocab
 
 router = APIRouter()
@@ -311,6 +314,29 @@ async def list_payslips(db: AsyncSession = Depends(get_db), pid: int = Depends(c
     rows = list((await db.execute(select(Payslip).where(Payslip.profile_id == pid)
                                   .order_by(Payslip.period, Payslip.employer_id))).scalars())
     return await _payslips_out(db, pid, rows)
+
+
+def _month_end(period: str) -> date:
+    """The day a month's payslip is converted at: its last day, today for the
+    current month — as analytics converts its months."""
+    y, m = int(period[:4]), int(period[5:7])
+    return min(date(y, m, calendar.monthrange(y, m)[1]), date.today())
+
+
+@router.get("/fx", response_model=PayrollFxOut)
+async def payslip_rates(to: str = Query(..., pattern="^[A-Z]{3}$"), db: AsyncSession = Depends(get_db),
+                        pid: int = Depends(current_profile_id)):
+    """The rate of each currency and month the profile's payslips are in, to `to`:
+    so payslips paid in several currencies add up in one. A month without a rate
+    has `rate: null` — the page leaves those payslips out of its totals and says
+    so, it never adds them unconverted."""
+    pairs = (await db.execute(select(Payslip.currency, Payslip.period).distinct()
+                              .where(Payslip.profile_id == pid, Payslip.currency != to))).all()
+    cache = RateCache()
+    return PayrollFxOut(to=to, rates=[
+        {"currency": currency, "period": period, "rate": await cache.rate(db, currency, to, _month_end(period))}
+        for currency, period in sorted(pairs)
+    ])
 
 
 @router.post("/payslips", response_model=PayslipOut, status_code=201)

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { Payslip } from '@/lib/api/hooks';
 import {
-  BLOCKS, addMonths, baseSalary, blockOf, blockTotal, bounds, breakdown, byEmployer, change, employerColors, employerSeries, formatRate, gaps,
+  BLOCKS, addMonths, baseSalary, blockOf, blockTotal, bounds, breakdown, byEmployer, change, convertPayslips, employerColors, employerSeries,
+  formatRate, gaps,
   heldBack, heldElsewhere, inRange, linesNet, monthName, monthsBetween, ofMonth, rates, retainedBalance, series, share, situationFor, spanLabel,
   timeline, totals, unclassified, within, yearBefore, yearRates,
 } from './payroll';
@@ -240,5 +241,36 @@ describe('employers', () => {
       { period: '2026-01', e1: 900000 }, { period: '2026-02', e1: 900000, e2: 900000 }, { period: '2026-03' },
     ]);
     expect(employerSeries(slips, 'net', ['2026-02'])[0].e2).toBe(700575);
+  });
+});
+
+describe('several currencies', () => {
+  const paris = (period: string) => slip(period, { id: 900 + Number(period.slice(5)), employer_id: 2, currency: 'EUR' });
+  const fx = [
+    { currency: 'CHF', period: '2026-08', rate: 1.05 },
+    { currency: 'CHF', period: '2026-09', rate: null },
+  ];
+
+  it('converts each payslip at its own month, every amount and line, and keeps the rest as is', () => {
+    const { payslips, missing } = convertPayslips([paris('2026-08'), slip('2026-08'), slip('2026-09')], 'EUR', fx);
+    expect(missing.map((p) => p.period)).toEqual(['2026-09']);       // no rate: left out, never added unconverted
+    const [eur, chf] = payslips;
+    expect(eur).toBe(payslips[0]);
+    expect(eur.gross_cents).toBe(900000);                               // already in EUR: untouched
+    expect(chf).toMatchObject({ id: 202608, currency: 'EUR', gross_cents: 945000, net_paid_cents: 735604, withholding_cents: 99792,
+      employee_contributions_cents: 112754, taxable_cents: 945000, employer_contributions_cents: null, withholding_rate_bp: 1056 });
+    expect(chf.lines.map((l) => l.amount_cents)).toEqual([892500, 52500, 50085, 43297, 99792, 15750]);
+    expect(chf.lines[2]).toMatchObject({ base_cents: 945000, rate_bp: 530 });
+    expect(chf.deposit).toMatchObject({ amount_cents: 735604, difference_cents: 0, status: 'paid' });
+    // Totals add both employers up in one currency; rates are the same either way.
+    expect(totals(payslips).gross).toBe(1845000);
+    expect(rates(totals([chf])).tax).toBe(rates(totals([slip('2026-08')])).tax);
+  });
+
+  it('never changes the payslip it was given', () => {
+    const original = slip('2026-08');
+    convertPayslips([original], 'EUR', fx);
+    expect(original.currency).toBe('CHF');
+    expect(original.lines[0].amount_cents).toBe(850000);
   });
 });

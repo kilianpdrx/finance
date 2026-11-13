@@ -13,6 +13,10 @@
   --foreground: oklch(0.21 0.03 264);      /* slate-900 */
   --surface: oklch(1 0 0);                 /* card */
   --surface-raised: oklch(0.985 0.004 95); /* hover / nested */
+  /* Hover boxes and panels name these (contentStyle var(--card), bg-card, bg-popover):
+     undefined, they were transparent and their text hard to read over a chart. */
+  --card: var(--surface);
+  --popover: var(--surface);
   --muted: oklch(0.96 0.004 264);
   --muted-foreground: oklch(0.52 0.02 264);
   --border: oklch(0.922 0.005 264);
@@ -80,6 +84,8 @@
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
   --color-surface-raised: var(--surface-raised);
+  --color-card: var(--card);
+  --color-popover: var(--popover);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
@@ -165,26 +171,42 @@
    like life_planner's metro « frise »: a line per stretch, stations at both ends,
    a « ? » where a month has no payslip. --c is the employer's --series-* colour. */
 .payroll-metro { background-color: var(--color-surface); }
+.payroll-metro svg { user-select: none; -webkit-user-select: none; }
+.payroll-metro.draggable { cursor: grab; }
+.payroll-metro.dragging, .payroll-metro.dragging .seg, .payroll-metro.dragging .gap { cursor: grabbing; }
+.payroll-metro:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+/* Scrolling sideways: a scrollbar that stays visible (WebKit hides overlay ones),
+   a fade at the edge with more band behind it. */
+.payroll-metro::-webkit-scrollbar { height: 10px; }
+.payroll-metro::-webkit-scrollbar-track { background: transparent; }
+.payroll-metro::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, var(--muted-foreground) 45%, transparent);
+  border: 2px solid var(--surface); border-radius: 999px;
+}
+.payroll-metro-fade {
+  position: absolute; top: 1px; bottom: 11px; width: 32px; pointer-events: none;
+  background: linear-gradient(to right, var(--surface), transparent); border-radius: var(--radius) 0 0 var(--radius);
+}
 .payroll-metro .grid { stroke: var(--border); stroke-width: 1; }
 .payroll-metro .seg { cursor: pointer; outline: none; transition: opacity 150ms; }
 .payroll-metro .seg.dim { opacity: 0.35; }
 .payroll-metro .seg .hit { fill: transparent; }
 .payroll-metro .seg .line { fill: var(--c); transition: filter 120ms; }
-.payroll-metro .seg .station { fill: var(--surface); stroke: var(--c); stroke-width: 3; }
-.payroll-metro .seg-label { font-size: 12px; font-weight: 600; fill: var(--foreground); pointer-events: none; }
+.payroll-metro .seg .station { fill: var(--surface); stroke: var(--c); stroke-width: 4; }
+.payroll-metro .seg-label { font-size: 13px; font-weight: 600; fill: var(--foreground); pointer-events: none; }
 .payroll-metro .seg:hover .line, .payroll-metro .seg:focus-visible .line { filter: brightness(1.12) saturate(1.1); }
 .payroll-metro .seg:focus-visible .line { stroke: var(--foreground); stroke-width: 2; }
-.payroll-metro .seg.selected .line { stroke: var(--c); stroke-width: 8; stroke-opacity: 0.28; paint-order: stroke; }
-.payroll-metro .seg.selected .station { stroke-width: 4; }
+.payroll-metro .seg.selected .line { stroke: var(--c); stroke-width: 10; stroke-opacity: 0.28; paint-order: stroke; }
+.payroll-metro .seg.selected .station { stroke-width: 5; }
 .payroll-metro .gap { cursor: pointer; outline: none; }
-.payroll-metro .gap line { stroke: var(--c); stroke-opacity: 0.6; stroke-width: 2.5; stroke-dasharray: 4 5; }
-.payroll-metro .gap circle { fill: var(--surface); stroke: var(--muted-foreground); stroke-width: 2; stroke-dasharray: 3 2; }
-.payroll-metro .gap text { font-size: 12px; font-weight: 800; fill: var(--muted-foreground); text-anchor: middle; pointer-events: none; }
+.payroll-metro .gap line { stroke: var(--c); stroke-opacity: 0.6; stroke-width: 4; stroke-dasharray: 6 6; }
+.payroll-metro .gap circle { fill: var(--surface); stroke: var(--muted-foreground); stroke-width: 2.5; stroke-dasharray: 3 2; }
+.payroll-metro .gap text { font-size: 13px; font-weight: 800; fill: var(--muted-foreground); text-anchor: middle; pointer-events: none; }
 .payroll-metro .gap:hover circle, .payroll-metro .gap:focus-visible circle { stroke: var(--foreground); }
 .payroll-metro .gap:hover text, .payroll-metro .gap:focus-visible text { fill: var(--foreground); }
 .payroll-metro .axis-rule { stroke: var(--muted-foreground); stroke-width: 1; }
-.payroll-metro .year { font-size: 13px; font-weight: 800; fill: var(--foreground); }
-.payroll-metro .month { font-size: 11px; fill: var(--muted-foreground); }
+.payroll-metro .year { font-size: 14px; font-weight: 800; fill: var(--foreground); }
+.payroll-metro .month { font-size: 12px; fill: var(--muted-foreground); }
 .payroll-metro .month-tick { stroke: var(--muted-foreground); }
 .payroll-metro .today { stroke: var(--muted-foreground); stroke-width: 1.5; stroke-dasharray: 2 4; pointer-events: none; }
 /* The one orchestrated moment, as in life_planner: lines drawn left to right on first load. */

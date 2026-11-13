@@ -5,22 +5,34 @@ import type { Employer, Payslip } from "@/lib/api/hooks";
 import type { Bounds } from "@/lib/payroll";
 import { cn } from "@/lib/utils";
 
-/** What every part of « Salaire & impôts » is drawn from: the period chosen,
- *  the employer filter and the currency, applied once by the page. */
+/** What every part of « Salaire & impôts » is drawn from: the period chosen and
+ *  the employer filter, applied once by the page. Every employer is in, whatever
+ *  its currency: totals and charts that add employers up use `payslips` / `all`,
+ *  converted to `currency`; what is one employer's or one payslip's uses `own` /
+ *  `ownAll`, in its own currency. */
 export interface PayrollView {
-  /** The period's payslips, in the currency shown, filter applied, oldest first. */
+  /** The period's payslips in `currency` (converted when paid in another), filter applied, oldest first. */
   payslips: Payslip[];
-  /** Every payslip in that currency, filter applied: what is still held back
+  /** Every payslip in `currency`, filter applied: what is still held back
    *  is what was held since the start, not since the period began. */
   all: Payslip[];
+  /** The period's payslips, each in its own currency. */
+  own: Payslip[];
+  /** Every payslip, each in its own currency, filter applied. */
+  ownAll: Payslip[];
   /** The months shown; null when there is nothing to show. */
   bounds: Bounds | null;
-  /** The same months a year earlier, and their payslips; null for « Tout ». */
+  /** The same months a year earlier, and their payslips in `currency`; null for « Tout ». */
   before: { bounds: Bounds; payslips: Payslip[] } | null;
   employers: Employer[];
   /** Each employer's colour, fixed over every payslip. */
   colors: Map<number, string>;
+  /** What totals and charts are in. */
   currency: string;
+  /** Set when payslips of other currencies were converted to `currency`. */
+  converted: { from: string[]; missing: Payslip[] } | null;
+  /** The rates are still loading: totals would leave the other currencies out. */
+  pending: boolean;
   onEdit: (p: Payslip) => void;
   onDelete: (p: Payslip) => void;
 }
@@ -70,6 +82,16 @@ export function Swatch({ color, className }: { color: string | undefined; classN
 }
 
 export const employerName = (employers: Employer[], id: number) => employers.find((e) => e.id === id)?.name ?? "Employeur";
+
+/** The currency an employer pays in, beside its name. */
+export function CurrencyTag({ currency, className }: { currency: string; className?: string }) {
+  return (
+    <span title={`Payé en ${currency}`}
+      className={cn("rounded border border-border px-1 py-px text-[10px] font-semibold tracking-wide text-muted-foreground", className)}>
+      {currency}
+    </span>
+  );
+}
 
 export const DEPOSIT: Record<Payslip["deposit"]["status"], { label: string; className: string }> = {
   paid: { label: "versé", className: "bg-positive/10 text-positive" },

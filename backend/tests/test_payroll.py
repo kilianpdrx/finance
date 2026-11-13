@@ -16,8 +16,10 @@ from reportlab.pdfgen import canvas
 from sqlalchemy import func, select
 
 from models import (
-    Account, AccountType, Document, Employer, PayrollSituation, Payslip, PayslipLabelRule, PayslipLine, Transaction,
+    Account, AccountType, Document, Employer, ExchangeRate, PayrollSituation, Payslip, PayslipLabelRule, PayslipLine,
+    Transaction,
 )
+from services import fx
 from services.payroll import reading, vocab
 
 CH_ROWS = [
@@ -391,6 +393,36 @@ async def test_two_employers_in_the_same_month(client: AsyncClient, zurich):
     other = next(s for s in slips if s["employer_id"] == second)
     moved = await client.put(f"/api/payroll/payslips/{other['id']}", headers=w["h"], json=_checked(read[0], first))
     assert moved.status_code == 409 and "Beispiel AG a déjà une fiche de paie pour 2026-09" in moved.json()["detail"]
+
+
+async def test_rates_to_add_up_payslips_paid_in_two_currencies(client: AsyncClient, db_session, zurich, monkeypatch):
+    """Each currency and month the payslips are in, at that month's end; null when
+    no rate is found — never a rate from another month made up."""
+    w, zh = zurich, zurich["employer"]["id"]
+    paris = (await client.post("/api/payroll/employers", headers=w["h"],
+                               json={"name": "Exemple SA", "currency": "EUR"})).json()["id"]
+
+    def typed(eid: int, period: str) -> dict:
+        return {"employer_id": eid, "period": period, "pay_date": f"{period}-25",
+                "lines": [{"label": "Salaire de base", "kind": "gross", "amount_cents": 500000},
+                          {"label": "Cotisations", "kind": "social", "amount_cents": 50000}],
+                "gross_cents": 500000, "employee_contributions_cents": 50000, "withholding_cents": 0,
+                "net_paid_cents": 450000}
+
+    for eid, period in ((paris, "2026-07"), (paris, "2026-08"), (zh, "2026-08"), (zh, "2026-09")):
+        assert (await _save(client, w, typed(eid, period))).status_code == 201
+    db_session.add_all([ExchangeRate(base_currency="CHF", target_currency="EUR", date=date(2026, 8, 31), rate=1.05),
+                        ExchangeRate(base_currency="CHF", target_currency="EUR", date=date(2026, 9, 30), rate=1.07)])
+    await db_session.commit()
+    monkeypatch.setitem(fx._fail_cache, ("EUR", "CHF"), float("inf"))   # no rate, and no network to find one
+
+    to_eur = (await client.get("/api/payroll/fx", headers=w["h"], params={"to": "EUR"})).json()
+    assert to_eur == {"to": "EUR", "rates": [{"currency": "CHF", "period": "2026-08", "rate": 1.05},
+                                             {"currency": "CHF", "period": "2026-09", "rate": 1.07}]}
+    to_chf = (await client.get("/api/payroll/fx", headers=w["h"], params={"to": "CHF"})).json()
+    assert to_chf["rates"] == [{"currency": "EUR", "period": "2026-07", "rate": None},
+                               {"currency": "EUR", "period": "2026-08", "rate": None}]
+    assert (await client.get("/api/payroll/fx", headers=w["h"], params={"to": "chf"})).status_code == 422
 
 
 async def test_the_salary_deposit_is_found_and_never_written(client: AsyncClient, db_session, zurich):

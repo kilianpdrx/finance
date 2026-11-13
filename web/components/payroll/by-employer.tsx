@@ -13,19 +13,20 @@ import {
   retainedBalance, series, share, spanLabel, type Block, type Kind,
 } from "@/lib/payroll";
 import { cn } from "@/lib/utils";
-import { DepositBadge, Empty, Frame, Swatch, Toggle, employerName, type PayrollView } from "./common";
+import { CurrencyTag, DepositBadge, Empty, Frame, Swatch, Toggle, employerName, type PayrollView } from "./common";
 
 // ── One card per employer ───────────────────────────────────────────────────
 
 export function EmployerCards({ view, onShowPayslips }: { view: PayrollView; onShowPayslips: (employerId: number) => void }) {
-  const figures = byEmployer(view.payslips);
+  // Each employer in its own currency, whatever the others are paid in.
+  const figures = byEmployer(view.own);
   if (figures.length === 0) return <Frame title="Employeurs"><Empty /></Frame>;
   return (
     <section aria-label="Employeurs" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {figures.map((f) => {
         const money = (c: number) => formatCents(c, f.currency);
-        const base = baseSalary(view.all, f.employerId, view.bounds?.to);
-        const held = retainedBalance(view.all, f.employerId, view.bounds?.to ?? "9999-12");
+        const base = baseSalary(view.ownAll, f.employerId, view.bounds?.to);
+        const held = retainedBalance(view.ownAll, f.employerId, view.bounds?.to ?? "9999-12");
         const employer = view.employers.find((e) => e.id === f.employerId);
         const rows: [string, React.ReactNode][] = [
           ["Brut", money(f.totals.gross)],
@@ -43,6 +44,7 @@ export function EmployerCards({ view, onShowPayslips }: { view: PayrollView; onS
             <header>
               <h3 className="flex items-center gap-2 font-semibold">
                 <Swatch color={view.colors.get(f.employerId)} />{employerName(view.employers, f.employerId)}
+                <CurrencyTag currency={f.currency} />
               </h3>
               <p className="text-xs text-muted-foreground">
                 {spanLabel(f)} · {f.totals.count} fiche{f.totals.count > 1 ? "s" : ""}
@@ -122,6 +124,11 @@ export function EmployerCompare({ view }: { view: PayrollView }) {
               );
             })}
           </ul>
+          {view.converted && view.converted.from.length > 0 && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              En {view.currency} : {view.converted.from.join(", ")} converti{view.converted.from.length > 1 && "s"} au taux de chaque mois. Chaque carte ci-dessus reste dans la devise de l&apos;employeur.
+            </p>
+          )}
         </>
       )}
     </Frame>
@@ -133,10 +140,10 @@ export function EmployerCompare({ view }: { view: PayrollView }) {
 /** One month, each employer's payslip side by side: from the gross to the
  *  net paid, block by block, in the review's colours. */
 export function MonthCard({ view }: { view: PayrollView }) {
-  const periods = useMemo(() => [...new Set(view.payslips.map((p) => p.period))].sort().reverse(), [view.payslips]);
+  const periods = useMemo(() => [...new Set(view.own.map((p) => p.period))].sort().reverse(), [view.own]);
   const [chosen, setChosen] = useState<string | null>(null);
   const period = chosen && periods.includes(chosen) ? chosen : periods[0];
-  const month = view.payslips.filter((p) => p.period === period);
+  const month = view.own.filter((p) => p.period === period);
   return (
     <Frame title="Le mois" action={periods.length > 0 && (
       <Select value={period} onValueChange={setChosen}>
@@ -155,8 +162,8 @@ export function MonthCard({ view }: { view: PayrollView }) {
 
 function OnePayslip({ p, view, withName }: { p: Payslip; view: PayrollView; withName: boolean }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const before = view.all.filter((x) => x.employer_id === p.employer_id && x.period < p.period).sort((a, b) => a.period.localeCompare(b.period)).at(-1);
-  const held = retainedBalance(view.all, p.employer_id, p.period);
+  const before = view.ownAll.filter((x) => x.employer_id === p.employer_id && x.period < p.period).sort((a, b) => a.period.localeCompare(b.period)).at(-1);
+  const held = retainedBalance(view.ownAll, p.employer_id, p.period);
   const r = rates(series([p], "month")[0]);
   const money = (c: number) => formatCents(c, p.currency, { decimals: 2 });
   const width = (c: number) => `${Math.min(100, (Math.abs(c) / Math.max(1, p.gross_cents)) * 100)}%`;
@@ -198,6 +205,7 @@ function OnePayslip({ p, view, withName }: { p: Payslip; view: PayrollView; with
       {withName && (
         <p className="flex items-center gap-2 text-sm font-medium">
           <Swatch color={view.colors.get(p.employer_id)} />{employerName(view.employers, p.employer_id)}
+          <CurrencyTag currency={p.currency} />
         </p>
       )}
       <ul className="space-y-2.5">

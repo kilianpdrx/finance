@@ -9,7 +9,7 @@ import {
   type Rates,
 } from "@/lib/payroll";
 import { cn } from "@/lib/utils";
-import { Empty, Frame, Toggle, employerName, type PayrollView } from "./common";
+import { CurrencyTag, Empty, Frame, Toggle, employerName, type PayrollView } from "./common";
 
 const percent = (bp: number | null | undefined) => formatRate(bp, 1);
 const perMille = (pm: number | null) =>
@@ -155,8 +155,8 @@ export function RatesCard({ view, className }: { view: PayrollView; className?: 
               <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" />
               <XAxis dataKey="period" tickFormatter={(p) => formatMonthLabel(p)} tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
               <YAxis tickFormatter={(v) => `${v} %`} tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} width={44} />
-              <Tooltip formatter={(v: number) => percent(Math.round(v * 100))} labelFormatter={(p: string) => formatMonthLabel(p, { withYear: true })}
-                contentStyle={{ backgroundColor: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} />
+              <Tooltip cursor={{ stroke: "var(--border)" }}
+                content={<ChartTooltip valueFormatter={(v) => percent(Math.round(v * 100))} labelFormatter={(p) => formatMonthLabel(p, { withYear: true })} />} />
               {RATE_CURVES.map((c) => (
                 <Line key={c.key} dataKey={RATE_LABEL[c.key]} stroke={c.stroke} strokeWidth={c.width} strokeDasharray={c.dash} dot={points.length === 1} />
               ))}
@@ -205,26 +205,32 @@ export function RatesCard({ view, className }: { view: PayrollView; className?: 
 // ── Retenues en attente ─────────────────────────────────────────────────────
 
 /** Whether there is anything held back to show at all. */
-export const hasRetained = (view: PayrollView) => owedAt(view).length > 0 || heldElsewhere(view.payslips).length > 0;
+export const hasRetained = (view: PayrollView) => owedAt(view).length > 0 || heldElsewhere(view.own).length > 0;
 
 /** What employers hold back until the end of the contract (« Rückbehalt »):
  *  still owed at the end of the period — held since the start, not since the
  *  period began — and the period's months. */
 export function RetainedCard({ view }: { view: PayrollView }) {
-  const held = owedAt(view);
-  const elsewhere = heldElsewhere(view.payslips);
-  const money = (c: number) => formatCents(c, view.currency, { decimals: 2 });
+  // Each employer in its own currency: what it owes you is owed in that one.
+  const held = heldBack(view.ownAll.filter((p) => !view.bounds || p.period <= view.bounds.to));
+  const elsewhere = heldElsewhere(view.own);
+  const currencyOf = (employerId: number) => view.ownAll.find((p) => p.employer_id === employerId)?.currency ?? view.currency;
   const inPeriod = (m: string) => !view.bounds || (m >= view.bounds.from && m <= view.bounds.to);
   return (
     <Frame title="Retenues en attente">
       <div className="space-y-4">
         {held.map((h) => {
+          const money = (c: number) => formatCents(c, currencyOf(h.employerId), { decimals: 2 });
           const months = h.months.filter((m) => inPeriod(m.period));
           const retained = months.reduce((s, m) => s + m.retained, 0);
           const released = months.reduce((s, m) => s + m.released, 0);
           return (
             <div key={h.employerId} className="space-y-3">
-              {held.length > 1 && <p className="text-xs font-medium text-muted-foreground">{employerName(view.employers, h.employerId)}</p>}
+              {held.length > 1 && (
+                <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  {employerName(view.employers, h.employerId)}<CurrencyTag currency={currencyOf(h.employerId)} />
+                </p>
+              )}
               <div>
                 <p className="nums blurable text-2xl font-semibold" aria-label="En attente">{money(h.balance)}</p>
                 <p className="text-xs text-muted-foreground">

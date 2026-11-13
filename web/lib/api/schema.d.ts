@@ -1907,6 +1907,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/payroll/fx": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Payslip Rates
+         * @description The rate of each currency and month the profile's payslips are in, to `to`:
+         *     so payslips paid in several currencies add up in one. A month without a rate
+         *     has `rate: null` — the page leaves those payslips out of its totals and says
+         *     so, it never adds them unconverted.
+         */
+        get: operations["payslip_rates_api_payroll_fx_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/payroll/payslips/{payslip_id}": {
         parameters: {
             query?: never;
@@ -3560,6 +3583,25 @@ export interface components {
             existing_quantity?: number | null;
             /** Existing Cost Basis Cents */
             existing_cost_basis_cents?: number | null;
+        };
+        /**
+         * PayrollFxOut
+         * @description Rates to show payslips of several currencies in one (`GET /payroll/fx`).
+         */
+        PayrollFxOut: {
+            /** To */
+            to: string;
+            /** Rates */
+            rates: components["schemas"]["PayrollFxRateOut"][];
+        };
+        /** PayrollFxRateOut */
+        PayrollFxRateOut: {
+            /** Currency */
+            currency: string;
+            /** Period */
+            period: string;
+            /** Rate */
+            rate: number | null;
         };
         /** PayrollSituationIn */
         PayrollSituationIn: {
@@ -8409,6 +8451,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PayslipOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    payslip_rates_api_payroll_fx_get: {
+        parameters: {
+            query: {
+                to: string;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayrollFxOut"];
                 };
             };
             /** @description Validation Error */

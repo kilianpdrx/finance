@@ -1312,6 +1312,14 @@ export function usePayrollEmployers() {
 export function usePayslips() {
   return useQuery({ queryKey: ["payroll", "payslips"], queryFn: payrollGet<Payslip[]>("payslips") });
 }
+/** Rates to add payslips paid in other currencies up in `to`; idle while `to` is null.
+ *  Under « payroll »: saving or deleting a payslip fetches them again. */
+export function usePayrollFx(to: string | null) {
+  return useQuery({
+    queryKey: ["payroll", "fx", to], enabled: to != null,
+    queryFn: payrollGet<components["schemas"]["PayrollFxOut"]>(`fx?to=${encodeURIComponent(to ?? "")}`),
+  });
+}
 export function usePayrollLabelRules() {
   return useQuery({ queryKey: ["payroll", "label-rules"], queryFn: payrollGet<PayslipLabelRule[]>("label-rules") });
 }

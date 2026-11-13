@@ -433,6 +433,38 @@ export function employerSeries(payslips: Payslip[], metric: "gross" | "net", mon
   });
 }
 
+// ── Several currencies ──────────────────────────────────────────────────────
+
+/** A currency and month's rate to the currency shown (`GET /payroll/fx`); null: none found. */
+export interface FxRate { currency: string; period: string; rate: number | null }
+
+/** The payslips in `to`, for totals and charts that add employers up: each one
+ *  converted at its own month's rate, every amount and line rounded to the cent
+ *  (rates in bp are kept). A payslip whose month has no rate is in `missing`,
+ *  never added unconverted. The copies keep their id: edit and delete the
+ *  original, never a copy. */
+export function convertPayslips(payslips: Payslip[], to: string, fx: FxRate[]): { payslips: Payslip[]; missing: Payslip[] } {
+  const rateOf = new Map(fx.map((r) => [`${r.currency}|${r.period}`, r.rate]));
+  const out: Payslip[] = [];
+  const missing: Payslip[] = [];
+  for (const p of payslips) {
+    if (p.currency === to) { out.push(p); continue; }
+    const rate = rateOf.get(`${p.currency}|${p.period}`);
+    if (rate == null) { missing.push(p); continue; }
+    const c = (cents: number) => Math.round(cents * rate);
+    const n = (cents: number | null | undefined) => (cents == null ? cents : c(cents));
+    out.push({
+      ...p, currency: to,
+      gross_cents: c(p.gross_cents), employee_contributions_cents: c(p.employee_contributions_cents),
+      employer_contributions_cents: n(p.employer_contributions_cents), taxable_cents: n(p.taxable_cents),
+      withholding_cents: c(p.withholding_cents), net_paid_cents: c(p.net_paid_cents),
+      lines: p.lines.map((l) => ({ ...l, amount_cents: c(l.amount_cents), base_cents: n(l.base_cents), employer_cents: n(l.employer_cents) })),
+      deposit: { ...p.deposit, amount_cents: n(p.deposit.amount_cents) ?? null, difference_cents: c(p.deposit.difference_cents) },
+    });
+  }
+  return { payslips: out, missing };
+}
+
 // ── The period shown ────────────────────────────────────────────────────────
 
 export type Range =
