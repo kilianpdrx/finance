@@ -1,30 +1,46 @@
 import createClient from "openapi-fetch";
 import type { paths } from "./schema";
-import { getActiveProfileId } from "../stores";
+import { getActiveProfileId, getUnlockToken, useProfileUnlockStore } from "../stores";
 
 // Inject the active profile header on every /api/* request (covers the typed
-// openapi-fetch client and the handful of raw fetch() calls). Patched once,
-// client-side only.
+// openapi-fetch client and the handful of raw fetch() calls), with the profile's
+// unlock token when it has a PIN. A 401 carrying `X-Profile-Locked` for the
+// active profile means its token is no longer good: the app asks for the PIN.
+// Patched once, client-side only.
 if (typeof window !== "undefined") {
   const w = window as typeof window & { __apiFetchPatched?: boolean };
   if (!w.__apiFetchPatched) {
     w.__apiFetchPatched = true;
     const orig = window.fetch.bind(window);
     window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      let isApi = false;
+      let pid: number | null = null;
       try {
         const url = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
-        if (url && (url.startsWith("/api/") || url.includes("/api/"))) {
-          const pid = getActiveProfileId();
+        isApi = !!url && (url.startsWith("/api/") || url.includes("/api/"));
+        if (isApi) {
+          pid = getActiveProfileId();
           if (pid != null) {
             const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
             headers.set("X-Profile-Id", String(pid));
+            const token = getUnlockToken(pid);
+            if (token) headers.set("X-Profile-Unlock", token);
             init = { ...init, headers };
           }
         }
       } catch {
         /* never block a request on header injection */
       }
-      return orig(input, init);
+      const pending = orig(input, init);
+      if (!isApi) return pending;
+      return pending.then((res) => {
+        if (res.status === 401) {
+          const locked = Number(res.headers.get("X-Profile-Locked"));
+          // Another profile's lock (editing it from « Gérer les profils ») is only an error.
+          if (locked && (pid == null || locked === pid)) useProfileUnlockStore.getState().markLocked(locked);
+        }
+        return res;
+      });
     };
   }
 }

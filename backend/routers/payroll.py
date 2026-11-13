@@ -7,7 +7,9 @@ employer, an account or a payslip checks it belongs to that profile.
 
 Nothing here logs a label, an amount, a file name or a document's text.
 """
+import calendar
 import json
+from datetime import date
 from typing import List, Optional
 from urllib.parse import quote
 
@@ -22,9 +24,10 @@ from dependencies import current_profile_id
 from models import Document, Employer, PayrollSituation, Payslip, PayslipLabelRule, PayslipLine
 from ownership import require_account
 from schemas import (
-    EmployerIn, EmployerOut, PayrollSituationIn, PayrollSituationOut, PayslipIn, PayslipLabelRuleOut, PayslipOut,
-    PayslipReadOut,
+    EmployerIn, EmployerOut, PayrollFxOut, PayrollSituationIn, PayrollSituationOut, PayslipIn, PayslipLabelRuleOut,
+    PayslipOut, PayslipReadOut,
 )
+from services.fx import RateCache
 from services.payroll import matching, packs, reading, vocab
 
 router = APIRouter()
@@ -177,18 +180,23 @@ async def _rules(db: AsyncSession, pid: int, employer_id: Optional[int]) -> dict
 async def read_payslips(
     files: List[UploadFile] = File(...),
     pack: str = Query(..., description="La situation dont le vocabulaire lit les fiches"),
-    employer_id: Optional[int] = Query(None),
+    employer_id: Optional[int] = Query(None, description="L'employeur à retenir quand la fiche n'imprime aucun nom connu"),
     db: AsyncSession = Depends(get_db),
     pid: int = Depends(current_profile_id),
 ):
-    """Read payslip PDFs into proposals. Saves NOTHING — not even the files."""
+    """Read payslip PDFs into proposals. Saves NOTHING — not even the files.
+
+    Each file's employer is the one whose name it prints, among this profile's;
+    else `employer_id`, else none (the review asks). Its classifications read
+    the lines: a second employer's payslip is never read with the first one's."""
     if pack not in packs.PACKS:
         raise HTTPException(400, "Situation inconnue.")
     if len(files) > MAX_FILES:
         raise HTTPException(400, f"{MAX_FILES} fichiers au plus à la fois.")
     if employer_id is not None:
         await _employer(db, pid, employer_id)
-    rules = await _rules(db, pid, employer_id)
+    names = {e.id: e.name for e in (await db.execute(select(Employer).where(Employer.profile_id == pid))).scalars()}
+    rules: dict[Optional[int], dict] = {}
     out = []
     for f in files:
         data = await f.read(reading.MAX_BYTES + 1)
@@ -196,16 +204,20 @@ async def read_payslips(
         duplicate = (await db.execute(select(Payslip.id).join(Document, Payslip.document_id == Document.id).where(
             Document.profile_id == pid, Document.sha256 == digest))).scalars().first()
         base = {"filename": f.filename or "fiche.pdf", "sha256": digest, "duplicate_payslip_id": duplicate,
-                "pack": pack, "lines": [], "totals": {}, "figures": None, "checks": {},
+                "employer_id": None, "pack": pack, "lines": [], "totals": {}, "figures": None, "checks": {},
                 "period": None, "pay_date": None, "error": None}
         try:
-            p = reading.read(data, pack, rules)
+            text = reading.text_of(data)
         except reading.ReadError as e:
             out.append(PayslipReadOut(**{**base, "error": str(e)}))
             continue
+        employer = reading.find_employer(text, names) or employer_id
+        if employer not in rules:
+            rules[employer] = await _rules(db, pid, employer)
+        p = reading.propose(text, pack, rules[employer])
         out.append(PayslipReadOut(**{
-            **base, "period": p.period, "pay_date": p.pay_date, "totals": p.totals, "figures": p.figures or None,
-            "checks": p.checks, "lines": [vars(ln) for ln in p.lines],
+            **base, "employer_id": employer, "period": p.period, "pay_date": p.pay_date, "totals": p.totals,
+            "figures": p.figures or None, "checks": p.checks, "lines": [vars(ln) for ln in p.lines],
         }))
     return out
 
@@ -302,6 +314,29 @@ async def list_payslips(db: AsyncSession = Depends(get_db), pid: int = Depends(c
     rows = list((await db.execute(select(Payslip).where(Payslip.profile_id == pid)
                                   .order_by(Payslip.period, Payslip.employer_id))).scalars())
     return await _payslips_out(db, pid, rows)
+
+
+def _month_end(period: str) -> date:
+    """The day a month's payslip is converted at: its last day, today for the
+    current month — as analytics converts its months."""
+    y, m = int(period[:4]), int(period[5:7])
+    return min(date(y, m, calendar.monthrange(y, m)[1]), date.today())
+
+
+@router.get("/fx", response_model=PayrollFxOut)
+async def payslip_rates(to: str = Query(..., pattern="^[A-Z]{3}$"), db: AsyncSession = Depends(get_db),
+                        pid: int = Depends(current_profile_id)):
+    """The rate of each currency and month the profile's payslips are in, to `to`:
+    so payslips paid in several currencies add up in one. A month without a rate
+    has `rate: null` — the page leaves those payslips out of its totals and says
+    so, it never adds them unconverted."""
+    pairs = (await db.execute(select(Payslip.currency, Payslip.period).distinct()
+                              .where(Payslip.profile_id == pid, Payslip.currency != to))).all()
+    cache = RateCache()
+    return PayrollFxOut(to=to, rates=[
+        {"currency": currency, "period": period, "rate": await cache.rate(db, currency, to, _month_end(period))}
+        for currency, period in sorted(pairs)
+    ])
 
 
 @router.post("/payslips", response_model=PayslipOut, status_code=201)

@@ -5,7 +5,7 @@ import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/rea
 import { api, unwrap } from "./client";
 import type { components } from "./schema";
 import type { BudgetPlan, BudgetEvolution, CategoryStats, EnvelopeIn, UnplannedSuggestion } from "@/lib/budget-plan";
-import { useDateRangeStore, useSelectedAccountsStore } from "../stores";
+import { useDateRangeStore, useSelectedAccountsStore, useProfileUnlockStore } from "../stores";
 import { DEFAULT_CURRENCY } from "../format";
 
 // ── Types (re-exported from generated schema) ─────────────────────────────────
@@ -903,6 +903,8 @@ export interface Profile {
   color: string;
   is_default: boolean;
   enabled_modules?: string[];
+  /** Switching to it asks for its PIN (the API refuses it without an unlock token). */
+  has_pin?: boolean;
 }
 
 export function useProfiles() {
@@ -948,21 +950,55 @@ export function useProfileMutations() {
       onSuccess,
     }),
     update: useMutation({
-      mutationFn: async ({ id, body }: { id: number; body: { name?: string; color?: string; enabled_modules?: string[] } }) => {
-        const res = await fetch(`/api/profiles/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        if (!res.ok) throw new Error("Failed to update profile");
-        return res.json() as Promise<Profile>;
-      },
+      mutationFn: async ({ id, body }: { id: number; body: { name?: string; color?: string; enabled_modules?: string[] } }) =>
+        mutateJson(`/api/profiles/${id}`, "PUT", body) as Promise<Profile>,
       onSuccess,
     }),
     remove: useMutation({
       mutationFn: async (id: number) => {
-        const res = await fetch(`/api/profiles/${id}`, { method: "DELETE" });
-        if (!res.ok) throw new Error("Failed to delete profile");
+        await mutateJson(`/api/profiles/${id}`, "DELETE");
       },
       onSuccess,
     }),
   };
+}
+
+/** A profile's PIN: unlock (trade it for a token), lock, set / change / remove.
+ *  Errors carry the API's French `detail` (wrong PIN, wait before retrying…). */
+export function useProfilePin() {
+  const qc = useQueryClient();
+  const { setToken, clearToken } = useProfileUnlockStore.getState();
+  return {
+    unlock: useMutation({
+      mutationFn: async ({ id, pin }: { id: number; pin: string }) =>
+        mutateJson(`/api/profiles/${id}/unlock`, "POST", { pin }) as Promise<{ token: string }>,
+      onSuccess: (res, { id }) => setToken(id, res.token),
+    }),
+    setPin: useMutation({
+      mutationFn: async ({ id, pin, currentPin }: { id: number; pin: string | null; currentPin?: string }) =>
+        mutateJson(`/api/profiles/${id}/pin`, "PUT", { pin, current_pin: currentPin ?? null }) as Promise<{ has_pin: boolean; token: string | null }>,
+      onSuccess: (res, { id }) => {
+        // Token first, then the list: in between, the shell would see a profile
+        // with a PIN and no token (or the reverse) and flash the lock screen.
+        if (res.token) setToken(id, res.token);
+        qc.setQueryData<Profile[]>(["profiles"], (list) =>
+          list?.map((p) => (p.id === id ? { ...p, has_pin: res.has_pin } : p)),
+        );
+        if (!res.token) clearToken(id);
+        qc.invalidateQueries({ queryKey: ["profiles"] });
+      },
+    }),
+  };
+}
+
+/** Forget this tab's token for the profile (server side too): it asks for its PIN again. */
+export async function lockProfile(id: number): Promise<void> {
+  try {
+    await fetch(`/api/profiles/${id}/lock`, { method: "POST" });
+  } catch {
+    /* the token is dropped here anyway; the server forgets it within its idle time */
+  }
+  useProfileUnlockStore.getState().clearToken(id);
 }
 
 export interface IbkrStatus {
@@ -1284,7 +1320,6 @@ export interface PayrollPack {
   label: string;
   country: string;
   currency: string;
-  widgets: string[];
   params: PayrollParam[];
 }
 export type PayrollSituation = components["schemas"]["PayrollSituationOut"];
@@ -1314,6 +1349,14 @@ export function usePayrollEmployers() {
 }
 export function usePayslips() {
   return useQuery({ queryKey: ["payroll", "payslips"], queryFn: payrollGet<Payslip[]>("payslips") });
+}
+/** Rates to add payslips paid in other currencies up in `to`; idle while `to` is null.
+ *  Under « payroll »: saving or deleting a payslip fetches them again. */
+export function usePayrollFx(to: string | null) {
+  return useQuery({
+    queryKey: ["payroll", "fx", to], enabled: to != null,
+    queryFn: payrollGet<components["schemas"]["PayrollFxOut"]>(`fx?to=${encodeURIComponent(to ?? "")}`),
+  });
 }
 export function usePayrollLabelRules() {
   return useQuery({ queryKey: ["payroll", "label-rules"], queryFn: payrollGet<PayslipLabelRule[]>("label-rules") });

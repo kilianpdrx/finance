@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useSettings, useSettingMutation, useActiveProfile, useProfileMutations, useAppVersion } from "@/lib/api/hooks";
 import { CURRENCIES, DEFAULT_CURRENCY } from "@/lib/format";
 import { DEFAULT_MODULES } from "@/lib/nav";
+import { ProfilePinCard } from "./profile-pin-card";
 import { TrendingUp, Wallet, Check, Target, BadgeMinus, Info, ShieldAlert, type LucideIcon, ReceiptText } from "lucide-react";
 
 const TOGGLEABLE_MODULES: { key: string; icon: LucideIcon; title: string; description: string }[] = [
@@ -133,6 +134,8 @@ export function GeneralTab() {
       )}
 
       {/* ── Section 3: À propos ─────────────────────────────────────────── */}
+      <ProfilePinCard />
+
       <AboutCard />
     </div>
   );

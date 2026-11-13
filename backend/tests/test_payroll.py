@@ -16,8 +16,10 @@ from reportlab.pdfgen import canvas
 from sqlalchemy import func, select
 
 from models import (
-    Account, AccountType, Document, Employer, PayrollSituation, Payslip, PayslipLabelRule, PayslipLine, Transaction,
+    Account, AccountType, Document, Employer, ExchangeRate, PayrollSituation, Payslip, PayslipLabelRule, PayslipLine,
+    Transaction,
 )
+from services import fx
 from services.payroll import reading, vocab
 
 CH_ROWS = [
@@ -36,12 +38,13 @@ CH_ROWS = [
 ]
 
 
-def ch_payslip(month: str = "September 2026", pay_day: str = "25.09.2026", rows=CH_ROWS) -> bytes:
+def ch_payslip(month: str = "September 2026", pay_day: str = "25.09.2026", rows=CH_ROWS,
+               company: str = "Beispiel AG") -> bytes:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     c.setFont("Helvetica", 10)
     y = 800
-    for text in ("Beispiel AG, Bahnhofstrasse 1, 8001 Zürich", f"Lohnabrechnung {month}",
+    for text in (f"{company}, Bahnhofstrasse 1, 8001 Zürich", f"Lohnabrechnung {month}",
                  "Erika Muster, AHV-Nr. 756.0000.0000.00", f"Auszahlungsdatum {pay_day}"):
         c.drawString(50, y, text)
         y -= 16
@@ -269,7 +272,7 @@ async def test_a_situation_is_checked_against_its_pack(client: AsyncClient, zuri
     assert [(s["from_year"], s["summary"]) for s in (await client.get("/api/payroll/situations", headers=h)).json()] == \
         [(2026, "Zurich · impôt à la source · A0N"), (2027, "France · couple · 2 enfants")]
     packs = {p["id"]: p for p in (await client.get("/api/payroll/packs", headers=h)).json()}
-    assert packs["ch_zh"]["currency"] == "CHF" and "month" in packs["ch_zh"]["widgets"]
+    assert packs["ch_zh"]["currency"] == "CHF" and "widgets" not in packs["ch_zh"]     # the page has tabs, no board
 
 
 async def test_reading_saves_nothing_and_a_checked_payslip_is_saved_with_its_pdf(client: AsyncClient, db_session, zurich):
@@ -308,9 +311,12 @@ async def test_a_line_classified_once_is_classified_on_the_next_payslips(client:
     assert october["period"] == "2026-10"
     assert {ln["label"]: ln["kind"] for ln in october["lines"]}["Kantinenabzug"] == "deduction"
     assert october["checks"]["unclassified"] == 0 and october["checks"]["net_mismatch_cents"] == 0
-    # Without the employer, no rule applies: still « à classer ».
-    anonymous, = await _read(client, zurich, october_pdf, employer=False)
-    assert anonymous["checks"]["unclassified"] == 1
+    # Not asked for, the employer is found by the name the payslip prints; a payslip
+    # printing no known name has no employer, so no rule applies: still « à classer ».
+    found, = await _read(client, zurich, october_pdf, employer=False)
+    assert (found["employer_id"], found["checks"]["unclassified"]) == (eid, 0)
+    anonymous, = await _read(client, zurich, ch_payslip("Oktober 2026", "24.10.2026", company="Exemple SA"), employer=False)
+    assert (anonymous["employer_id"], anonymous["checks"]["unclassified"]) == (None, 1)
 
 
 async def test_held_back_pay_is_saved_as_its_own_kind(client: AsyncClient, zurich):
@@ -345,6 +351,78 @@ async def test_one_payslip_per_employer_and_month(client: AsyncClient, zurich):
     slips = (await client.get("/api/payroll/payslips", headers=zurich["h"])).json()
     assert [(s["period"], s["net_paid_cents"], s["source"]) for s in slips] == [("2026-09", 700000, "manual")]
     assert (await _save(client, zurich, _checked(proposal, eid, period="2026-13"))).status_code == 400
+
+
+def test_the_employer_is_the_one_whose_name_the_payslip_prints():
+    text = reading.pdf_text(ch_payslip(company="MUSTER SERVICES GMBH"))
+    employers = {1: "Beispiel AG", 2: "Muster", 3: "Muster Services GmbH", 4: "  "}
+    assert reading.find_employer(text, employers) == 3              # the longest name printed wins
+    assert reading.find_employer(text, {1: "Beispiel AG", 2: "Muster"}) == 2
+    assert reading.find_employer(text, {1: "Beispiel AG", 2: "Serv"}) is None    # whole words only
+    assert reading.find_employer(text, {1: "Muster", 2: "muster"}) is None       # a tie: the user chooses
+    assert reading.find_employer("", employers) is None
+
+
+async def test_two_employers_in_the_same_month(client: AsyncClient, zurich):
+    """A second job, a change of employer mid-month: one payslip each, the same month."""
+    w, first = zurich, zurich["employer"]["id"]
+    second = (await client.post("/api/payroll/employers", headers=w["h"],
+                                json={"name": "Muster GmbH", "currency": "CHF", "account_id": w["account"].id})).json()["id"]
+    beispiel, muster = ch_payslip(), ch_payslip(company="Muster GmbH", rows=[*CH_ROWS[:-1], ("Auszahlung", "", "", "7'005.70")])
+    # Classified for the first employer only: the canteen line.
+    proposal, = await _read(client, w, beispiel)
+    assert proposal["employer_id"] == first
+    assert (await _save(client, w, _checked(proposal, first), beispiel)).status_code == 201
+
+    # Read with the first employer asked for, the second's PDF is still the second's —
+    # and read with ITS classifications (none yet), not the first one's.
+    read = await _read(client, w, muster, beispiel)
+    assert [r["employer_id"] for r in read] == [second, first]
+    assert read[0]["checks"]["unclassified"] == 1 and read[1]["checks"]["unclassified"] == 0
+    saved = await _save(client, w, _checked(read[0], second), muster)
+    assert saved.status_code == 201, saved.text
+    slips = (await client.get("/api/payroll/payslips", headers=w["h"])).json()
+    assert sorted((s["period"], s["employer_id"]) for s in slips) == [("2026-09", first), ("2026-09", second)]
+
+    # A PDF naming no known employer takes the one asked for, else none.
+    stranger = ch_payslip(company="Exemple SA")
+    assert (await _read(client, w, stranger))[0]["employer_id"] == first
+    assert (await _read(client, w, stranger, employer=False))[0]["employer_id"] is None
+
+    # Each employer keeps one payslip per month; moving one onto the other's month is refused.
+    other = next(s for s in slips if s["employer_id"] == second)
+    moved = await client.put(f"/api/payroll/payslips/{other['id']}", headers=w["h"], json=_checked(read[0], first))
+    assert moved.status_code == 409 and "Beispiel AG a déjà une fiche de paie pour 2026-09" in moved.json()["detail"]
+
+
+async def test_rates_to_add_up_payslips_paid_in_two_currencies(client: AsyncClient, db_session, zurich, monkeypatch):
+    """Each currency and month the payslips are in, at that month's end; null when
+    no rate is found — never a rate from another month made up."""
+    w, zh = zurich, zurich["employer"]["id"]
+    paris = (await client.post("/api/payroll/employers", headers=w["h"],
+                               json={"name": "Exemple SA", "currency": "EUR"})).json()["id"]
+
+    def typed(eid: int, period: str) -> dict:
+        return {"employer_id": eid, "period": period, "pay_date": f"{period}-25",
+                "lines": [{"label": "Salaire de base", "kind": "gross", "amount_cents": 500000},
+                          {"label": "Cotisations", "kind": "social", "amount_cents": 50000}],
+                "gross_cents": 500000, "employee_contributions_cents": 50000, "withholding_cents": 0,
+                "net_paid_cents": 450000}
+
+    for eid, period in ((paris, "2026-07"), (paris, "2026-08"), (zh, "2026-08"), (zh, "2026-09")):
+        assert (await _save(client, w, typed(eid, period))).status_code == 201
+    db_session.add_all([ExchangeRate(base_currency="CHF", target_currency="EUR", date=date(2026, 8, 31), rate=1.05),
+                        ExchangeRate(base_currency="CHF", target_currency="EUR", date=date(2026, 9, 30), rate=1.07)])
+    await db_session.commit()
+    monkeypatch.setitem(fx._fail_cache, ("EUR", "CHF"), float("inf"))   # no rate, and no network to find one
+
+    to_eur = (await client.get("/api/payroll/fx", headers=w["h"], params={"to": "EUR"})).json()
+    assert to_eur == {"to": "EUR", "rates": [{"currency": "CHF", "period": "2026-08", "rate": 1.05},
+                                             {"currency": "CHF", "period": "2026-09", "rate": 1.07}]}
+    to_chf = (await client.get("/api/payroll/fx", headers=w["h"], params={"to": "CHF"})).json()
+    assert to_chf["rates"] == [{"currency": "EUR", "period": "2026-07", "rate": None},
+                               {"currency": "EUR", "period": "2026-08", "rate": None}]
+    assert (await client.get("/api/payroll/fx", headers=w["h"], params={"to": "chf"})).status_code == 422
 
 
 async def test_the_salary_deposit_is_found_and_never_written(client: AsyncClient, db_session, zurich):

@@ -1871,6 +1871,10 @@ export interface paths {
         /**
          * Read Payslips
          * @description Read payslip PDFs into proposals. Saves NOTHING — not even the files.
+         *
+         *     Each file's employer is the one whose name it prints, among this profile's;
+         *     else `employer_id`, else none (the review asks). Its classifications read
+         *     the lines: a second employer's payslip is never read with the first one's.
          */
         post: operations["read_payslips_api_payroll_read_post"];
         delete?: never;
@@ -1897,6 +1901,29 @@ export interface paths {
          * @description Save a payslip the user checked — with its PDF when it was read from one.
          */
         post: operations["create_payslip_api_payroll_payslips_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/payroll/fx": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Payslip Rates
+         * @description The rate of each currency and month the profile's payslips are in, to `to`:
+         *     so payslips paid in several currencies add up in one. A month without a rate
+         *     has `rate: null` — the page leaves those payslips out of its totals and says
+         *     so, it never adds them unconverted.
+         */
+        get: operations["payslip_rates_api_payroll_fx_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2189,6 +2216,71 @@ export interface paths {
         post?: never;
         /** Delete Profile */
         delete: operations["delete_profile_api_profiles__profile_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{profile_id}/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unlock Profile
+         * @description Trade the profile's PIN for an unlock token (sent back as `X-Profile-Unlock`).
+         */
+        post: operations["unlock_profile_api_profiles__profile_id__unlock_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{profile_id}/lock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Lock Profile
+         * @description Forget this tab's unlock token: the profile asks for its PIN again.
+         */
+        post: operations["lock_profile_api_profiles__profile_id__lock_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{profile_id}/pin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Profile Pin
+         * @description Set a PIN (4 to 8 digits), change it, or remove it (`pin` null).
+         *
+         *     Changing or removing one takes the current PIN — an unlocked tab left open is
+         *     not enough — and counts as an attempt like any other. A new PIN retires every
+         *     token of the old one (they are tied to its hash) and hands a fresh token to
+         *     the caller.
+         */
+        put: operations["set_profile_pin_api_profiles__profile_id__pin_put"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3557,6 +3649,25 @@ export interface components {
             /** Existing Cost Basis Cents */
             existing_cost_basis_cents?: number | null;
         };
+        /**
+         * PayrollFxOut
+         * @description Rates to show payslips of several currencies in one (`GET /payroll/fx`).
+         */
+        PayrollFxOut: {
+            /** To */
+            to: string;
+            /** Rates */
+            rates: components["schemas"]["PayrollFxRateOut"][];
+        };
+        /** PayrollFxRateOut */
+        PayrollFxRateOut: {
+            /** Currency */
+            currency: string;
+            /** Period */
+            period: string;
+            /** Rate */
+            rate: number | null;
+        };
         /** PayrollSituationIn */
         PayrollSituationIn: {
             /** From Year */
@@ -3722,6 +3833,8 @@ export interface components {
             error: string | null;
             /** Duplicate Payslip Id */
             duplicate_payslip_id: number | null;
+            /** Employer Id */
+            employer_id: number | null;
             /** Pack */
             pack: string;
             /** Period */
@@ -3872,6 +3985,38 @@ export interface components {
              *     ]
              */
             enabled_modules: string[];
+            /**
+             * Has Pin
+             * @default false
+             */
+            has_pin: boolean;
+        };
+        /** ProfilePinOut */
+        ProfilePinOut: {
+            /** Has Pin */
+            has_pin: boolean;
+            /** Token */
+            token?: string | null;
+        };
+        /**
+         * ProfilePinSet
+         * @description Set, change (`current_pin` needed) or remove (`pin` null) a profile's PIN.
+         */
+        ProfilePinSet: {
+            /** Pin */
+            pin?: string | null;
+            /** Current Pin */
+            current_pin?: string | null;
+        };
+        /** ProfilePinUnlock */
+        ProfilePinUnlock: {
+            /** Pin */
+            pin?: string | null;
+        };
+        /** ProfileUnlockOut */
+        ProfileUnlockOut: {
+            /** Token */
+            token: string;
         };
         /** ProfileUpdate */
         ProfileUpdate: {
@@ -4227,6 +4372,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4258,6 +4404,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4293,6 +4440,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -4326,6 +4474,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -4365,6 +4514,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -4396,6 +4546,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -4429,6 +4580,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -4462,6 +4614,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -4499,6 +4652,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -4531,6 +4685,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -4579,6 +4734,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4619,6 +4775,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4665,6 +4822,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4715,6 +4873,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4746,6 +4905,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4781,6 +4941,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4815,6 +4976,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4848,6 +5010,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 transaction_id: number;
@@ -4881,6 +5044,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4914,6 +5078,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4945,6 +5110,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -4978,6 +5144,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5013,6 +5180,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5048,6 +5216,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5089,6 +5258,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5120,6 +5290,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 transaction_id: number;
@@ -5153,6 +5324,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 transaction_id: number;
@@ -5190,6 +5362,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 transaction_id: number;
@@ -5221,6 +5394,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 transaction_id: number;
@@ -5254,6 +5428,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5285,6 +5460,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5322,6 +5498,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5353,6 +5530,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 category_id: number;
@@ -5386,6 +5564,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 category_id: number;
@@ -5425,6 +5604,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 category_id: number;
@@ -5456,6 +5636,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5490,6 +5671,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5521,6 +5703,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5558,6 +5741,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5593,6 +5777,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5624,6 +5809,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 category_id: number;
@@ -5657,6 +5843,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 category_id: number;
@@ -5694,6 +5881,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 rule_id: number;
@@ -5731,6 +5919,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 rule_id: number;
@@ -5762,6 +5951,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5797,6 +5987,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5832,6 +6023,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5867,6 +6059,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5902,6 +6095,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5939,6 +6133,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5975,6 +6170,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6012,6 +6208,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6050,6 +6247,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6086,6 +6284,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6122,6 +6321,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6156,6 +6356,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6190,6 +6391,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6226,6 +6428,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6261,6 +6464,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6312,6 +6516,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6343,6 +6548,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6378,6 +6584,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 profile_id: number;
@@ -6411,6 +6618,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 profile_id: number;
@@ -6448,6 +6656,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 profile_id: number;
@@ -6479,6 +6688,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -6512,6 +6722,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -6549,6 +6760,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 holding_id: number;
@@ -6586,6 +6798,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 holding_id: number;
@@ -6639,6 +6852,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6761,6 +6975,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -6796,6 +7011,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6831,6 +7047,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6866,6 +7083,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6899,6 +7117,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6930,6 +7149,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6961,6 +7181,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6992,6 +7213,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7023,6 +7245,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7054,6 +7277,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7085,6 +7309,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7116,6 +7341,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7149,6 +7375,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7180,6 +7407,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7211,6 +7439,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7246,6 +7475,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 goal_id: number;
@@ -7283,6 +7513,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 goal_id: number;
@@ -7314,6 +7545,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 goal_id: number;
@@ -7347,6 +7579,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 goal_id: number;
@@ -7384,6 +7617,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 goal_id: number;
@@ -7416,6 +7650,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7447,6 +7682,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -7480,6 +7716,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -7513,6 +7750,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -7550,6 +7788,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 account_id: number;
@@ -7582,6 +7821,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7613,6 +7853,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7648,6 +7889,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7683,6 +7925,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 planned_id: number;
@@ -7714,6 +7957,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 planned_id: number;
@@ -7754,6 +7998,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7787,6 +8032,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7825,6 +8071,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7859,6 +8106,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7894,6 +8142,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7929,6 +8178,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7963,6 +8213,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -7998,6 +8249,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 envelope_id: number;
@@ -8053,6 +8305,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8084,6 +8337,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8119,6 +8373,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 situation_id: number;
@@ -8150,6 +8405,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8181,6 +8437,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8216,6 +8473,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 employer_id: number;
@@ -8253,6 +8511,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 employer_id: number;
@@ -8284,6 +8543,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8315,10 +8575,12 @@ export interface operations {
             query: {
                 /** @description La situation dont le vocabulaire lit les fiches */
                 pack: string;
+                /** @description L'employeur à retenir quand la fiche n'imprime aucun nom connu */
                 employer_id?: number | null;
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8354,6 +8616,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8385,6 +8648,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8415,11 +8679,45 @@ export interface operations {
             };
         };
     };
+    payslip_rates_api_payroll_fx_get: {
+        parameters: {
+            query: {
+                to: string;
+            };
+            header?: {
+                "X-Profile-Id"?: number | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayrollFxOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_payslip_api_payroll_payslips__payslip_id__put: {
         parameters: {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 payslip_id: number;
@@ -8457,6 +8755,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 payslip_id: number;
@@ -8488,6 +8787,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 document_id: number;
@@ -8521,6 +8821,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8552,6 +8853,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 key: string;
@@ -8585,6 +8887,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path: {
                 key: string;
@@ -8737,6 +9040,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8772,6 +9076,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8807,6 +9112,7 @@ export interface operations {
             };
             header?: {
                 "X-Profile-Id"?: number | null;
+                "X-Profile-Unlock"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -8889,7 +9195,9 @@ export interface operations {
     update_profile_api_profiles__profile_id__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Unlock"?: string | null;
+            };
             path: {
                 profile_id: number;
             };
@@ -8924,7 +9232,9 @@ export interface operations {
     delete_profile_api_profiles__profile_id__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Profile-Unlock"?: string | null;
+            };
             path: {
                 profile_id: number;
             };
@@ -8938,6 +9248,107 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unlock_profile_api_profiles__profile_id__unlock_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfilePinUnlock"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileUnlockOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lock_profile_api_profiles__profile_id__lock_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Profile-Unlock"?: string | null;
+            };
+            path: {
+                profile_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_profile_pin_api_profiles__profile_id__pin_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfilePinSet"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfilePinOut"];
+                };
             };
             /** @description Validation Error */
             422: {

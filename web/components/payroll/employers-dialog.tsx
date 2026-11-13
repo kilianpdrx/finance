@@ -2,63 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useAccounts, usePayrollEmployers, usePayrollMutations, type Employer } from "@/lib/api/hooks";
-import { WIDGETS } from "@/lib/payroll-widgets";
-
-/** « Personnaliser »: which widgets the board shows, in which order. */
-export function CustomizeDialog({ open, onOpenChange, items, defaults, onSave }: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  items: { id: string; visible: boolean }[];
-  defaults: string[];
-  onSave: (items: { id: string; visible: boolean }[]) => void;
-}) {
-  const [draft, setDraft] = useState(items);
-  useEffect(() => { if (open) setDraft(items); }, [open, items]);
-  const move = (i: number, by: -1 | 1) => setDraft((d) => {
-    const next = [...d];
-    [next[i], next[i + by]] = [next[i + by], next[i]];
-    return next;
-  });
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Personnaliser le tableau</DialogTitle>
-          <DialogDescription>Affichez, masquez et rangez les cartes. Enregistré pour ce profil.</DialogDescription>
-        </DialogHeader>
-        <ul aria-label="Cartes du tableau" className="space-y-2">
-          {draft.map((w, i) => (
-            <li key={w.id} className="flex items-center gap-3 rounded-lg border border-border px-3 py-2">
-              <Switch checked={w.visible} aria-label={`Afficher « ${WIDGETS[w.id].title} »`}
-                onCheckedChange={(v) => setDraft((d) => d.map((x) => (x.id === w.id ? { ...x, visible: v } : x)))} />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{WIDGETS[w.id].title}</p>
-                <p className="text-xs text-muted-foreground">{WIDGETS[w.id].description}</p>
-              </div>
-              <Button variant="ghost" size="icon" className="size-8" aria-label={`Monter « ${WIDGETS[w.id].title} »`} disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp className="size-4" /></Button>
-              <Button variant="ghost" size="icon" className="size-8" aria-label={`Descendre « ${WIDGETS[w.id].title} »`} disabled={i === draft.length - 1} onClick={() => move(i, 1)}><ArrowDown className="size-4" /></Button>
-            </li>
-          ))}
-        </ul>
-        <DialogFooter className="gap-2 sm:justify-between">
-          <Button variant="ghost" onClick={() => setDraft(defaults.map((id) => ({ id, visible: true })))}>Revenir au tableau par défaut</Button>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Annuler</Button>
-            <Button onClick={() => { onSave(draft); onOpenChange(false); }}>Enregistrer</Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 const NO_ACCOUNT = "__none__";
 

@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import type { Payslip, PayslipRead } from '@/lib/api/hooks';
 import {
-  addLine, canSave, checkDraft, compare, comparisonNotes, draftFromRead, draftManual, draftStatus, draftToBody, forEmployer, labelKey,
-  moveLine, moveLineTo, restoreLine, setKind, type Draft,
+  addLine, canSave, checkDraft, compare, comparisonNotes, draftFromRead, draftManual, draftStatus, draftToBody, employerForRead, forEmployer,
+  labelKey, moveLine, moveLineTo, restoreLine, setKind, type Draft,
 } from './payroll-review';
 
 // What `POST /payroll/read` returns for the invented Zurich payslip of the backend tests.
 const read: PayslipRead = {
-  filename: 'lohn-09.pdf', sha256: 'x', error: null, duplicate_payslip_id: null, pack: 'ch_zh',
+  filename: 'lohn-09.pdf', sha256: 'x', error: null, duplicate_payslip_id: null, employer_id: null, pack: 'ch_zh',
   period: '2026-09', pay_date: '2026-09-25', totals: {},
   figures: { gross_cents: 900000, employee_contributions_cents: 107385, employer_contributions_cents: null,
     taxable_cents: 900000, withholding_cents: 95040, withholding_rate_bp: 1056, net_paid_cents: 700575 },
@@ -59,6 +59,31 @@ describe('payroll-review.ts', () => {
       employee_contributions_cents: 107385, withholding_cents: 95040, withholding_rate_bp: 1056, taxable_cents: 900000,
       net_paid_cents: 700575 });
     expect(body.lines.find((l) => l.label === 'Kantinenabzug')?.kind).toBe('deduction');
+  });
+
+  it("leaves a second employer's payslip to the user, and says when a month is already there", () => {
+    const sept = saved('2026-09');
+    // One employer, already paid in September: a September payslip printing no known name is not assumed to be its.
+    expect(employerForRead(read, [{ id: 7 }], [sept], [])).toBeNull();
+    expect(employerForRead({ ...read, period: '2026-10' }, [{ id: 7 }], [sept], [])).toBe(7);
+    expect(employerForRead({ ...read, employer_id: 8 }, [{ id: 7 }, { id: 8 }], [sept], [])).toBe(8);   // its name is on it
+    expect(employerForRead(read, [{ id: 7 }, { id: 8 }], [], [])).toBeNull();
+    const first = draftFromRead(read, file, 7);
+    expect(employerForRead(read, [{ id: 7 }], [], [first])).toBeNull();                                   // earlier in the import
+
+    // Saved for that employer and month: a look, and « remplacer » ticked before saving.
+    const classified = { ...first, lines: first.lines.map((l) => (l.kind ? l : { ...l, kind: 'deduction' as const })) };
+    const c = compare(classified, [sept]);
+    expect(c.clash).toBe('saved');
+    expect([draftStatus(classified, c), canSave(classified, c), canSave({ ...classified, replace: true }, c)]).toEqual(['check', false, true]);
+    // Another employer the same month: welcome.
+    const other = { ...classified, employerId: 8 };
+    expect(compare(other, [sept]).clash).toBeNull();
+    expect(canSave(other, compare(other, [sept]))).toBe(true);
+    // Twice in one import: the second waits for its employer.
+    const second = { ...classified, uid: 'second' };
+    expect(compare(second, [], [classified, second]).clash).toBe('draft');
+    expect(compare(classified, [], [classified, second]).clash).toBeNull();
   });
 
   it('re-applies an employer\'s classifications when the employer changes', () => {

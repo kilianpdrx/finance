@@ -42,6 +42,33 @@ class ProfileOut(BaseModel):
         """
         return DEFAULT_MODULES if v is None else v
 
+    # Whether switching to this profile asks for a PIN. Never the PIN or its hash.
+    has_pin: bool = False
+
+
+class ProfilePinUnlock(BaseModel):
+    # Numbers are taken as text: a type error would quote the value back in the
+    # 422, and the PIN must never appear in an answer.
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+    pin: Optional[str] = None
+
+
+class ProfilePinSet(BaseModel):
+    """Set, change (`current_pin` needed) or remove (`pin` null) a profile's PIN."""
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+    pin: Optional[str] = None
+    current_pin: Optional[str] = None
+
+
+class ProfileUnlockOut(BaseModel):
+    token: str
+
+
+class ProfilePinOut(BaseModel):
+    has_pin: bool
+    # A fresh unlock token for the tab that set the PIN, so it is not locked out.
+    token: Optional[str] = None
+
 
 def cents_to_display(cents: int, currency: str = "EUR") -> str:
     """Convert integer cents to French-formatted string: 1234567 -> '12 345,67 €'"""
@@ -960,6 +987,8 @@ class PayslipReadOut(BaseModel):
     sha256: str
     error: Optional[str]               # not a readable PDF, too large, protected…
     duplicate_payslip_id: Optional[int]  # this very file is already a payslip
+    # The employer whose name the PDF prints (else the one asked for); its rules read the lines.
+    employer_id: Optional[int]
     pack: str
     period: Optional[str]
     pay_date: Optional[date]
@@ -974,3 +1003,15 @@ class PayslipLabelRuleOut(BaseModel):
     label_key: str
     kind: PayslipKind
 
+
+
+class PayrollFxRateOut(BaseModel):
+    currency: str
+    period: str                 # "YYYY-MM"
+    rate: Optional[float]       # null: no rate found — that month is left out of the totals
+
+
+class PayrollFxOut(BaseModel):
+    """Rates to show payslips of several currencies in one (`GET /payroll/fx`)."""
+    to: str
+    rates: List[PayrollFxRateOut]
