@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 import database
 from models import Base
 
-HEAD = "021_plan_start_import_account"
+HEAD = "022_profile_pin"
 
 
 @pytest.fixture
@@ -374,3 +374,34 @@ def test_plan_start_and_import_account_columns_are_added(temp_db):
         assert "last_account_id" in {c["name"] for c in inspect(eng).get_columns("bank_profiles")}
     finally:
         eng.dispose()
+
+
+def test_profile_pin_columns_are_added_to_an_existing_database(temp_db):
+    """An install on 021 has no PIN columns: upgrading adds them, empty, and the
+    profile keeps opening without a PIN."""
+    eng = create_engine(f"sqlite:///{temp_db}")
+    Base.metadata.create_all(eng)
+    with eng.begin() as c:
+        for col in ("pin_hash", "pin_failed_attempts", "pin_locked_until"):
+            c.execute(text(f"ALTER TABLE profiles DROP COLUMN {col}"))
+        c.execute(text("INSERT INTO profiles (id, name, color, is_default) VALUES (1, 'P', '#000', 1)"))
+    eng.dispose()
+    database._sync_schema_blocking()  # stamps head (no alembic_version yet)
+    eng = create_engine(f"sqlite:///{temp_db}")
+    with eng.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num='021_plan_start_import_account'"))
+    eng.dispose()
+
+    database._sync_schema_blocking()  # upgrade path: runs 022
+    database._sync_schema_blocking()  # and again: idempotent
+
+    assert _version(temp_db) == HEAD
+    eng = create_engine(f"sqlite:///{temp_db}")
+    try:
+        cols = {c["name"] for c in inspect(eng).get_columns("profiles")}
+        with eng.connect() as c:
+            row = c.execute(text("SELECT id, name, pin_hash, pin_failed_attempts FROM profiles")).one()
+    finally:
+        eng.dispose()
+    assert {"pin_hash", "pin_failed_attempts", "pin_locked_until"} <= cols
+    assert (row.id, row.name, row.pin_hash, row.pin_failed_attempts) == (1, "P", None, None)

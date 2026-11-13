@@ -33,6 +33,16 @@ class Profile(Base):
     is_default = Column(Boolean, default=False)
     enabled_modules = Column(JSON, default=lambda: ["banking", "budgeting", "investments", "goals", "loans"])
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Optional PIN (services/profile_pin.py): a salted scrypt hash, never the PIN.
+    # NULL = no PIN, the profile opens as before. The two counters limit guessing
+    # and live here so a restart does not hand out fresh attempts.
+    pin_hash = Column(String, nullable=True)
+    pin_failed_attempts = Column(Integer, nullable=True)
+    pin_locked_until = Column(DateTime, nullable=True)
+
+    @property
+    def has_pin(self) -> bool:
+        return bool(self.pin_hash)
 
 
 

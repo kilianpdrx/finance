@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { Trash2, Plus, Check } from "lucide-react";
+import { Trash2, Plus, Check, Lock } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useProfiles, useProfileMutations } from "@/lib/api/hooks";
-import { useProfileStore } from "@/lib/stores";
+import { useProfileStore, useProfileUnlockStore } from "@/lib/stores";
 
 const COLORS = ["#6366f1", "#ec4899", "#22c55e", "#f59e0b", "#06b6d4", "#8b5cf6", "#ef4444", "#14b8a6"];
 
@@ -16,6 +16,7 @@ export function ProfileManageDialog({ open, onOpenChange }: { open: boolean; onO
   const { data: profiles = [] } = useProfiles();
   const { create, update, remove } = useProfileMutations();
   const { activeProfileId, setActiveProfile } = useProfileStore();
+  const tokens = useProfileUnlockStore((s) => s.tokens);
   const qc = useQueryClient();
 
   const [newName, setNewName] = useState("");
@@ -56,33 +57,55 @@ export function ProfileManageDialog({ open, onOpenChange }: { open: boolean; onO
         </DialogHeader>
 
         <div className="space-y-2">
-          {profiles.map((p) => (
+          {profiles.map((p) => {
+            // A profile with a PIN is changed only from inside it, once unlocked (the API checks it too).
+            const locked = !!p.has_pin && !tokens[String(p.id)];
+            return (
             <div key={p.id} className="rounded-lg border border-border px-3 py-2">
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  title="Changer la couleur"
+                  title={locked ? undefined : "Changer la couleur"}
+                  disabled={locked}
                   onClick={() => setEditingColorId(editingColorId === p.id ? null : p.id)}
-                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold text-white transition hover:ring-2 hover:ring-border"
+                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold text-white transition enabled:hover:ring-2 enabled:hover:ring-border"
                   style={{ backgroundColor: p.color }}
                 >
                   {p.name[0]?.toUpperCase()}
                 </button>
                 <Input
                   defaultValue={p.name}
-                  className="h-8 flex-1 border-transparent bg-transparent px-1 text-sm shadow-none hover:border-border focus:border-border"
-                  onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== p.name) update.mutate({ id: p.id, body: { name: v } }); }}
+                  readOnly={locked}
+                  tabIndex={locked ? -1 : undefined}
+                  className="h-8 flex-1 border-transparent bg-transparent px-1 text-sm shadow-none hover:border-border focus:border-border read-only:hover:border-transparent"
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (locked || !v || v === p.name) return;
+                    update.mutate({ id: p.id, body: { name: v } }, { onError: (err) => toast.error(err.message) });
+                  }}
                 />
+                {locked && (
+                  <span title="Protégé par un code PIN : ouvrez ce profil pour le modifier">
+                    <Lock className="size-3.5 text-muted-foreground" />
+                  </span>
+                )}
                 {p.id === activeProfileId && <span title="Actif"><Check className="size-4 text-brand" /></span>}
                 {p.is_default ? (
                   <span className="text-[10px] text-muted-foreground">défaut</span>
                 ) : (
-                  <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-negative" onClick={() => del(p.id)}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-muted-foreground hover:text-negative"
+                    disabled={locked}
+                    aria-label={`Supprimer ${p.name}`}
+                    onClick={() => del(p.id)}
+                  >
                     <Trash2 className="size-4" />
                   </Button>
                 )}
               </div>
-              {editingColorId === p.id && (
+              {!locked && editingColorId === p.id && (
                 <div className="mt-2 flex gap-1.5 pl-10">
                   {COLORS.map((c) => (
                     <button
@@ -95,7 +118,8 @@ export function ProfileManageDialog({ open, onOpenChange }: { open: boolean; onO
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="space-y-2 border-t border-border pt-3">
