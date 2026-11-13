@@ -252,8 +252,9 @@ describe('several currencies', () => {
   ];
 
   it('converts each payslip at its own month, every amount and line, and keeps the rest as is', () => {
-    const { payslips, missing } = convertPayslips([paris('2026-08'), slip('2026-08'), slip('2026-09')], 'EUR', fx);
-    expect(missing.map((p) => p.period)).toEqual(['2026-09']);       // no rate: left out, never added unconverted
+    const { payslips, unconverted } = convertPayslips([paris('2026-08'), slip('2026-08'), slip('2026-09')], 'EUR', fx);
+    expect(unconverted.map((p) => p.period)).toEqual(['2026-09']);   // no rate: flagged…
+    expect(payslips[2]).toMatchObject({ period: '2026-09', currency: 'EUR', gross_cents: 900000 });   // …and counted as it is
     const [eur, chf] = payslips;
     expect(eur).toBe(payslips[0]);
     expect(eur.gross_cents).toBe(900000);                               // already in EUR: untouched
@@ -263,8 +264,21 @@ describe('several currencies', () => {
     expect(chf.lines[2]).toMatchObject({ base_cents: 945000, rate_bp: 530 });
     expect(chf.deposit).toMatchObject({ amount_cents: 735604, difference_cents: 0, status: 'paid' });
     // Totals add both employers up in one currency; rates are the same either way.
-    expect(totals(payslips).gross).toBe(1845000);
+    expect(totals(payslips).gross).toBe(2745000);
     expect(rates(totals([chf])).tax).toBe(rates(totals([slip('2026-08')])).tax);
+  });
+
+  it('draws a bar for every month paid, with or without a stored rate (« Employeurs comparés », v1.11.0)', () => {
+    // An employer paid in CHF for years, shown in EUR; rates stored for its last two months only.
+    const months = monthsBetween('2025-11', '2026-04');
+    const zurich = months.map((m) => slip(m));
+    const stored = [{ currency: 'CHF', period: '2026-03', rate: 1.05 }, { currency: 'CHF', period: '2026-04', rate: 1.06 },
+      ...months.slice(0, 4).map((period) => ({ currency: 'CHF', period, rate: null }))];
+    const { payslips, unconverted } = convertPayslips(zurich, 'EUR', stored);
+    expect(unconverted).toHaveLength(4);
+    const bars = employerSeries(payslips, 'net', months).filter((row) => row.e1 != null);
+    expect(bars.map((row) => row.period)).toEqual(months);
+    expect(bars.map((row) => row.e1)).toEqual([700575, 700575, 700575, 700575, 735604, 742610]);
   });
 
   it('never changes the payslip it was given', () => {

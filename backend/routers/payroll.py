@@ -21,13 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies import current_profile_id
-from models import Document, Employer, PayrollSituation, Payslip, PayslipLabelRule, PayslipLine
+from models import Document, Employer, ExchangeRate, PayrollSituation, Payslip, PayslipLabelRule, PayslipLine
 from ownership import require_account
 from schemas import (
     EmployerIn, EmployerOut, PayrollFxOut, PayrollSituationIn, PayrollSituationOut, PayslipIn, PayslipLabelRuleOut,
     PayslipOut, PayslipReadOut,
 )
-from services.fx import RateCache
+from services import fx
 from services.payroll import matching, packs, reading, vocab
 
 router = APIRouter()
@@ -332,7 +332,17 @@ async def payslip_rates(to: str = Query(..., pattern="^[A-Z]{3}$"), db: AsyncSes
     so, it never adds them unconverted."""
     pairs = (await db.execute(select(Payslip.currency, Payslip.period).distinct()
                               .where(Payslip.profile_id == pid, Payslip.currency != to))).all()
-    cache = RateCache()
+    # Stored rates start with the accounts' history (startup backfill); payslips can
+    # go back years before it. Fetch what is missing in ONE request per currency —
+    # not one per month, where a single failure left every other month without a rate.
+    for currency in {c for c, _ in pairs}:
+        months = sorted(p for c, p in pairs if c == currency)
+        first = _month_end(months[0])
+        stored = (await db.execute(select(func.min(ExchangeRate.date)).where(
+            ExchangeRate.base_currency == currency, ExchangeRate.target_currency == to))).scalar()
+        if stored is None or stored > first:
+            await fx.backfill_range(db, currency, to, first.replace(day=1), stored or _month_end(months[-1]))
+    cache = fx.RateCache()
     return PayrollFxOut(to=to, rates=[
         {"currency": currency, "period": period, "rate": await cache.rate(db, currency, to, _month_end(period))}
         for currency, period in sorted(pairs)
