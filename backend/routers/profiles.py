@@ -1,10 +1,15 @@
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import Profile
-from schemas import ProfileCreate, ProfileUpdate, ProfileOut
+from schemas import (
+    ProfileCreate, ProfileUpdate, ProfileOut,
+    ProfilePinUnlock, ProfilePinSet, ProfileUnlockOut, ProfilePinOut,
+)
+from services import profile_pin
 
 router = APIRouter()
 
@@ -68,11 +73,18 @@ async def create_profile(body: ProfileCreate, db: AsyncSession = Depends(get_db)
     return p
 
 
+_UnlockHeader = Header(None, alias=profile_pin.UNLOCK_HEADER)
+
+
 @router.put("/{profile_id}", response_model=ProfileOut)
-async def update_profile(profile_id: int, body: ProfileUpdate, db: AsyncSession = Depends(get_db)):
+async def update_profile(
+    profile_id: int, body: ProfileUpdate, db: AsyncSession = Depends(get_db),
+    x_profile_unlock: Optional[str] = _UnlockHeader,
+):
     p = await db.get(Profile, profile_id)
     if not p:
         raise HTTPException(404, "Profil introuvable")
+    profile_pin.require_unlocked(p, x_profile_unlock)
     for field, val in body.model_dump(exclude_unset=True).items():
         setattr(p, field, val)
     await db.commit()
@@ -81,10 +93,14 @@ async def update_profile(profile_id: int, body: ProfileUpdate, db: AsyncSession 
 
 
 @router.delete("/{profile_id}", status_code=204)
-async def delete_profile(profile_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_profile(
+    profile_id: int, db: AsyncSession = Depends(get_db),
+    x_profile_unlock: Optional[str] = _UnlockHeader,
+):
     p = await db.get(Profile, profile_id)
     if not p:
         raise HTTPException(404, "Profil introuvable")
+    profile_pin.require_unlocked(p, x_profile_unlock)
     count = (await db.execute(select(func.count(Profile.id)))).scalar()
     if p.is_default or count <= 1:
         raise HTTPException(400, "Impossible de supprimer le profil par défaut")
@@ -99,3 +115,61 @@ async def delete_profile(profile_id: int, db: AsyncSession = Depends(get_db)):
         await db.execute(text(f"DELETE FROM {table} WHERE profile_id = :p"), {"p": profile_id})
     await db.delete(p)
     await db.commit()
+
+
+# ── PIN ────────────────────────────────────────────────────────────────────────
+# See services/profile_pin.py for what the PIN does and does not protect. None of
+# these answers, nor any log line, carries the PIN.
+
+@router.post("/{profile_id}/unlock", response_model=ProfileUnlockOut)
+async def unlock_profile(profile_id: int, body: ProfilePinUnlock, db: AsyncSession = Depends(get_db)):
+    """Trade the profile's PIN for an unlock token (sent back as `X-Profile-Unlock`)."""
+    p = await db.get(Profile, profile_id)
+    if not p:
+        raise HTTPException(404, "Profil introuvable")
+    if not p.pin_hash:
+        raise HTTPException(400, "Ce profil n'a pas de code PIN.")
+    await profile_pin.check_pin(db, p, body.pin)
+    return {"token": profile_pin.issue_token(p)}
+
+
+@router.post("/{profile_id}/lock", status_code=204)
+async def lock_profile(
+    profile_id: int, db: AsyncSession = Depends(get_db),
+    x_profile_unlock: Optional[str] = _UnlockHeader,
+):
+    """Forget this tab's unlock token: the profile asks for its PIN again."""
+    p = await db.get(Profile, profile_id)
+    if not p:
+        raise HTTPException(404, "Profil introuvable")
+    profile_pin.revoke_token(x_profile_unlock)
+
+
+@router.put("/{profile_id}/pin", response_model=ProfilePinOut)
+async def set_profile_pin(profile_id: int, body: ProfilePinSet, db: AsyncSession = Depends(get_db)):
+    """Set a PIN (4 to 8 digits), change it, or remove it (`pin` null).
+
+    Changing or removing one takes the current PIN — an unlocked tab left open is
+    not enough — and counts as an attempt like any other. A new PIN retires every
+    token of the old one (they are tied to its hash) and hands a fresh token to
+    the caller.
+    """
+    p = await db.get(Profile, profile_id)
+    if not p:
+        raise HTTPException(404, "Profil introuvable")
+    if body.pin is not None and not profile_pin.valid_pin(body.pin):
+        raise HTTPException(400, "Le code PIN doit compter de 4 à 8 chiffres.")
+    if p.pin_hash:
+        if not body.current_pin:
+            raise HTTPException(400, "Saisissez le code PIN actuel.")
+        await profile_pin.check_pin(db, p, body.current_pin)
+    elif body.pin is None:
+        return {"has_pin": False, "token": None}
+
+    p.pin_hash = await asyncio.to_thread(profile_pin.hash_pin, body.pin) if body.pin is not None else None
+    profile_pin.reset_attempts(p)
+    await db.commit()
+    await db.refresh(p)
+    if not p.pin_hash:
+        return {"has_pin": False, "token": None}
+    return {"has_pin": True, "token": profile_pin.issue_token(p)}

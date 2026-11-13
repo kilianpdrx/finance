@@ -42,6 +42,33 @@ class ProfileOut(BaseModel):
         """
         return DEFAULT_MODULES if v is None else v
 
+    # Whether switching to this profile asks for a PIN. Never the PIN or its hash.
+    has_pin: bool = False
+
+
+class ProfilePinUnlock(BaseModel):
+    # Numbers are taken as text: a type error would quote the value back in the
+    # 422, and the PIN must never appear in an answer.
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+    pin: Optional[str] = None
+
+
+class ProfilePinSet(BaseModel):
+    """Set, change (`current_pin` needed) or remove (`pin` null) a profile's PIN."""
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+    pin: Optional[str] = None
+    current_pin: Optional[str] = None
+
+
+class ProfileUnlockOut(BaseModel):
+    token: str
+
+
+class ProfilePinOut(BaseModel):
+    has_pin: bool
+    # A fresh unlock token for the tab that set the PIN, so it is not locked out.
+    token: Optional[str] = None
+
 
 def cents_to_display(cents: int, currency: str = "EUR") -> str:
     """Convert integer cents to French-formatted string: 1234567 -> '12 345,67 €'"""

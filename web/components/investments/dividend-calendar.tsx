@@ -1,93 +1,96 @@
 "use client";
 
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { useDividendCalendar, type DividendCalendarMonth } from "@/lib/api/hooks";
+import { useMemo } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { useDividendCalendar } from "@/lib/api/hooks";
 import { formatCents, formatCentsCompact } from "@/lib/format";
+import { projectionByHolding, type ProjectionSeries } from "@/lib/dividend-projection";
+import { CHART_PALETTE } from "@/components/charts/spending-donut";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const SECTOR_COLORS: Record<string, string> = {
-  Technology: "#6366f1",
-  "Financial Services": "#22c55e",
-  Healthcare: "#ef4444",
-  "Consumer Cyclical": "#f59e0b",
-  "Consumer Defensive": "#14b8a6",
-  Industrials: "#8b5cf6",
-  Energy: "#ec4899",
-  Utilities: "#06b6d4",
-  "Real Estate": "#f97316",
-  "Communication Services": "#a855f7",
-  "Basic Materials": "#84cc16",
-  Autre: "#94a3b8",
-};
-
-function sectorColor(sector: string) {
-  return SECTOR_COLORS[sector] ?? SECTOR_COLORS["Autre"];
-}
-
+/** « Projection des revenus sur 12 mois »: one stacked series per holding (lib/dividend-projection.ts). */
 export function DividendCalendar({ currency }: { currency: string }) {
   const { data, isLoading } = useDividendCalendar(12);
+  const projection = useMemo(
+    () => (data ? projectionByHolding(data.monthly, CHART_PALETTE) : null),
+    [data],
+  );
 
   if (isLoading) return <Skeleton className="h-64 rounded-2xl" />;
-  if (!data || data.monthly.length === 0) return null;
+  if (!projection || projection.series.length === 0) {
+    return <p className="text-sm text-muted-foreground">Aucun dividende projeté sur les 12 prochains mois.</p>;
+  }
 
-  // Build stacked bar data: each month gets a key per sector
-  const sectors = new Set<string>();
-  const chartData = data.monthly.map((m: DividendCalendarMonth) => {
-    const row: Record<string, unknown> = { month: formatMonth(m.month) };
-    const bySector: Record<string, number> = {};
-    for (const item of m.items) {
-      const s = item.sector || "Autre";
-      sectors.add(s);
-      bySector[s] = (bySector[s] ?? 0) + item.amount_cents;
-    }
-    for (const [s, v] of Object.entries(bySector)) {
-      row[s] = v;
-    }
-    row._total = m.total_cents;
-    return row;
-  });
-
-  const sortedSectors = [...sectors].sort((a, b) => {
-    const aTotal = data.monthly.reduce((s, m) => s + m.items.filter((i) => (i.sector || "Autre") === a).reduce((ss, i) => ss + i.amount_cents, 0), 0);
-    const bTotal = data.monthly.reduce((s, m) => s + m.items.filter((i) => (i.sector || "Autre") === b).reduce((ss, i) => ss + i.amount_cents, 0), 0);
-    return bTotal - aTotal;
-  });
+  const byKey = new Map(projection.series.map((s) => [s.key, s]));
 
   return (
-    <div className="h-72">
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
-          <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-          <YAxis tickFormatter={(v: number) => formatCentsCompact(v, currency)} tick={{ fontSize: 11 }} width={60} />
-          <Tooltip
-            content={({ payload, label }) => {
-              if (!payload || payload.length === 0) return null;
-              const total = payload.reduce((s, p) => s + ((p.value as number) ?? 0), 0);
-              return (
-                <div className="rounded-lg border border-border bg-popover p-2.5 text-xs shadow-lg">
-                  <p className="mb-1.5 font-semibold">{label}</p>
-                  {payload.map((p) => (
-                    <div key={p.dataKey as string} className="flex items-center justify-between gap-4">
-                      <span className="flex items-center gap-1.5">
-                        <span className="inline-block size-2 rounded-full" style={{ backgroundColor: p.color }} />
-                        {p.dataKey as string}
-                      </span>
-                      <span className="nums font-medium">{formatCents((p.value as number) ?? 0, currency, { decimals: 0 })}</span>
+    <div className="space-y-3">
+      <div className="h-72">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={projection.rows} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+            <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" />
+            <XAxis
+              dataKey="month"
+              tickFormatter={formatMonth}
+              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              tickFormatter={(v: number) => formatCentsCompact(v, currency)}
+              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              axisLine={false}
+              tickLine={false}
+              width={60}
+            />
+            <Tooltip
+              cursor={{ fill: "var(--muted)", opacity: 0.4 }}
+              content={({ active, payload, label }) => {
+                if (!active || !payload || payload.length === 0) return null;
+                const rows = payload
+                  .map((p) => ({ s: byKey.get(String(p.dataKey)), value: Number(p.value ?? 0) }))
+                  .filter((r): r is { s: ProjectionSeries; value: number } => !!r.s && r.value > 0)
+                  .reverse(); // top of the stack first, as drawn
+                if (rows.length === 0) return null;
+                const total = rows.reduce((sum, r) => sum + r.value, 0);
+                return (
+                  <div className="card-surface min-w-[11rem] max-w-[18rem] px-3 py-2 text-xs shadow-lg">
+                    <p className="mb-1.5 font-semibold text-foreground">{formatMonth(String(label))}</p>
+                    <div className="space-y-1">
+                      {rows.map(({ s, value }) => (
+                        <div key={s.key} className="flex items-center gap-2">
+                          <span className="size-2 shrink-0 rounded-full" style={{ background: s.color }} />
+                          <span className="min-w-0 flex-1 truncate text-muted-foreground">{s.label}</span>
+                          <span className="nums font-medium text-foreground">{formatCents(value, currency, { decimals: 0 })}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                  <div className="mt-1.5 border-t border-border pt-1.5 text-right font-semibold">
-                    {formatCents(total, currency, { decimals: 0 })}
+                    {rows.length > 1 && (
+                      <div className="mt-1.5 border-t border-border pt-1.5 text-right font-semibold text-foreground">
+                        {formatCents(total, currency, { decimals: 0 })}
+                      </div>
+                    )}
                   </div>
-                </div>
-              );
-            }}
-          />
-          <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-          {sortedSectors.map((s) => (
-            <Bar key={s} dataKey={s} stackId="a" fill={sectorColor(s)} radius={sortedSectors.indexOf(s) === 0 ? [3, 3, 0, 0] : undefined} />
-          ))}
-        </BarChart>
-      </ResponsiveContainer>
+                );
+              }}
+            />
+            {projection.series.map((s) => (
+              <Bar key={s.key} dataKey={s.key} name={s.label} stackId="a" fill={s.color} maxBarSize={36} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Legend: largest first, with what each holding brings over the 12 months. */}
+      <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
+        {projection.series.map((s) => (
+          <li key={s.key} className="flex min-w-0 items-center gap-1.5" title={s.other ? s.tickers.join(", ") : s.label === s.tickers[0] ? s.label : `${s.label} (${s.tickers[0]})`}>
+            <span className="size-2 shrink-0 rounded-full" style={{ background: s.color }} />
+            <span className="max-w-[14rem] truncate text-muted-foreground">{s.label}</span>
+            <span className="nums blurable font-medium text-foreground">{formatCents(s.total_cents, currency, { decimals: 0 })}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

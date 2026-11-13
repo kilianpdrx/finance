@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage, type StateStorage } from "zustand/middleware";
 import { format, startOfMonth, endOfMonth, subMonths, startOfYear } from "date-fns";
 
 /** "01/06/2026 – 30/06/2026" for display; empty range → "Tout l'historique". */
@@ -102,6 +102,65 @@ export const useProfileStore = create<ProfileState>()(
 /** Vanilla getter usable outside React (e.g. in the fetch interceptor). */
 export function getActiveProfileId(): number | null {
   return useProfileStore.getState().activeProfileId;
+}
+
+// ── Profile unlock (PIN) ──────────────────────────────────────────────────────
+// The tokens `POST /profiles/{id}/unlock` hands out, by profile id. Kept in
+// sessionStorage: they survive a reload but not closing the tab, so a closed tab
+// is a locked profile. `lockedId` is set when the API answers 401 with
+// `X-Profile-Locked` (token expired, server restarted, PIN changed elsewhere).
+
+/** sessionStorage that never throws: blocked storage only means asking again. */
+const safeSessionStorage: StateStorage = {
+  getItem: (name) => {
+    try { return window.sessionStorage.getItem(name); } catch { return null; }
+  },
+  setItem: (name, value) => {
+    try { window.sessionStorage.setItem(name, value); } catch { /* kept in memory only */ }
+  },
+  removeItem: (name) => {
+    try { window.sessionStorage.removeItem(name); } catch { /* nothing to remove */ }
+  },
+};
+
+function withoutToken(tokens: Record<string, string>, id: number): Record<string, string> {
+  const next = { ...tokens };
+  delete next[String(id)];
+  return next;
+}
+
+interface ProfileUnlockState {
+  tokens: Record<string, string>;
+  lockedId: number | null;
+  setToken: (id: number, token: string) => void;
+  clearToken: (id: number) => void;
+  markLocked: (id: number) => void;
+}
+
+export const useProfileUnlockStore = create<ProfileUnlockState>()(
+  persist(
+    (set) => ({
+      tokens: {},
+      lockedId: null,
+      setToken: (id, token) => set((s) => ({
+        tokens: { ...s.tokens, [String(id)]: token },
+        lockedId: s.lockedId === id ? null : s.lockedId,
+      })),
+      clearToken: (id) => set((s) => ({ tokens: withoutToken(s.tokens, id) })),
+      markLocked: (id) => set((s) => ({ tokens: withoutToken(s.tokens, id), lockedId: id })),
+    }),
+    {
+      name: "finance-profile-unlock",
+      storage: createJSONStorage(() => safeSessionStorage),
+      partialize: (s) => ({ tokens: s.tokens }),
+    },
+  ),
+);
+
+/** Vanilla getter for the fetch interceptor. */
+export function getUnlockToken(id: number | null): string | null {
+  if (id == null) return null;
+  return useProfileUnlockStore.getState().tokens[String(id)] ?? null;
 }
 
 // ── Selected accounts (null = all) ────────────────────────────────────────────
