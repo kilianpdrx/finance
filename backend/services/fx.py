@@ -66,28 +66,41 @@ async def get_rate(
                 params={"from": base, "to": target},
             )
             resp.raise_for_status()
-            data = resp.json()
-            rate = data.get("rates", {}).get(target)
-            if rate is not None:
-                # OR IGNORE, like backfill_range: two requests converting at once
-                # fetch the same rate, and the second plain INSERT broke on the
-                # unique constraint — leaving its session rolled back, so the
-                # whole analytics request answered 500.
-                await db.execute(
-                    text(
-                        "INSERT OR IGNORE INTO exchange_rates "
-                        "(base_currency, target_currency, date, rate, fetched_at) "
-                        "VALUES (:base, :target, :date, :rate, :now)"
-                    ),
-                    {"base": base, "target": target, "date": on_date.isoformat(), "rate": rate, "now": datetime.utcnow()},
-                )
-                await db.commit()
-                return rate
+            rate = resp.json().get("rates", {}).get(target)
     except Exception as e:
         logger.warning("FX fetch failed for %s→%s on %s: %s", base, target, on_date, e)
         _mark_pair_failed(base, target)
+        return None
+    if rate is not None:
+        await _store(db, base, target, [(on_date.isoformat(), rate)])
+    return rate
 
-    return None
+
+async def _store(db: AsyncSession, base: str, target: str, rates: list[tuple[str, float]]) -> int:
+    """Keep rates fetched from the network. OR IGNORE: two requests converting at once
+    fetch the same rate, and a plain INSERT broke on the unique constraint — leaving
+    its session rolled back, so the whole analytics request answered 500.
+
+    A write that fails (« database is locked » while the app starts and writes
+    elsewhere) is logged and loses nothing: the rate fetched is still used, and
+    fetched again next time. It must NOT mark the pair unreachable — that left every
+    other month of the request without a rate for 5 minutes (v1.11.0: payslips
+    disappeared from « Employeurs comparés »)."""
+    try:
+        for on, rate in rates:
+            await db.execute(
+                text(
+                    "INSERT OR IGNORE INTO exchange_rates "
+                    "(base_currency, target_currency, date, rate, fetched_at) "
+                    "VALUES (:base, :target, :date, :rate, :now)"
+                ),
+                {"base": base, "target": target, "date": on, "rate": rate, "now": datetime.utcnow()},
+            )
+        await db.commit()
+        return len(rates)
+    except Exception as e:
+        logger.warning("FX rates for %s→%s fetched but not stored: %s", base, target, e)
+        return 0
 
 
 async def convert_cents_checked(
@@ -182,29 +195,16 @@ async def backfill_range(
             )
             resp.raise_for_status()
             data = resp.json()
-
-        rates = data.get("rates", {})
-        count = 0
-        for date_str, rate_dict in rates.items():
-            rate_val = rate_dict.get(target)
-            if rate_val is None:
-                continue
-            await db.execute(
-                text(
-                    "INSERT OR IGNORE INTO exchange_rates "
-                    "(base_currency, target_currency, date, rate, fetched_at) "
-                    "VALUES (:base, :target, :date, :rate, :now)"
-                ),
-                {"base": base, "target": target, "date": date_str, "rate": rate_val, "now": datetime.utcnow()},
-            )
-            count += 1
-        await db.commit()
-        logger.info("Backfilled %d rates for %s→%s (%s to %s)", count, base, target, from_date, to_date)
-        return count
     except Exception as e:
         logger.warning("FX backfill failed for %s→%s: %s", base, target, e)
         _mark_pair_failed(base, target)
         return 0
+
+    fetched = [(d, r[target]) for d, r in data.get("rates", {}).items() if r.get(target) is not None]
+    count = await _store(db, base, target, fetched)
+    if count:
+        logger.info("Backfilled %d rates for %s→%s (%s to %s)", count, base, target, from_date, to_date)
+    return count
 
 
 async def refresh_latest(

@@ -440,17 +440,20 @@ export interface FxRate { currency: string; period: string; rate: number | null 
 
 /** The payslips in `to`, for totals and charts that add employers up: each one
  *  converted at its own month's rate, every amount and line rounded to the cent
- *  (rates in bp are kept). A payslip whose month has no rate is in `missing`,
- *  never added unconverted. The copies keep their id: edit and delete the
- *  original, never a copy. */
-export function convertPayslips(payslips: Payslip[], to: string, fx: FxRate[]): { payslips: Payslip[]; missing: Payslip[] } {
+ *  (rates in bp are kept). A payslip whose month has no rate is kept with its
+ *  amounts as they are, and listed in `unconverted` so the page says the totals
+ *  are approximate — the app's rule for a missing rate (analytics' `fx_incomplete`):
+ *  never dropped, which hid whole stretches of an employer. The copies keep their
+ *  id: edit and delete the original, never a copy. */
+export function convertPayslips(payslips: Payslip[], to: string, fx: FxRate[]): { payslips: Payslip[]; unconverted: Payslip[] } {
   const rateOf = new Map(fx.map((r) => [`${r.currency}|${r.period}`, r.rate]));
   const out: Payslip[] = [];
-  const missing: Payslip[] = [];
+  const unconverted: Payslip[] = [];
   for (const p of payslips) {
     if (p.currency === to) { out.push(p); continue; }
-    const rate = rateOf.get(`${p.currency}|${p.period}`);
-    if (rate == null) { missing.push(p); continue; }
+    const found = rateOf.get(`${p.currency}|${p.period}`);
+    if (found == null) unconverted.push(p);
+    const rate = found ?? 1;
     const c = (cents: number) => Math.round(cents * rate);
     const n = (cents: number | null | undefined) => (cents == null ? cents : c(cents));
     out.push({
@@ -462,7 +465,7 @@ export function convertPayslips(payslips: Payslip[], to: string, fx: FxRate[]): 
       deposit: { ...p.deposit, amount_cents: n(p.deposit.amount_cents) ?? null, difference_cents: c(p.deposit.difference_cents) },
     });
   }
-  return { payslips: out, missing };
+  return { payslips: out, unconverted };
 }
 
 // ── The period shown ────────────────────────────────────────────────────────

@@ -128,3 +128,69 @@ async def test_two_requests_fetching_the_same_rate_do_not_break(db_session: Asyn
     monkeypatch.setattr(fxmod.httpx, "AsyncClient", lambda **kw: Client())
     assert await get_rate(db_session, "GBP", "EUR", day) == 1.0912
     assert await get_rate(db_session, "GBP", "EUR", day) == 1.0912        # the session still works
+
+
+# ── A rate fetched but not stored (v1.11.0) ─────────────────────────────────
+
+class _Frankfurter:
+    """Stands in for httpx.AsyncClient: answers one date, or a range, with a rate."""
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url, params=None):
+        class Response:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                if ".." in url:
+                    return {"rates": {"2021-10-29": {"EUR": 0.94}, "2021-11-30": {"EUR": 0.96}}}
+                return {"rates": {"EUR": 0.94}}
+        return Response()
+
+
+class _LockedForWrites:
+    """The request's session while another writer holds the database: reads work,
+    writes fail with « database is locked » (the desktop app at startup)."""
+    def __init__(self, session):
+        self._session = session
+
+    async def execute(self, statement, *a, **k):
+        if str(statement).lstrip().upper().startswith("INSERT"):
+            from sqlalchemy.exc import OperationalError
+            raise OperationalError(str(statement), {}, Exception("database is locked"))
+        return await self._session.execute(statement, *a, **k)
+
+    async def commit(self):
+        await self._session.commit()
+
+
+async def test_a_rate_fetched_but_not_stored_is_still_used_and_blocks_nothing(db_session: AsyncSession, monkeypatch):
+    """« database is locked » on the INSERT used to mark CHF→EUR unreachable for five
+    minutes: every other month of the request came back without a rate."""
+    monkeypatch.setattr(fxmod.httpx, "AsyncClient", _Frankfurter)
+    monkeypatch.setattr(fxmod, "_fail_cache", {})
+    locked = _LockedForWrites(db_session)
+    assert await get_rate(locked, "CHF", "EUR", date(2021, 10, 31)) == 0.94
+    assert not fxmod._is_pair_failed("CHF", "EUR")
+    assert await backfill_range(locked, "CHF", "EUR", date(2021, 10, 1), date(2021, 11, 30)) == 0   # nothing stored…
+    assert not fxmod._is_pair_failed("CHF", "EUR")                                                  # …nothing blocked
+    # Once the database is free, the same range is stored.
+    assert await backfill_range(db_session, "CHF", "EUR", date(2021, 10, 1), date(2021, 11, 30)) == 2
+    assert await get_rate(db_session, "CHF", "EUR", date(2021, 11, 30)) == 0.96
+
+
+async def test_a_network_failure_still_marks_the_pair(db_session: AsyncSession, monkeypatch):
+    class Down(_Frankfurter):
+        async def get(self, url, params=None):
+            raise fxmod.httpx.ConnectError("offline")
+    monkeypatch.setattr(fxmod.httpx, "AsyncClient", Down)
+    monkeypatch.setattr(fxmod, "_fail_cache", {})
+    assert await get_rate(db_session, "CHF", "EUR", date(2021, 10, 31)) is None
+    assert fxmod._is_pair_failed("CHF", "EUR")

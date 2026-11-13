@@ -425,6 +425,43 @@ async def test_rates_to_add_up_payslips_paid_in_two_currencies(client: AsyncClie
     assert (await client.get("/api/payroll/fx", headers=w["h"], params={"to": "chf"})).status_code == 422
 
 
+async def test_rates_older_than_the_stored_ones_are_fetched_in_one_request(client: AsyncClient, db_session, zurich,
+                                                                          monkeypatch):
+    """Stored rates start with the accounts' history; payslips go back years before it.
+    The months before are fetched in ONE request per currency — v1.11.0 asked month by
+    month, and one failure left every other month without a rate (bars missing)."""
+    w, eid = zurich, zurich["employer"]["id"]
+
+    def typed(period: str) -> dict:
+        return {"employer_id": eid, "period": period, "pay_date": f"{period}-25",
+                "lines": [{"label": "Monatslohn", "kind": "gross", "amount_cents": 800000}],
+                "gross_cents": 800000, "employee_contributions_cents": 0, "withholding_cents": 0,
+                "net_paid_cents": 800000}
+
+    for period in ("2021-10", "2021-11", "2021-12", "2025-09"):
+        assert (await _save(client, w, typed(period))).status_code == 201
+    db_session.add(ExchangeRate(base_currency="CHF", target_currency="EUR", date=date(2025, 9, 1), rate=1.07))
+    await db_session.commit()
+
+    calls = []
+
+    async def backfill(db, base, target, start, end):
+        calls.append((base, target, start, end))
+        for day, rate in ((date(2021, 10, 29), 0.94), (date(2021, 11, 30), 0.95), (date(2021, 12, 31), 0.96)):
+            db.add(ExchangeRate(base_currency=base, target_currency=target, date=day, rate=rate))
+        await db.commit()
+        return 3
+
+    monkeypatch.setattr(fx, "backfill_range", backfill)
+    rates = (await client.get("/api/payroll/fx", headers=w["h"], params={"to": "EUR"})).json()["rates"]
+    assert calls == [("CHF", "EUR", date(2021, 10, 1), date(2025, 9, 1))]
+    assert [(r["period"], r["rate"]) for r in rates] == [("2021-10", 0.94), ("2021-11", 0.95), ("2021-12", 0.96),
+                                                         ("2025-09", 1.07)]
+    # Stored now: asked again, nothing is fetched.
+    await client.get("/api/payroll/fx", headers=w["h"], params={"to": "EUR"})
+    assert len(calls) == 1
+
+
 async def test_the_salary_deposit_is_found_and_never_written(client: AsyncClient, db_session, zurich):
     w, pid, account = zurich, zurich["pid"], zurich["account"]
     eid = w["employer"]["id"]

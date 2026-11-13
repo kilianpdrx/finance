@@ -29,8 +29,9 @@ export interface PayrollView {
   colors: Map<number, string>;
   /** What totals and charts are in. */
   currency: string;
-  /** Set when payslips of other currencies were converted to `currency`. */
-  converted: { from: string[]; missing: Payslip[] } | null;
+  /** Set when payslips of other currencies were converted to `currency`; `unconverted`:
+   *  the period's payslips with no rate for their month, counted as they are. */
+  converted: { from: string[]; unconverted: Payslip[] } | null;
   /** The rates are still loading: totals would leave the other currencies out. */
   pending: boolean;
   onEdit: (p: Payslip) => void;

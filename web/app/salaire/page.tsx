@@ -72,7 +72,7 @@ export default function SalairePage() {
     : (currencies[0] ?? pack?.currency ?? baseCurrency);
   const fx = usePayrollFx(mixed ? currency : null);
   const pending = mixed && fx.isPending;
-  const converted = mixed ? convertPayslips(ofEmployer, currency, fx.data?.rates ?? []) : { payslips: ofEmployer, missing: [] };
+  const converted = mixed ? convertPayslips(ofEmployer, currency, fx.data?.rates ?? []) : { payslips: ofEmployer, unconverted: [] };
   const all = converted.payslips;
 
   const years = [...new Set(ofEmployer.map((p) => p.period.slice(0, 4)))].sort().reverse();
@@ -81,7 +81,7 @@ export default function SalairePage() {
   const shownBounds = bounds(ofEmployer, range);
   const own = within(ofEmployer, shownBounds);
   const shown = within(all, shownBounds);
-  const missing = within(converted.missing, shownBounds);
+  const unconverted = within(converted.unconverted, shownBounds);
   const previous = range.kind === "all" || !shownBounds ? null : yearBefore(shownBounds, own);
   /** Totals and charts hand back converted copies: edit and delete the payslip itself. */
   const original = (p: Payslip) => payslips.find((x) => x.id === p.id) ?? p;
@@ -102,7 +102,7 @@ export default function SalairePage() {
     before: previous ? { bounds: previous, payslips: within(all, previous) } : null,
     employers, colors, currency, pending,
     // Only the currencies the period's payslips were actually converted from.
-    converted: mixed ? { from: [...new Set(own.map((p) => p.currency))].filter((c) => c !== currency).sort(), missing } : null,
+    converted: mixed ? { from: [...new Set(own.map((p) => p.currency))].filter((c) => c !== currency).sort(), unconverted } : null,
     onEdit: (p) => setDialog({ kind: "edit", payslip: original(p) }), onDelete: (p) => remove(original(p)),
   };
   const choosePeriod = (v: string) => {
@@ -208,11 +208,11 @@ export default function SalairePage() {
               && ` · ${view.converted.from.join(", ")} converti${view.converted.from.length > 1 ? "s" : ""} en ${currency} au taux de chaque mois`}
           </span>
         </div>
-        {!pending && missing.length > 0 && (
+        {!pending && unconverted.length > 0 && (
           <p role="status" className="rounded-lg bg-warning/15 px-3 py-2 text-xs">
-            {missing.length} fiche{missing.length > 1 ? "s" : ""} en {[...new Set(missing.map((p) => p.currency))].join(", ")} sans taux
-            de change vers {currency} : absente{missing.length > 1 ? "s" : ""} des totaux et des graphiques, présente{missing.length > 1 ? "s" : ""} dans
-            les cartes « Par employeur » et dans « Fiches de paie ».
+            {unconverted.length} fiche{unconverted.length > 1 ? "s" : ""} en {[...new Set(unconverted.map((p) => p.currency))].join(", ")} sans
+            taux de change vers {currency} : comptée{unconverted.length > 1 ? "s" : ""} sans conversion, les totaux et les graphiques sont
+            approximatifs. Le taux est cherché à nouveau au prochain chargement de la page, s&apos;il y a une connexion.
           </p>
         )}
 
